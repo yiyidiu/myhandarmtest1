@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<launch>
+  <!--
+    Start MoveIt Servo for the ABB IRB120 planning group.
+    ROS1 MoveIt Servo reads parameters from /servo_server/*,
+    so the yaml is loaded inside the node namespace.
+  -->
+  <node name="servo_server"
+        pkg="moveit_servo"
+        type="servo_server"
+        output="screen">
+    <rosparam file="$(find abb120_moveit_config1)/config/servo_abbarm.yaml" command="load" />
+  </node>
+</launch>

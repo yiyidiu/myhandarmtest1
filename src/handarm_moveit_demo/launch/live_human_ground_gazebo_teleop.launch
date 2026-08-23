@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- New, reversible workspace-normalized simulation entry point. The legacy
+       live_human_gazebo_teleop.launch remains unchanged in behavior. -->
+  <arg name="gazebo_gui" default="true" />
+  <arg name="with_ground_object" default="true" />
+  <arg name="enable_logger" default="true" />
+  <arg name="log_directory" default="/tmp/handarm_ground_teleop_logs" />
+  <arg name="camera_workspace_calibration_file"
+       default="$(find handarm_moveit_demo)/config/camera_workspace_calibration.yaml" />
+  <arg name="empty_ground_world"
+       default="$(find handarm_sim_demo)/worlds/handarm_ground_workspace.world" />
+  <arg name="ground_object_world"
+       default="$(find handarm_sim_demo)/worlds/handarm_ground_grasp.world" />
+  <arg name="world_name"
+       default="$(eval arg('ground_object_world') if arg('with_ground_object') else arg('empty_ground_world'))" />
+
+  <include file="$(find handarm_moveit_demo)/launch/live_human_gazebo_teleop.launch">
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)" />
+    <arg name="enable_logger" value="$(arg enable_logger)" />
+    <arg name="log_directory" value="$(arg log_directory)" />
+    <arg name="world_name" value="$(arg world_name)" />
+    <arg name="mapping_profile" value="camera_ground_workspace" />
+    <arg name="camera_workspace_calibration_file"
+         value="$(arg camera_workspace_calibration_file)" />
+  </include>
+</launch>

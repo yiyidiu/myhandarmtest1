@@ -1,0 +1,95 @@
+schema_version: 1
+planning_group: abbarm
+end_effector_link: tool0
+planner_id: RRTConnect
+planning_time_s: 5.0
+planning_attempts: 5
+# Contact-development motion is deliberately slow. This also keeps the
+# finite-effort Gazebo arm inside the unchanged 0.30 rad path tolerances.
+velocity_scaling: 0.05
+acceleration_scaling: 0.03
+home_joint_tolerance_rad: 0.03
+goal_position_tolerance_m: 0.004
+goal_orientation_tolerance_rad: 0.025
+verification_position_tolerance_m: 0.025
+verification_orientation_tolerance_deg: 6.0
+cartesian_eef_step_m: 0.003
+cartesian_fraction_min: 0.95
+# compute_cartesian_path does not reliably inherit MoveGroup's global scaling
+# on Noetic.  Every approach/lift/place trajectory is explicitly retimed.
+cartesian_velocity_scaling: 0.05
+cartesian_acceleration_scaling: 0.03
+# After MoveIt retiming, lift and place are stretched uniformly so each full
+# Cartesian trajectory lasts at least this long. This avoids fast finite-
+# friction lift/place motion pulling the grasped object loose.
+minimum_lift_place_trajectory_duration_s: 8.0
+target_object_key: target
+
+# Side grasp: tool-z points horizontally toward the object.  The open hand is
+# kept above the table.  The 40 mm approach stops before open-hand contact;
+# during that segment MoveIt permits only listed finger/target contacts as a
+# fail-safe, while table/arm/palm collision checks remain active. Finger
+# closure is a separate, simultaneous command.
+object_to_pregrasp:
+  # Retained-scene FK measured x/y tracking within about 1 mm but a 16 mm
+  # gravity sag in world z.  Compensate that measured vertical steady-state
+  # error while keeping the audited lateral grasp center unchanged.
+  # Closing trace showed f2 contact 1.05 s before f1 at +6 mm centring.
+  # Shift a further 3 mm in object/world y to synchronize opposing contact.
+  position_m: [-0.100, 0.009, 0.076]
+  orientation_xyzw: [0.70710678, 0.0, 0.70710678, 0.0]
+# A 36 mm development counterexample increased closing displacement, so keep
+# the prior 40 mm approach while retaining the verified +6 mm y centring.
+approach_vector_world_m: [0.040, 0.0, 0.0]
+# The stochastic OMPL transit ends 40 mm farther from the object while its
+# padded proxy is active. After verifying the object stayed still, an exact-
+# geometry Cartesian refinement reaches the final pregrasp pose.
+transit_retreat_vector_world_m: [-0.040, 0.0, 0.0]
+target_touch_links:
+  - f1link1
+  - f1link2
+  - f1link3
+  - f2link1
+  - f2link2
+  - f3link1
+  - f3link2
+  - f3link3
+# A vertical 52 mm command compensates the measured ~17 mm arm steady-state
+# error and still targets at least 30 mm of verified physical object lift.
+# The earlier diagonal lift simultaneously pulled 84.85 mm away from the box
+# and produced measured slip. Two 60 mm vertical runs lifted the object but
+# exceeded the unchanged 10 mm tool/object disagreement gate by 0.05/0.38 mm;
+# shorten the travel instead of weakening that evidence gate. Placement
+# follows this exact inverse vector.
+lift_vector_world_m: [0.0, 0.0, 0.052]
+
+supported_grasp_modes: [approach_only, physical_grasp_only, physical_contact]
+physical_contact_status: DEVELOPMENT_IMPLEMENTATION
+attachment_demo_status: ISOLATED_IN_LEGACY_CONFIG
+attachment_service: /handarm_sim_demo/set_object_attached
+attachment_pose_jump_tolerance_m: 0.005
+lift_tool_tolerance_m: 0.020
+object_follow_tolerance_m: 0.010
+maximum_pregrasp_object_displacement_m: 0.005
+
+physical_acceptance:
+  contact_topic: /handarm_sim_demo/target_contacts
+  minimum_finger_families: 2
+  contact_stability_s: 0.30
+  contact_wait_timeout_s: 3.0
+  contact_message_timeout_s: 0.20
+  contact_loss_grace_s: 0.10
+  configuration_hold_tolerance_rad: 0.03
+  # Closing must establish contact without shoving the free object away.
+  maximum_grasp_displacement_m: 0.010
+  minimum_object_lift_m: 0.030
+  hold_duration_s: 2.0
+  maximum_object_tool_disagreement_m: 0.010
+  place_position_tolerance_m: 0.015
+  release_contact_clear_duration_s: 0.5
+  release_contact_clear_timeout_s: 5.0
+  release_settle_duration_s: 2.0
+  release_settle_tolerance_m: 0.015
+  # A failed release command cannot be repaired by stitching a second attempt
+  # into the same acceptance record.
+  release_attempts: 1

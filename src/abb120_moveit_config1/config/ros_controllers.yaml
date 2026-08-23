@@ -1,0 +1,53 @@
+# ros_control controllers for Gazebo simulation.
+#
+# The arm controller remains a JointTrajectoryController because the current
+# URDF/gazebo_handarm.urdf exposes PositionJointInterface transmissions.
+# MoveIt Servo will stream short JointTrajectory commands to:
+#   /controller_gazebo/command
+# This avoids changing the robot hardware interface while still providing
+# continuous local servo motion.
+
+controller_gazebo:
+  type: position_controllers/JointTrajectoryController
+  joints:
+    - joint_1
+    - joint_2
+    - joint_3
+    - joint_4
+    - joint_5
+    - joint_6
+  gains:
+    joint_1: {p: 120, d: 2, i: 0.0, i_clamp: 0.0}
+    joint_2: {p: 120, d: 2, i: 0.0, i_clamp: 0.0}
+    joint_3: {p: 120, d: 2, i: 0.0, i_clamp: 0.0}
+    joint_4: {p: 80,  d: 1, i: 0.0, i_clamp: 0.0}
+    joint_5: {p: 80,  d: 1, i: 0.0, i_clamp: 0.0}
+    joint_6: {p: 60,  d: 1, i: 0.0, i_clamp: 0.0}
+  constraints:
+    goal_time: 0.2
+    stopped_velocity_tolerance: 0.02
+    joint_1: {trajectory: 0.2, goal: 0.1}
+    joint_2: {trajectory: 0.2, goal: 0.1}
+    joint_3: {trajectory: 0.2, goal: 0.1}
+    joint_4: {trajectory: 0.2, goal: 0.1}
+    joint_5: {trajectory: 0.2, goal: 0.1}
+    joint_6: {trajectory: 0.2, goal: 0.1}
+  stop_trajectory_duration: 0.05
+  state_publish_rate: 100
+  action_monitor_rate: 20
+
+controller_gazebo_hand:
+  type: position_controllers/JointTrajectoryController
+  joints:
+    - f1j1
+    - f1j2
+    - f2j1
+    - f3j2
+  gains:
+    f1j1: {p: 100, d: 1, i: 0.0, i_clamp: 0.0}
+    f1j2: {p: 100, d: 1, i: 0.0, i_clamp: 0.0}
+    f2j1: {p: 100, d: 1, i: 0.0, i_clamp: 0.0}
+    f3j2: {p: 100, d: 1, i: 0.0, i_clamp: 0.0}
+  stop_trajectory_duration: 0.1
+  state_publish_rate: 50
+  action_monitor_rate: 10

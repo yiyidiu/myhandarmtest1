@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="gazebo_gui" default="true"/>
+  <arg name="rviz" default="true"/>
+  <arg name="paused" default="false"/>
+  <arg name="grasp_family" default="auto"/>
+  <arg name="scene_config" default="$(find handarm_sim_demo)/config/physical_grasp_scene.yaml"/>
+  <arg name="geometry_config" default="$(find handarm_sim_demo)/config/three_finger_grasp_geometry.yaml"/>
+  <arg name="world_name" default="$(find handarm_sim_demo)/worlds/handarm_physical_grasp.world"/>
+  <arg name="expected_models" default="[robot, work_table, target_object]"/>
+
+  <!-- One launch owns Gazebo, MoveIt, RViz and every uniquely named node. -->
+  <include file="$(find handarm_sim_demo)/launch/simulation_baseline.launch">
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)"/>
+    <arg name="rviz" value="$(arg rviz)"/>
+    <arg name="rviz_config" value="$(find handarm_sim_demo)/config/three_finger_grasp.rviz"/>
+    <arg name="paused" value="$(arg paused)"/>
+    <arg name="scene_config" value="$(arg scene_config)"/>
+    <arg name="grasp_config" value="$(find handarm_sim_demo)/config/physical_grasp_demo.yaml"/>
+    <arg name="run_avoidance_demo" value="false"/>
+    <arg name="run_pick_demo" value="false"/>
+    <arg name="start_moveit" value="true"/>
+    <arg name="shutdown_on_task_exit" value="false"/>
+    <arg name="world_name" value="$(arg world_name)"/>
+    <arg name="expected_models" value="$(arg expected_models)"/>
+    <arg name="scenario" value="no_obstacle"/>
+    <arg name="simulation" value="true"/>
+    <arg name="use_real_robot" value="false"/>
+    <arg name="use_real_hand" value="false"/>
+  </include>
+
+  <node name="three_finger_grasp_pose_planner"
+        pkg="handarm_sim_demo" type="grasp_pose_planner.py"
+        output="screen" required="false">
+    <param name="scene_config" value="$(arg scene_config)"/>
+    <param name="geometry_config" value="$(arg geometry_config)"/>
+    <param name="grasp_family" value="$(arg grasp_family)"/>
+    <param name="planning_group" value="abbarm"/>
+    <param name="target_object_key" value="target"/>
+  </node>
+</launch>

@@ -1,0 +1,55 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="enable_robot" default="false" />
+  <arg name="gazebo_gui" default="false" />
+  <arg name="input_source" default="synthetic" />
+  <arg name="input_csv" default="" />
+  <arg name="hamer_session" default="" />
+  <arg name="hamer_replay_speed" default="1.0" />
+  <arg name="enable_logger" default="true" />
+  <arg name="log_directory" default="/tmp/handarm_shared_teleop_logs" />
+  <arg name="world_name" default="worlds/empty.world" />
+  <arg name="mapping_profile" default="current_linear" />
+  <arg name="camera_workspace_calibration_file"
+       default="$(find handarm_moveit_demo)/config/camera_workspace_calibration.yaml" />
+  <!-- false keeps the collision-checked regression profile.  The live-human
+       Gazebo entry explicitly sets true while real-robot output remains off. -->
+  <arg name="response_first" default="false" />
+  <!-- Start the simulated arm at the operator-requested teleoperation zero:
+       /abbarm/joint_target_deg = [0, 0, 0, 0, 90, 0].  Gazebo receives the
+       equivalent radian joint values while spawning the model, before the
+       velocity controller starts, so no competing position command is needed. -->
+  <arg name="safe_initial_joint_positions"
+       default=" -J f1j1 0.051 -J f1j2 0.0317 -J f2j1 0.0227 -J f3j2 0.0363 -J joint_1 0.0 -J joint_2 0.0 -J joint_3 0.0 -J joint_4 0.0 -J joint_5 1.5707963267948966 -J joint_6 0.0" />
+
+  <include file="$(find abb120_moveit_config1)/launch/gazebo_velocity.launch">
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)" />
+    <arg name="paused" value="false" />
+    <arg name="world_name" value="$(arg world_name)" />
+    <arg name="initial_joint_positions" value="$(arg safe_initial_joint_positions)" />
+  </include>
+  <include file="$(find abb120_moveit_config1)/launch/demo.launch">
+    <arg name="load_robot_description" value="false" />
+    <arg name="moveit_controller_manager" value="ros_control" />
+    <arg name="use_rviz" value="false" />
+  </include>
+  <include unless="$(arg response_first)"
+           file="$(find abb120_moveit_config1)/launch/abbarm_servo_velocity_safe.launch">
+    <arg name="enable_robot" value="false" />
+  </include>
+  <include if="$(arg response_first)"
+           file="$(find abb120_moveit_config1)/launch/abbarm_servo_velocity_realtime_gazebo.launch" />
+  <include file="$(find handarm_moveit_demo)/launch/shared_teleop_core.launch">
+    <arg name="enable_robot" value="false" />
+    <arg name="simulation" value="true" />
+    <arg name="input_source" value="$(arg input_source)" />
+    <arg name="input_csv" value="$(arg input_csv)" />
+    <arg name="hamer_session" value="$(arg hamer_session)" />
+    <arg name="hamer_replay_speed" value="$(arg hamer_replay_speed)" />
+    <arg name="enable_logger" value="$(arg enable_logger)" />
+    <arg name="log_directory" value="$(arg log_directory)" />
+    <arg name="mapping_profile" value="$(arg mapping_profile)" />
+    <arg name="camera_workspace_calibration_file"
+         value="$(arg camera_workspace_calibration_file)" />
+  </include>
+</launch>

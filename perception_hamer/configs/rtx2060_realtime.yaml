@@ -1,0 +1,78 @@
+schema_version: 1
+
+camera:
+  width: 640
+  height: 480
+  fps: 30
+  aligned_depth: true
+
+roi:
+  # Ported from the mature reference renderer; higher than the former 0.35
+  # value to reduce visible lag while retaining causal one-frame smoothing.
+  klt_bbox_smoothing_alpha: 0.55
+
+orientation_filter:
+  method: QUALITY_ADAPTIVE_CAUSAL_SO3
+  time_constant_s: 0.10
+  maximum_gain: 1.0
+  innovation_soft_deg: 25.0
+  innovation_hard_deg: 60.0
+  # FOLLOW reports the thresholds diagnostically but never rejects or slows a
+  # valid large MANO wrist rotation. REJECT is retained only as a rollback.
+  large_angle_mode: FOLLOW
+  # Invalid/no-hand intervals reset this filter. They never emit a held pose.
+  fail_closed_for_teleoperation: true
+
+control_reference:
+  # Default migrated from teleoperation_ubuntu_core V9 geometry. Position is
+  # the projected centre of MANO's 16-vertex wrist opening plus aligned D455
+  # depth. Orientation is a robust neutral-ring-to-current-ring fit.
+  default_cli_value: mano-wrist-ring
+  wrist_boundary_vertex_count: 16
+  position_method: MANO_WRIST_RING_PROJECTED_HULL_D455_DEPTH
+  orientation_method: IRLS_HUBER_SIMILARITY_KABSCH_CAUSAL_SO3
+  legacy_cli_value: mano-joint-palm
+  use_forearm_axis_as_complete_orientation: false
+  # The forearm longitudinal axis cannot observe anatomical roll. It is not
+  # connected to the six-DoF output in this phase.
+  forearm_axis_role: FUTURE_OPTIONAL_CONFIDENCE_AND_COUPLING_DIAGNOSTIC
+
+renderer:
+  implementation: TELEOPERATION_CORE_EXACT_FRAME
+  default_cli_value: teleoperation-core
+  vertices: 778
+  faces: 1538
+  layout: SOURCE_AND_MANO_SIDE_BY_SIDE
+  cross_frame_klt_mesh_remap: false
+  clear_mesh_when_presence_invalid: true
+  legacy_renderer_cli_value: legacy-depth
+
+hamer:
+  device: cuda:0
+  precision: fp16
+  batch_size: 1
+  rescale_factor: 2.0
+  freeze_betas: true
+  minimum_visible_fraction: 0.60
+  # The heavy HaMeR pyrender object remains disabled. The live OpenCV MANO
+  # renderer above is enabled and uses the complete fixed MANO topology.
+  model_internal_pyrender_enabled: false
+  detector_gpu_enabled: false
+  vitpose_enabled: false
+  measured_hamer_only_fps: 24.39
+  scheduler_rate_hz: 5.0
+
+memory:
+  gpu_total_mib: 6144
+  maximum_total_fraction: 0.85
+  maximum_total_mib: 5222.4
+  measured_hamer_only_fp16_peak_mib: 4852
+  measured_gazebo_headless_fp16_peak_mib: 4962
+  measured_worst_margin_to_limit_mib: 260.4
+  on_exceed: stop_and_report
+
+assets:
+  data_root: _DATA
+  checkpoint: _DATA/hamer_ckpts/checkpoints/hamer.ckpt
+  mano_right: _DATA/data/mano/MANO_RIGHT.pkl
+  mano_mean_params: _DATA/data/mano_mean_params.npz

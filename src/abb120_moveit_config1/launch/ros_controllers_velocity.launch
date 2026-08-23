@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Load velocity-servo controller configuration. -->
+  <rosparam file="$(find abb120_moveit_config1)/config/ros_controllers_velocity.yaml" command="load"/>
+
+  <!-- Do not spawn controller_gazebo here; it is a position trajectory controller for the same arm joints. -->
+  <node name="controller_spawner" pkg="controller_manager" type="spawner" respawn="false"
+        output="screen" args="abbarm_velocity_controller controller_gazebo_hand"/>
+</launch>

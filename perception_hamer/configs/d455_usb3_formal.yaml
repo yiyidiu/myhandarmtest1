@@ -1,0 +1,15 @@
+schema_version: 1
+profile_name: d455_usb3_formal
+evidence_scope: FORMAL_USB3_ONLY
+formal_dataset_eligible: false
+formal_gate_status: DEFERRED_USB3_UNAVAILABLE
+require_superspeed: true
+streams:
+  color: {width: 640, height: 480, fps: 30, format: rgb8}
+  depth: {width: 640, height: 480, fps: 30, format: z16}
+  infrared: {enabled: false}
+  motion: {enabled: false}
+alignment_target: color
+maximum_rgb_depth_skew_ms: 2.0
+writer_queue_depth: 64
+certification_required_before_use: true

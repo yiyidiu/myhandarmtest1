@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<launch>
+  <!--
+    Dynamic Cartesian target tracking test.
+    Run after abb120_moveit_config1/demo_gazebo_servo.launch and after moving the arm to a safe ready pose.
+  -->
+  <arg name="mode" default="sine_z" />
+  <arg name="amplitude" default="0.015" />
+  <arg name="frequency" default="0.05" />
+  <arg name="duration" default="30.0" />
+  <arg name="kp" default="0.8" />
+  <arg name="feedforward" default="0" />
+  <arg name="max_speed" default="0.02" />
+  <arg name="deadband" default="0.001" />
+  <arg name="rate" default="50.0" />
+  <arg name="ramp_time" default="3.0" />
+  <arg name="base_frame" default="base_link" />
+  <arg name="ee_frame" default="tool0" />
+
+  <node pkg="handarm_moveit_demo"
+        type="servo_dynamic_target_test.py"
+        name="servo_dynamic_target_test"
+        output="screen">
+    <param name="mode" value="$(arg mode)" />
+    <param name="amplitude" value="$(arg amplitude)" />
+    <param name="frequency" value="$(arg frequency)" />
+    <param name="duration" value="$(arg duration)" />
+    <param name="kp" value="$(arg kp)" />
+    <param name="feedforward" value="$(arg feedforward)" />
+    <param name="max_speed" value="$(arg max_speed)" />
+    <param name="deadband" value="$(arg deadband)" />
+    <param name="rate" value="$(arg rate)" />
+    <param name="ramp_time" value="$(arg ramp_time)" />
+    <param name="base_frame" value="$(arg base_frame)" />
+    <param name="ee_frame" value="$(arg ee_frame)" />
+  </node>
+</launch>

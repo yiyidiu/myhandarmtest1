@@ -1,0 +1,32 @@
+schema_version: 1
+frame_id: world
+units: {length: m, angle: rad, mass: kg}
+
+objects:
+  table:
+    name: work_table
+    type: box
+    pose: {position: [0.65, 0.0, 0.17], orientation_rpy: [0.0, 0.0, 0.0]}
+    size: [0.80, 0.90, 0.08]
+    mass: 80.0
+    static: true
+    collision_enabled: true
+    planning_scene_enabled: true
+  target:
+    name: target_object
+    type: box
+    # Tall strict-top-down control.  Table top z=0.21 and target half-height
+    # 0.08 place the box centre at z=0.29.  The target top remains at the
+    # reachable z=0.37 while the table gains 40 mm of release clearance.
+    # y=+0.10 m is inside the cold-start complete-IK set and moves the target
+    # away from the former centreline transit sweep.
+    pose: {position: [0.30, 0.10, 0.29], orientation_rpy: [0.0, 0.0, 0.0]}
+    size: [0.08, 0.09, 0.16]
+    planning_padding_m: [0.02, 0.02, 0.02]
+    mass: 0.10
+    static: false
+    collision_enabled: true
+    planning_scene_enabled: true
+
+scenario_object_sets:
+  no_obstacle: [table, target]

@@ -1,0 +1,20 @@
+planning_group: abbarm
+end_effector_link: tool0
+planner_id: RRTConnect
+planning_time_s: 8.0
+planning_attempts: 3
+velocity_scaling: 0.10
+acceleration_scaling: 0.10
+goal_position_tolerance_m: 0.015
+# Keep the planner target stricter than the independent 4 degree post-execution
+# acceptance threshold so random IK solutions cannot sit on the acceptance edge.
+goal_orientation_tolerance_rad: 0.0349066
+verification_position_tolerance_m: 0.020
+verification_orientation_tolerance_deg: 4.0
+home_joint_tolerance_rad: 0.020
+scenario_repetitions:
+  no_obstacle: 3
+  single_obstacle: 10
+  double_obstacle: 10
+  unreachable: 1
+  fully_blocked: 1

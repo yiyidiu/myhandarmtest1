@@ -1,0 +1,319 @@
+schema_version: 1
+
+calibration:
+  status: TEMPORARY_UNCALIBRATED_SIMULATION_ONLY
+  real_robot_use_allowed: false
+  # A full camera-to-robot extrinsic is intentionally not required: the hand
+  # provides a zero-relative pose through an explicit operator axis mapping,
+  # not an absolute pose in the robot workspace.
+  required_direction_confirmations:
+    - camera_motion_axis_mapping_sign_and_gain
+  required_measurements:
+    - flange_to_three_finger_palm_center
+    - flange_to_three_finger_grasp_center
+
+frames:
+  camera: camera_color_optical_frame
+  base: base_link
+  flange: flange
+  servo_control: tool0
+  palm_center: handbase_link
+  # No independent calibrated grasp-center frame exists in the current URDF.
+  grasp_center: tool0
+
+reference:
+  frame: camera_color_optical_frame
+  policy: EXPLICIT_CONFIRM_NEXT_VALID_FRAME
+  require_confirmation: true
+  allow_automatic_rezero: false
+  # Translation stays in fixed D455 optical axes; orientation is the
+  # C-zero-local MANO delta right-multiplied onto the captured tool0 pose.
+  direction_basis: FIXED_CAMERA_TRANSLATION_AND_C_ZERO_LOCAL_ROTATION
+
+mapping:
+  status: APRILTAG_V3_RELATION_PORTED_TO_HAMER_MANO_SIMULATION
+  # Only the mapping relation is ported from the proven AprilTag V3 wrist
+  # chain.  The measured pose is still the current HaMeR/MANO wrist ring.
+  # Camera optical axes are x-right, y-down, z-forward, and:
+  #   delta_robot = 0.6 * [-dz_camera, -dx_camera, -dy_camera].
+  # Explicit directions:
+  #   camera -Z (toward camera)    -> base +X
+  #   camera +X (image right)      -> base -Y (green-axis sign reversed)
+  #   camera -Y (image up)         -> base +Z
+  translation_matrix: [[0.0, 0.0, -1.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]]
+  # AprilTag V3 sends q_delta without an axis remap.  Here the same relation
+  # maps MANO wrist-local RGB axes directly to captured tool0-local XYZ axes.
+  rotation_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+  # 5 cm hand translation targets 3 cm of tool translation on every axis.
+  translation_gain: [0.6, 0.6, 0.6]
+  # q_target = q_robot_zero * q_hand_delta: 20 deg hand -> 20 deg tool target.
+  rotation_gain: [1.0, 1.0, 1.0]
+
+# Select these profiles with the private ``mapping_profile`` parameter on the
+# trend and output-adapter nodes.  ``current_linear`` is handled by the legacy
+# ``mapping`` and ``workspace`` blocks above/below and remains the default.
+# The ground profile is deliberately independent, so an operator can return to
+# the preserved 0.6x behavior without restoring or editing any file.
+mapping_profiles:
+  camera_ground_workspace:
+    mode: CAMERA_RANGE_TO_GROUND_SECTOR
+    status: SIMULATION_PROFILE_REQUIRES_PER_OPERATOR_CAMERA_RANGE_CALIBRATION
+    translation_matrix: [[0.0, 0.0, -1.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]]
+    rotation_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    # Keep the existing MANO C-zero-local SO(3) behavior while positional
+    # workspace normalization is evaluated independently.
+    rotation_gain: [1.0, 1.0, 1.0]
+    response_exponent: 1.0
+    normalized_pose_mapping:
+      enabled: true
+      # Kinematic limits measured with MoveIt's IRB120 IK at the requested
+      # [0,0,0,0,90,0] C-zero. They are deliberately asymmetric: joint_5 has
+      # much less remaining travel in one local-Y direction. The online ray
+      # projection below recomputes the attainable fraction for mixed
+      # translation/rotation commands and for a C-zero captured elsewhere.
+      robot_orientation_negative_extent_deg: [94.7, 76.2, 179.0]
+      robot_orientation_positive_extent_deg: [94.7, 30.8, 179.0]
+      reachability_projection:
+        enabled: true
+        ik_service: /compute_ik
+        ik_group: abbarm
+        ik_timeout_s: 0.012
+        bisection_iterations: 6
+        boundary_safety_factor: 0.96
+        cache_direction_cosine: 0.99
+        cache_size: 96
+    robot_workspace:
+      model: FRONT_GROUND_CLIPPED_ELLIPSOID
+      reference_link: tool0
+      # One-million-sample FK envelope from the project URDF, including the
+      # 0.17 m flange->tool0 offset. Raw extrema were approximately
+      # X[-0.8190,+0.8190], Y[-0.8191,+0.8197], Z[-0.3514,+1.1111] m.
+      center_base_m: [0.00001, 0.00033, 0.37982]
+      radii_m: [0.81900, 0.81940, 0.73123]
+      # Only the front sector is exposed. The 0.10 m plane also avoids mapping
+      # hand motion through the IRB120 pedestal/base volume.
+      minimum_forward_x_m: 0.10
+      # At the C-zero orientation the three-finger collision geometry touches
+      # z=0 when tool0 is about 0.103 m high.  Keep tool0 at 0.100 m before
+      # the common 10 mm boundary margin is added, so a maximum downward hand
+      # command ends at z=0.110 m instead of continuously pushing the fingers
+      # into Gazebo's ground plane.  Fully orientation-dependent hand/ground
+      # clearance remains a later PlanningScene refinement.
+      minimum_tool_z_m: 0.100
+      utilization: 0.95
+      boundary_margin_m: 0.010
+      soft_margin_m: 0.050
+
+# A visually pure wrist roll from monocular MANO often carries substantial
+# pitch/yaw components.  Near a side grasp those coupled components drive the
+# IRB120 wrist toward joint_5 limits asymmetrically.  In the captured C-zero
+# local frame, smoothly isolate dominant +/-X roll while leaving its angle
+# exactly 1:1.  The rule is sign-symmetric and fades to zero for ordinary
+# mixed-axis motion below 30 degrees.
+side_grasp_projection:
+  enabled: true
+  local_axis: x
+  blend_start_deg: 30.0
+  blend_full_deg: 55.0
+  dominance_start_ratio: 0.90
+  dominance_full_ratio: 1.15
+
+trend:
+  # Motion-adaptive causal filtering: strong attenuation inside the measured
+  # stationary MANO noise band, then near-direct response once the hand moves
+  # deliberately.  The selected pose itself keeps continuous 1:1 geometry.
+  maximum_pose_step_m: 0.040
+  # The supplied AprilTag V3 chain clamps a recovered pose step; it does not
+  # permanently reject a target merely because tracking resumed far away.
+  # Keep a broad sanity ceiling and let the 40 mm step clamp provide temporal
+  # continuity.  The former 80 mm gate rejected normal fast hand motion and
+  # could HOLD the same stale target forever.
+  maximum_pose_position_innovation_m: 1.000
+  maximum_pose_rotation_step_deg: 45.0
+  # HaMeR now performs the palm/back branch gate before UDP output.  A second
+  # 70 degree gate here created an unrecoverable stale-orientation latch after
+  # an upstream ROI reacquisition.  SO(3) distance is at most 180 degrees, so
+  # this leaves only the causal 45 degree step clamp active downstream.
+  maximum_pose_rotation_innovation_deg: 180.0
+  pose_position_lowpass_alpha: 0.28
+  pose_position_lowpass_alpha_max: 0.95
+  pose_position_quiet_step_m: 0.0025
+  pose_position_responsive_step_m: 0.015
+  pose_rotation_lowpass_alpha: 0.30
+  pose_rotation_lowpass_alpha_max: 0.97
+  pose_rotation_quiet_step_deg: 1.2
+  pose_rotation_responsive_step_deg: 8.0
+  window_size: 4
+  translation_deadband_m: [0.0, 0.0, 0.0]
+  rotation_deadband_rad: [0.0, 0.0, 0.0]
+  jump_translation_m: 1.0
+  jump_rotation_deg: 179.0
+  minimum_dt_s: 0.008
+  maximum_dt_s: 0.45
+  causal_smoothing_alpha: 0.65
+  reanchor_after_rejections: 3
+
+stability:
+  # Suppress only derivative feed-forward in the recorded stationary-noise
+  # range. Pose-error feedback stays active, so slow deliberate displacement
+  # and exact return to C-zero are not dead-banded.
+  feedforward_linear_quiet_mps: 0.012
+  feedforward_linear_full_mps: 0.040
+  feedforward_angular_quiet_radps: 0.18
+  feedforward_angular_full_radps: 0.60
+
+limits:
+  # Effectively non-limiting for normal human motion in this Gazebo-only
+  # response experiment. MoveIt/Gazebo still enforce the URDF joint bounds.
+  maximum_linear_velocity_mps: [1.00, 1.00, 1.00]
+  maximum_angular_velocity_radps: [10.00, 10.00, 10.00]
+  maximum_linear_acceleration_mps2: [50.00, 50.00, 50.00]
+  maximum_angular_acceleration_radps2: [500.00, 500.00, 500.00]
+
+safety:
+  # The exact-frame renderer currently produces normal live gaps of
+  # 0.19--0.30 s.  A 0.20 s watchdog repeatedly interrupted every valid
+  # command.  Allow one normal slow frame, but still stop a real loss quickly.
+  input_timeout_s: 0.40
+  # At the AprilTag V3 acceleration limits, full-speed commands need at most
+  # 0.25 s to ramp to zero after the input watchdog fires.
+  timeout_zero_deadline_s: 0.65
+  real_calibration_confirmed: false
+  # Simulation starts unlatched. Real output is independently hard-gated by four checks.
+  emergency_stop_latched: false
+
+workspace:
+  # Preset boundary only. This is not unknown-obstacle avoidance.
+  reference_link: tool0
+  minimum_base_m: [0.15, -0.55, 0.05]
+  maximum_base_m: [0.75, 0.55, 0.85]
+  soft_margin_m: 0.05
+
+transforms:
+  flange_to_palm_center:
+    status: URDF_ONLY_NOT_PHYSICALLY_MEASURED
+    translation_m: [0.0, 0.0, 0.0]
+    quaternion_xyzw: [0.0, 0.7068251811, 0.0, 0.7073882692]
+  flange_to_grasp_center:
+    status: TEMPORARY_FROM_EXISTING_TOOL0_URDF_NOT_PHYSICALLY_MEASURED
+    translation_m: [0.17, 0.0, 0.0]
+    quaternion_xyzw: [0.0, 0.7071067812, 0.0, 0.7071067812]
+  servo_control_to_grasp_center:
+    status: TEMPORARY_TOOL0_EQUALS_GRASP_CENTER
+    translation_m: [0.0, 0.0, 0.0]
+    quaternion_xyzw: [0.0, 0.0, 0.0, 1.0]
+
+assistance:
+  default_strength: 0.65
+  approach_axis_grasp_center: [0.0, 0.0, 1.0]
+  table_normal_base: [0.0, 0.0, 1.0]
+  top_max_tilt_deg: 10.0
+  side_max_elevation_deg: 15.0
+  side_directions_base:
+    left: [0.0, 1.0, 0.0]
+    right: [0.0, -1.0, 0.0]
+    front: [1.0, 0.0, 0.0]
+    back: [-1.0, 0.0, 0.0]
+  angular_gain: 1.5
+  position_gain: 2.0
+  maximum_angular_speed_radps: 0.45
+  maximum_linear_speed_mps: 0.08
+  strength_rise_per_s: 1.5
+  strength_fall_per_s: 3.0
+  opposition_dot_threshold: -0.002
+  opposition_duration_s: 0.20
+  require_moveit_ik: true
+  ik_service: /compute_ik
+  ik_timeout_s: 0.08
+  move_group: abbarm
+
+gesture:
+  stable_duration_s: 0.30
+  release_duration_s: 0.30
+  confidence_threshold: 0.75
+  codes: {none: 0, open: 1, close: 2, configuration: 3}
+
+control:
+  mode: RELATIVE_POSE_TRACKING
+  rate_hz: 50.0
+  # AprilTag V3 pose tracker relation: feed-forward + pose-error feedback.
+  translation_error_gain_per_s: [8.0, 8.0, 8.0]
+  # Preserve V3 target geometry but remove its deliberately slow response.
+  rotation_error_gain_per_s: [8.0, 8.0, 8.0]
+  translation_feedforward_gain: [1.0, 1.0, 1.0]
+  # Pose feedback remains 8/s. A 0.75 derivative feed-forward keeps the
+  # measured 0.167/0.500 s response while reducing stop/ramp overshoot caused
+  # by the four-frame causal velocity estimate.
+  rotation_feedforward_gain: [0.75, 0.75, 0.75]
+  target_linear_speed_limit_mps: 1.00
+  target_angular_speed_limit_radps: 10.00
+  # Match V3 publish_repeated/HOLD_LAST in Gazebo.  Zero means hold the latest
+  # target until a new valid MANO pose arrives.  This is simulation-only; the
+  # real output path retains its fail-closed input watchdog.
+  repeat_last_target_pose: true
+  target_hold_timeout_s: 0.0
+  # Prevent MoveIt Servo's direction-independent collision scalar from being
+  # driven to ~0 by a persistent unsafe hand target.  Once scale <= 0.20, only
+  # measured tool velocities that reduce the robot's C-zero pose error pass
+  # until scale recovers.
+  collision_guard_enter_scale: 0.20
+  collision_guard_release_scale: 0.80
+  collision_guard_translation_progress_m: 0.001
+  collision_guard_rotation_progress_deg: 1.0
+  position_tolerance_m: [0.0002, 0.0002, 0.0002]
+  rotation_tolerance_deg: 0.0572957795  # 0.001 rad
+  maximum_linear_speed_norm_mps: 1.00
+  maximum_angular_speed_norm_radps: 10.00
+  maximum_relative_translation_m: [0.25, 0.25, 0.25]
+  maximum_relative_rotation_deg: 179.0
+  # A full-pose IK query is not a valid per-frame gate for local Cartesian
+  # Servo tracking: real HaMeR orientation noise made it reject every target
+  # as unreachable and forced a permanent zero command.  The live response
+  # profile also bypasses collision/singularity proximity scaling; the safe
+  # regression profile can still be selected with response_first:=false.
+  require_collision_free_target_ik: false
+  target_ik_service: /compute_ik
+  target_ik_group: abbarm
+  target_ik_timeout_s: 0.06
+  # MoveIt Servo already stops/scales status 2/3/5 commands and can recover when
+  # the operator commands away from the singularity, joint limit, or nearby
+  # obstacle.  Externally latching those transient states stranded the arm and
+  # made every later C token fail.  Only status 4 (an actual collision) disarms
+  # the hand reference and requires a new C after the simulation is made safe.
+  servo_interlock_statuses: [4]
+  # A hard singularity halt (2) or joint-bound halt (5) must not strand the
+  # arm.  While either status is present, pass only motion that reduces the
+  # measured tool-pose error to the robot pose captured at C.  Returning the
+  # hand to C-zero therefore always commands a recoverable exit direction.
+  servo_retreat_statuses: [2, 5]
+  # MoveIt Servo retains a hard-stop status until its reset service is called.
+  # Request that reset only when a new MANO target is fresh and the command has
+  # already passed the measured C-zero retreat-direction guard.  This prevents
+  # both permanent status-2 deadlock and a reset that chases an old target.
+  servo_auto_reset_statuses: [2, 5]
+  servo_reset_service: /servo_server/reset_servo_status
+  servo_reset_min_interval_s: 0.25
+  servo_reset_fresh_target_s: 0.40
+  servo_reset_min_command_norm: 0.0001
+  collision_disarm_scale: 0.0
+
+logging:
+  rate_hz: 50.0
+
+topics:
+  hamer_pose: /shared_teleop/hamer_pose
+  raw_command: /shared_teleop/raw_hand_command
+  operator_command: /shared_teleop/operator_command
+  assisted_command: /shared_teleop/assisted_command
+  safe_twist: /shared_teleop/safe_twist
+  servo_twist: /servo_server/delta_twist_cmds
+  hand_action: /shared_teleop/hand_action
+  mock_hand_command: /shared_teleop/mock_hand_command
+  assist_request: /shared_teleop/assist_request
+  emergency_stop: /shared_teleop/emergency_stop
+  trend_diagnostics: /shared_teleop/trend_diagnostics
+  servo_status: /servo_server/status
+  servo_collision_scale: /servo_server/internal/collision_velocity_scale
+  gesture_diagnostics: /shared_teleop/gesture_diagnostics
+  assist_diagnostics: /shared_teleop/assist_diagnostics
+  output_diagnostics: /shared_teleop/output_diagnostics

@@ -1,0 +1,43 @@
+<launch>
+  <arg name="base_frame" default="base_link"/>
+  <arg name="ee_frame" default="tool0"/>
+
+  <arg name="target_topic" default="/target_ee_pose"/>
+  <arg name="twist_topic" default="/servo_server/delta_twist_cmds"/>
+
+  <arg name="kp_pos" default="0.8"/>
+  <arg name="kp_rot" default="0.6"/>
+
+  <arg name="max_linear_speed" default="0.04"/>
+  <arg name="max_angular_speed" default="0.40"/>
+
+  <arg name="pos_deadband" default="0.001"/>
+  <arg name="rot_deadband" default="0.01"/>
+
+  <arg name="rate" default="50.0"/>
+  <arg name="target_timeout" default="0.5"/>
+
+  <node pkg="handarm_moveit_demo"
+        type="servo_pose_tracking_node.py"
+        name="servo_pose_tracking_node"
+        output="screen">
+
+    <param name="base_frame" value="$(arg base_frame)"/>
+    <param name="ee_frame" value="$(arg ee_frame)"/>
+
+    <param name="target_topic" value="$(arg target_topic)"/>
+    <param name="twist_topic" value="$(arg twist_topic)"/>
+
+    <param name="kp_pos" value="$(arg kp_pos)"/>
+    <param name="kp_rot" value="$(arg kp_rot)"/>
+
+    <param name="max_linear_speed" value="$(arg max_linear_speed)"/>
+    <param name="max_angular_speed" value="$(arg max_angular_speed)"/>
+
+    <param name="pos_deadband" value="$(arg pos_deadband)"/>
+    <param name="rot_deadband" value="$(arg rot_deadband)"/>
+
+    <param name="rate" value="$(arg rate)"/>
+    <param name="target_timeout" value="$(arg target_timeout)"/>
+  </node>
+</launch>

@@ -1,0 +1,25 @@
+# Finite-effort Gazebo joint PIDs for the simulated robot and hand.
+# Hand values are simulation actuator parameters, not a model of strain gauges.
+joint_1: {p: 300.0, i: 0.0, d: 5.0, i_clamp: 0.0}
+# At P=500 the loaded top-down retreat had a repeatable 0.03081 rad gravity
+# error (15.4 effort units), just outside the unchanged 0.03 controller gate.
+# P=650 reduced the physical release-retreat residual to 0.025012 rad, but
+# left no repeatability margin against the unchanged 0.025 rad measured gate.
+# P=700 provides a small bounded margin without integral wind-up or changes to
+# the hand/mimic joints.
+joint_2: {p: 700.0, i: 0.0, d: 10.0, i_clamp: 0.0}
+joint_3: {p: 500.0, i: 0.0, d: 10.0, i_clamp: 0.0}
+joint_4: {p: 200.0, i: 0.0, d: 3.0, i_clamp: 0.0}
+joint_5: {p: 200.0, i: 0.0, d: 3.0, i_clamp: 0.0}
+joint_6: {p: 100.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+# Palm configuration must remain fixed while flexion joints grasp.  The 4 Nm
+# URDF effort limit remains the hard cap; these gains reject the measured
+# 0.14 rad contact-induced configuration drift without increasing that cap.
+f1j1: {p: 20.0, i: 0.0, d: 0.30, i_clamp: 0.0}
+f1j2: {p: 4.0, i: 0.0, d: 0.10, i_clamp: 0.0}
+f2j1: {p: 4.0, i: 0.0, d: 0.10, i_clamp: 0.0}
+f3j2: {p: 4.0, i: 0.0, d: 0.10, i_clamp: 0.0}
+f3j1: {p: 20.0, i: 0.0, d: 0.30, i_clamp: 0.0}
+f1j3: {p: 1.0, i: 0.0, d: 0.0, i_clamp: 0.0}
+f2j2: {p: 1.0, i: 0.0, d: 0.0, i_clamp: 0.0}
+f3j3: {p: 1.0, i: 0.0, d: 0.0, i_clamp: 0.0}

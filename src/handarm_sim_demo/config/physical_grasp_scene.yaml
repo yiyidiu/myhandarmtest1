@@ -1,0 +1,32 @@
+schema_version: 1
+frame_id: world
+units: {length: m, angle: rad, mass: kg}
+
+objects:
+  table:
+    name: work_table
+    type: box
+    pose: {position: [0.65, 0.0, 0.33], orientation_rpy: [0.0, 0.0, 0.0]}
+    size: [0.80, 0.90, 0.08]
+    mass: 80.0
+    static: true
+    collision_enabled: true
+    planning_scene_enabled: true
+  target:
+    name: target_object
+    type: box
+    pose: {position: [0.34, 0.18, 0.42], orientation_rpy: [0.0, 0.0, 0.0]}
+    # 60 mm y-width matches the measured 49 mm f1/f2 contact-track spacing
+    # with finite alignment margin in the fixed initial palm configuration.
+    size: [0.05, 0.06, 0.10]
+    # MoveIt's transit proxy is inflated on every side to cover the measured
+    # Gazebo arm tracking error. The pick node restores exact target geometry
+    # only after the pregrasp transit has completed and been verified.
+    planning_padding_m: [0.02, 0.02, 0.02]
+    mass: 0.10
+    static: false
+    collision_enabled: true
+    planning_scene_enabled: true
+
+scenario_object_sets:
+  no_obstacle: [table, target]

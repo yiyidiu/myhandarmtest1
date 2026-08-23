@@ -1,0 +1,44 @@
+controller_gazebo:
+  type: position_controllers/JointTrajectoryController
+  joints: [joint_1, joint_2, joint_3, joint_4, joint_5, joint_6]
+  gains:
+    joint_1: {p: 120.0, i: 0.0, d: 2.0, i_clamp: 0.0}
+    joint_2: {p: 120.0, i: 0.0, d: 2.0, i_clamp: 0.0}
+    joint_3: {p: 120.0, i: 0.0, d: 2.0, i_clamp: 0.0}
+    joint_4: {p: 80.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    joint_5: {p: 80.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    joint_6: {p: 60.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+  constraints:
+    # The heavy wrist/hand can still be converging when a long MoveIt
+    # trajectory reaches its nominal final timestamp.  Keep the 0.03 rad goal
+    # tolerance, but allow the controller enough time to settle into it.
+    goal_time: 5.0
+    stopped_velocity_tolerance: 0.0
+    joint_1: {trajectory: 0.30, goal: 0.03}
+    joint_2: {trajectory: 0.30, goal: 0.03}
+    joint_3: {trajectory: 0.30, goal: 0.03}
+    joint_4: {trajectory: 0.30, goal: 0.03}
+    joint_5: {trajectory: 0.30, goal: 0.03}
+    joint_6: {trajectory: 0.30, goal: 0.03}
+  stop_trajectory_duration: 0.10
+  state_publish_rate: 100
+  action_monitor_rate: 20
+
+controller_gazebo_hand:
+  type: position_controllers/JointTrajectoryController
+  joints: [f1j1, f1j2, f2j1, f3j2]
+  gains:
+    f1j1: {p: 100.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    f1j2: {p: 100.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    f2j1: {p: 100.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    f3j2: {p: 100.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+  constraints:
+    goal_time: 2.0
+    stopped_velocity_tolerance: 0.0
+    f1j1: {trajectory: 0.30, goal: 0.03}
+    f1j2: {trajectory: 0.30, goal: 0.03}
+    f2j1: {trajectory: 0.30, goal: 0.03}
+    f3j2: {trajectory: 0.30, goal: 0.03}
+  stop_trajectory_duration: 0.10
+  state_publish_rate: 50
+  action_monitor_rate: 20

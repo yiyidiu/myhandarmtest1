@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Run after abb120_moveit_config1/demo_gazebo_servo.launch -->
+  <arg name="dx" default="0.05" />
+  <arg name="dy" default="0.0" />
+  <arg name="dz" default="0.0" />
+  <arg name="kp" default="0.8" />
+  <arg name="max_speed" default="0.04" />
+
+  <node pkg="handarm_moveit_demo"
+        type="servo_pose_step_test.py"
+        name="servo_pose_step_test"
+        output="screen">
+    <param name="dx" value="$(arg dx)" />
+    <param name="dy" value="$(arg dy)" />
+    <param name="dz" value="$(arg dz)" />
+    <param name="kp" value="$(arg kp)" />
+    <param name="max_speed" value="$(arg max_speed)" />
+  </node>
+</launch>

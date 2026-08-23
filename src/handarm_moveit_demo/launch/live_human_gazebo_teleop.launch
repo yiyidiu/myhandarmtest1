@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Explicit live-human entry point. It is simulation-only and consumes the
+       handarm_hamer_pose_v1 UDP stream on localhost:5010. -->
+  <arg name="gazebo_gui" default="true" />
+  <arg name="enable_logger" default="true" />
+  <arg name="log_directory" default="/tmp/handarm_shared_teleop_logs" />
+  <arg name="world_name" default="worlds/empty.world" />
+  <arg name="mapping_profile" default="current_linear" />
+  <arg name="camera_workspace_calibration_file"
+       default="$(find handarm_moveit_demo)/config/camera_workspace_calibration.yaml" />
+
+  <include file="$(find handarm_moveit_demo)/launch/shared_teleop_safe_demo.launch">
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)" />
+    <arg name="input_source" value="udp" />
+    <arg name="enable_logger" value="$(arg enable_logger)" />
+    <arg name="log_directory" value="$(arg log_directory)" />
+    <arg name="world_name" value="$(arg world_name)" />
+    <arg name="mapping_profile" value="$(arg mapping_profile)" />
+    <arg name="camera_workspace_calibration_file"
+         value="$(arg camera_workspace_calibration_file)" />
+    <arg name="response_first" value="true" />
+  </include>
+</launch>

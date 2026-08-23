@@ -1,0 +1,17 @@
+schema_version: 1
+profile_name: d455_usb2_development
+evidence_scope: USB2_DEVELOPMENT_ONLY
+formal_dataset_eligible: false
+require_superspeed: false
+explicit_usb2_opt_in_required: true
+streams:
+  color: {width: 640, height: 480, fps: 30, format: rgb8}
+  depth: {width: 640, height: 480, fps: 30, format: z16}
+  infrared: {enabled: false}
+  motion: {enabled: false}
+alignment_target: color
+maximum_rgb_depth_skew_ms: 2.0
+writer_queue_depth: 64
+live_algorithm_profile: true
+recording_profile: true
+timing_contract: use_actual_device_timestamps_and_reinitialize_on_large_gap

@@ -1,0 +1,136 @@
+schema_version: 1
+frames: {base: base_link, tool: tool0, hand: handbase_link, grasp_center: grasp_center}
+fixed_palm:
+  joint: f1j1
+  value_rad: 0.18
+  open_flexion_rad: {f1j2: 0.20, f2j1: 0.20, f3j2: 0.20}
+  close_flexion_rad: {f1j2: 0.85, f2j1: 0.85, f3j2: 0.90}
+  closure_samples: 31
+finger_geometry:
+  families:
+    f1: [f1link2, f1link3]
+    f2: [f2link1, f2link2]
+    f3: [f3link2, f3link3]
+  distal_pad_links: {f1: f1link3, f2: f2link2, f3: f3link3}
+  non_contact_links: [handbase_link, f1link1, f3link1]
+  capsule_axis_samples: 31
+grasp_center:
+  reference_closure_fraction: 0.50
+  expected_handbase_xyz_m: [0.008705, 0.010090, 0.250669]
+  expected_tool0_xyz_m: [0.008506, 0.010090, 0.080676]
+  validation_tolerance_m: 0.002
+contact_geometry:
+  contact_tolerance_m: 0.001
+  required_open_clearance_m: 0.001
+  maximum_contact_fraction_spread: 0.35
+  minimum_table_clearance_m: 0.008
+  minimum_palm_object_clearance_m: 0.003
+  minimum_cross_finger_clearance_m: -0.001
+  minimum_projected_triangle_area_m2: 0.0001
+  envelope_tolerance_m: 0.004
+  required_finger_families: [f1, f2, f3]
+search:
+  # Low-table control: 80x90x160 mm box at [0.30, 0.00, 0.29], resting on
+  # the z=0.21 m table.  Its top and the grasp centre stay at the previously
+  # reachable world heights while the added lower half supplies 40 mm extra
+  # hand-to-table clearance. Live collision-aware TRAC-IK probing verified the
+  # grasp, 40 mm pregrasp and all nine straight approach samples.  Roll 105
+  # and 165 deg place all three contacts on distinct interior side faces.
+  # The additional height gives release-time table clearance without
+  # weakening the hard 8 mm collision gate.
+  expected_object_size_m: [0.08, 0.09, 0.16]
+  # Centered top-down only: no planar grid and no oblique/side fallback.
+  center_offsets_m: [0.0]
+  # Keep the measured centred strict-top-down geometry.
+  # Raise the grasp centre with the taller box so all three fingers meet
+  # vertical side faces instead of two rays terminating on the top face.
+  top_object_center_in_grasp_frame_z_m: 0.035
+  top_oblique_tilt_axial_pairs: []
+  coarse_roll_step_deg: 15
+  fine_roll_half_width_deg: 15
+  fine_roll_step_deg: 2
+  top_oblique_planar_offsets_m: [[0.0, 0.0]]
+  f3_contact_lag_penalty_per_fraction: 200.0
+  # The taller target raises the hand clearance above the earlier 120 mm
+  # object experiment.  Preserve
+  # a 30 mm fail-closed planning margin above the 8 mm hard geometry gate.
+  minimum_planned_table_clearance_m: 0.030
+  minimum_coarse_table_clearance_m: 0.030
+  contact_calibrated_top_oblique_roll_window_deg: [0.0, 0.0]
+  pregrasp_distance_m: 0.040
+  side_height_offsets_m: [0.0, 0.010, 0.020]
+  # This experiment must never fall back to the historical oblique edge grip
+  # or to any side grip.
+  grasp_families: [top_down]
+# Explicit non-legacy reference mode.  The legacy <=25 mm object-centre axial
+# gate is intentionally not applied here; the actual three contact points must
+# instead sit in a narrow band below the top face.
+quality_reference_mode: top_precision_band
+top_precision_band:
+  # Reject top/bottom edge contacts.  The accepted interior contacts remain
+  # well clear of both horizontal edges;
+  # bad rolls with a contact at depth 0 are rejected before IK/execution.
+  minimum_contact_depth_below_top_m: 0.015
+  maximum_contact_depth_below_top_m: 0.145
+quality_gates:
+  maximum_centered_object_center_axial_offset_m: 0.025
+  maximum_contact_fraction_spread: 0.20
+  minimum_projected_contact_area_m2: 0.001
+  minimum_normalized_contact_area_fraction: 0.30
+  maximum_contact_height_ratio: 0.70
+  minimum_lift_world_z_fraction: 0.95
+runtime_acceptance:
+  object_pose_stability_samples: 10
+  object_pose_position_range_m: 0.001
+  object_pose_orientation_range_deg: 1.0
+  object_scene_sync_position_tolerance_m: 0.001
+  object_scene_sync_orientation_tolerance_deg: 1.0
+  required_actual_finger_families: [f1, f2, f3]
+  contact_stability_s: 0.30
+  contact_wait_timeout_s: 4.0
+  contact_limited_close_timeout_s: 9.5
+  approach_velocity_scaling: 0.03
+  approach_acceleration_scaling: 0.02
+  cartesian_eef_step_m: 0.002
+  cartesian_fraction_min: 0.995
+  pregrasp_position_tolerance_m: 0.025
+  pregrasp_orientation_tolerance_deg: 6.0
+  maximum_pregrasp_object_displacement_m: 0.005
+  maximum_approach_object_displacement_m: 0.005
+  maximum_grasp_object_displacement_m: 0.010
+  # Request margin above the 60 mm physical acceptance threshold.
+  lift_distance_along_opposite_approach_m: 0.085
+  # A fixed-orientation vertical lift self-collides link_4 with handbase_link
+  # after about 50 mm.  Tilt around the physical grasp center so the object
+  # still translates vertically while joint_5 moves away from that fold.
+  lift_hand_local_y_tilt_deg: -10.0
+  minimum_actual_object_lift_z_fraction: 0.90
+  lift_preload_flexion_delta_rad: {f1j2: 0.08, f2j1: 0.08, f3j2: 0.01}
+  lift_preload_duration_s: 0.75
+  lift_preload_goal_tolerance_rad: 0.10
+  lift_preload_palm_tolerance_rad: 0.02
+  minimum_object_lift_m: 0.060
+  airborne_no_table_support_stability_s: 0.30
+  airborne_no_table_support_timeout_s: 2.0
+  maximum_object_tool_disagreement_m: 0.010
+  maximum_object_grasp_center_disagreement_m: 0.010
+  minimum_lift_place_duration_s: 8.0
+  # Match the observed Gazebo controller endpoint capability.  The taller
+  # target supplies the physical table-clearance margin; this tolerance is
+  # never used as a substitute for the measured 8 mm clearance gate.
+  post_execution_joint_tolerance_rad: 0.025
+  post_execution_settle_stability_s: 0.20
+  post_execution_settle_timeout_s: 4.0
+  physical_hold_duration_s: 5.0
+  contact_message_timeout_s: 0.20
+  contact_loss_grace_s: 0.15
+  object_place_tolerance_m: 0.015
+  table_support_stability_s: 0.30
+  table_support_timeout_s: 3.0
+  release_contact_clear_stability_s: 0.50
+  release_contact_clear_timeout_s: 5.0
+  release_settle_duration_s: 2.0
+  retreat_distance_m: 0.040
+  # The former 4 s retreat left joint_2 0.00081 rad outside the unchanged
+  # controller goal tolerance.  Slow only the post-release empty-hand motion.
+  minimum_retreat_duration_s: 8.0

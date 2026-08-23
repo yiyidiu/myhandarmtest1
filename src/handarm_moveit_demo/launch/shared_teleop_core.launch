@@ -1,0 +1,73 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="enable_robot" default="false" />
+  <arg name="simulation" default="true" />
+  <arg name="robot_authorization" default="" />
+  <arg name="calibration_confirmed" default="false" />
+  <arg name="input_source" default="synthetic" doc="synthetic, direction_test, udp, replay, or hamer_recording" />
+  <arg name="input_csv" default="" />
+  <arg name="hamer_session" default="" />
+  <arg name="hamer_replay_speed" default="1.0" />
+  <arg name="enable_gesture_demo" default="true" />
+  <arg name="enable_logger" default="true" />
+  <arg name="log_directory" default="/tmp/handarm_shared_teleop_logs" />
+  <arg name="mapping_profile" default="current_linear" />
+  <arg name="camera_workspace_calibration_file"
+       default="$(find handarm_moveit_demo)/config/camera_workspace_calibration.yaml" />
+
+  <rosparam file="$(find handarm_moveit_demo)/config/shared_teleop.yaml"
+            command="load" ns="shared_teleop" />
+
+  <node if="$(eval arg('input_source') == 'synthetic')"
+        pkg="handarm_moveit_demo" type="synthetic_hamer_pose_publisher.py"
+        name="synthetic_hamer_pose_publisher" output="screen">
+    <param name="enable_gesture" value="$(arg enable_gesture_demo)" />
+  </node>
+  <node if="$(eval arg('input_source') == 'direction_test')"
+        pkg="handarm_moveit_demo" type="synthetic_direction_sequence.py"
+        name="synthetic_direction_sequence" output="screen" />
+  <node if="$(eval arg('input_source') == 'udp')"
+        pkg="handarm_moveit_demo" type="hamer_input_adapter.py"
+        name="hamer_input_adapter" output="screen">
+    <!-- Match shared_teleop.yaml safety.input_timeout_s.  The adapter uses
+         wall-monotonic time and emits one explicit invalid sample per gap. -->
+    <param name="input_timeout_s" value="0.40" />
+  </node>
+  <node if="$(eval arg('input_source') == 'replay')"
+        pkg="handarm_moveit_demo" type="teleop_pose_replay.py"
+        name="teleop_pose_replay" output="screen">
+    <param name="input_csv" value="$(arg input_csv)" />
+  </node>
+  <node if="$(eval arg('input_source') == 'hamer_recording')"
+        pkg="handarm_moveit_demo" type="hamer_recording_replay.py"
+        name="hamer_recording_replay" output="screen">
+    <param name="session_directory" value="$(arg hamer_session)" />
+    <param name="speed" value="$(arg hamer_replay_speed)" />
+  </node>
+
+  <node pkg="handarm_moveit_demo" type="six_dof_trend_node.py"
+        name="six_dof_trend" output="screen">
+    <param name="simulation" value="$(arg simulation)" />
+    <param name="mapping_profile" value="$(arg mapping_profile)" />
+    <param name="camera_workspace_calibration_file"
+           value="$(arg camera_workspace_calibration_file)" />
+  </node>
+  <node pkg="handarm_moveit_demo" type="gesture_isolation_node.py"
+        name="gesture_isolation" output="screen" />
+  <node pkg="handarm_moveit_demo" type="shared_control_node.py"
+        name="shared_control" output="screen" />
+  <node pkg="handarm_moveit_demo" type="moveit_servo_output_adapter.py"
+        name="moveit_servo_output_adapter" output="screen">
+    <param name="enable_robot" value="$(arg enable_robot)" />
+    <param name="simulation" value="$(arg simulation)" />
+    <param name="robot_authorization" value="$(arg robot_authorization)" />
+    <param name="calibration_confirmed" value="$(arg calibration_confirmed)" />
+    <param name="mapping_profile" value="$(arg mapping_profile)" />
+  </node>
+  <node pkg="handarm_moveit_demo" type="mock_three_finger_hand_adapter.py"
+        name="mock_three_finger_hand_adapter" output="screen" />
+  <node if="$(arg enable_logger)" pkg="handarm_moveit_demo" type="teleop_csv_logger.py"
+        name="teleop_csv_logger" output="screen">
+    <param name="output_directory" value="$(arg log_directory)" />
+  </node>
+</launch>

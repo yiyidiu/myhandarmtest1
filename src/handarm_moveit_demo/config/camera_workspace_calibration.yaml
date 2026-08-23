@@ -1,0 +1,20 @@
+schema_version: 1
+status: PROVISIONAL_SIMULATION_DEFAULT_REPLACE_WITH_MEASURED_FILE
+frame_id: camera_color_optical_frame
+units: m
+
+# Positive magnitudes from the C-zero wrist position to the stable visible-hand
+# boundary in each D455 optical direction (X right, Y down, Z forward). These
+# provisional values make the new Gazebo profile runnable; use
+# calibrate_camera_workspace_udp.py before quantitative acceptance.
+human_workspace:
+  negative_extent_m: [0.28, 0.18, 0.25]
+  positive_extent_m: [0.28, 0.18, 0.25]
+  neutral_position_m: null
+  sample_count: 0
+  quantile: null
+
+human_orientation:
+  negative_extent_deg: [90.0, 90.0, 90.0]
+  positive_extent_deg: [90.0, 90.0, 90.0]
+  note: PROVISIONAL_ACTIVE_FOR_NORMALIZED_6D_CAMERA_POSE_MAPPING

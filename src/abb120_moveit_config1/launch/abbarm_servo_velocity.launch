@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Start MoveIt Servo with direct joint velocity output. -->
+  <node name="servo_server"
+        pkg="moveit_servo"
+        type="servo_server"
+        output="screen">
+    <rosparam file="$(find abb120_moveit_config1)/config/servo_abbarm_velocity.yaml" command="load" />
+  </node>
+</launch>

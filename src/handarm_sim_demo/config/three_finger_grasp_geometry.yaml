@@ -1,0 +1,180 @@
+schema_version: 1
+
+# Geometry-only description.  Physical gains, effort limits, friction and
+# Gazebo contact parameters deliberately do not belong in this file.
+frames:
+  base: base_link
+  tool: tool0
+  hand: handbase_link
+  grasp_center: grasp_center
+
+fixed_palm:
+  joint: f1j1
+  value_rad: 0.18
+  open_flexion_rad: {f1j2: 0.20, f2j1: 0.20, f3j2: 0.20}
+  close_flexion_rad: {f1j2: 0.85, f2j1: 0.85, f3j2: 0.90}
+  closure_samples: 31
+
+finger_geometry:
+  families:
+    f1: [f1link2, f1link3]
+    f2: [f2link1, f2link2]
+    f3: [f3link2, f3link3]
+  distal_pad_links: {f1: f1link3, f2: f2link2, f3: f3link3}
+  non_contact_links: [handbase_link, f1link1, f3link1]
+  capsule_axis_samples: 31
+
+# The reference center is the centroid of the three distal collision-cylinder
+# centers halfway through the synchronized OPEN->CLOSE sweep.  The Python
+# implementation recomputes it from the installed URDF and rejects this file
+# if the model drifts beyond validation_tolerance_m.
+grasp_center:
+  reference_closure_fraction: 0.50
+  expected_handbase_xyz_m: [0.008705, 0.010090, 0.250669]
+  expected_tool0_xyz_m: [0.008506, 0.010090, 0.080676]
+  validation_tolerance_m: 0.002
+
+contact_geometry:
+  contact_tolerance_m: 0.0010
+  required_open_clearance_m: 0.0010
+  maximum_contact_fraction_spread: 0.35
+  minimum_table_clearance_m: 0.008
+  minimum_palm_object_clearance_m: 0.003
+  minimum_cross_finger_clearance_m: -0.001
+  minimum_projected_triangle_area_m2: 0.00010
+  envelope_tolerance_m: 0.004
+  required_finger_families: [f1, f2, f3]
+
+search:
+  expected_object_size_m: [0.05, 0.06, 0.10]
+  center_offsets_m: [-0.010, 0.0, 0.010]
+  # For top-down, put the grasp-center plane 5 mm above the box centre.  The
+  # value is selected by the explicit table-clearance gate, not by changing
+  # finger geometry or collision tolerances.
+  top_object_center_in_grasp_frame_z_m: 0.005
+  # Strict vertical top-down is geometrically valid but puts the IRB120
+  # flange outside its reachable workspace.  These bounded above-table
+  # oblique entries are only selectable after enclosure, complete IK and
+  # continuous-approach checks succeed; they remain distinct from horizontal
+  # side grasps.
+  top_oblique_tilt_axial_pairs:
+    # -25deg/0.060 at the exact calibrated roll failed complete IK.  Retain
+    # the only candidate proven to pass IK, continuous approach and actual
+    # f1/f2/f3 contact.
+    - {tilt_deg: -30, object_center_axial_offset_m: 0.052}
+  coarse_roll_step_deg: 15
+  fine_roll_half_width_deg: 15
+  fine_roll_step_deg: 2
+  # The first real contact-only run reached f1/f2 but left f3 unloaded even
+  # though the centred capsule model predicted f3 one closure sample later.
+  # Search these bounded object-in-hand offsets and penalize any candidate in
+  # which f3 is predicted later than the first opposing contact.  This changes
+  # only the object-relative grasp pose; hand dynamics/effort/PID/contact
+  # parameters remain frozen.
+  top_oblique_planar_offsets_m:
+    # Actual lift evidence at [0.003, -0.006] showed f3 separating first
+    # while f1/f2 slid upward and the object stayed on the table.  Move the
+    # object centre 3 mm further toward f3 and 3 mm further into the opposing
+    # pair.  The URDF sweep predicts f3 contact at 0.433 closure and both
+    # opposing contacts at 0.467, so f3 is preloaded before lift.
+    - [0.006, -0.009]
+  f3_contact_lag_penalty_per_fraction: 200.0
+  # Do not merely meet the 8 mm analytical collision limit.  The measured
+  # finite-stiffness tracking deficit was 11.31 mm, so require a 24 mm planned
+  # clearance before an executable candidate can be selected.
+  minimum_planned_table_clearance_m: 0.024
+  minimum_coarse_table_clearance_m: 0.020
+  # Roll 268deg produced sustained real f1/f2/f3 contact.  Both roll 255deg
+  # and the former 264deg window edge passed capsules/IK/clearance but left
+  # f3 unloaded in the physical contact test.  Until repeat tests establish
+  # a wider robust interval, accept only the measured object-frame nominal;
+  # this is still composed with the live object pose, not a world-frame pose.
+  contact_calibrated_top_oblique_roll_window_deg: [268.0, 268.0]
+  # Reachability sweep found that the -30deg/270deg oblique candidate has
+  # continuous collision-aware IK from 40 mm to contact; 60/80 mm do not.
+  pregrasp_distance_m: 0.040
+  side_height_offsets_m: [0.0, 0.010, 0.020]
+  grasp_families: [top_down, top_oblique, side, auto]
+
+# A geometrically valid three-contact result is still rejected when it is an
+# edge pinch, relies on a large object-in-hand axial displacement, or requests
+# a mostly lateral "lift". These gates would reject the historical 52 mm
+# oblique candidate that raised the box only about 21 mm while sliding it.
+# Legacy/default reference: gate the object centre axial offset.
+quality_reference_mode: centered_object
+quality_gates:
+  maximum_centered_object_center_axial_offset_m: 0.025
+  maximum_contact_fraction_spread: 0.20
+  minimum_projected_contact_area_m2: 0.001
+  minimum_normalized_contact_area_fraction: 0.30
+  maximum_contact_height_ratio: 0.70
+  minimum_lift_world_z_fraction: 0.95
+
+runtime_acceptance:
+  object_pose_stability_samples: 10
+  object_pose_position_range_m: 0.001
+  object_pose_orientation_range_deg: 1.0
+  object_scene_sync_position_tolerance_m: 0.001
+  object_scene_sync_orientation_tolerance_deg: 1.0
+  required_actual_finger_families: [f1, f2, f3]
+  contact_stability_s: 0.30
+  contact_wait_timeout_s: 4.0
+  contact_limited_close_timeout_s: 9.5
+  approach_velocity_scaling: 0.03
+  approach_acceleration_scaling: 0.02
+  cartesian_eef_step_m: 0.002
+  cartesian_fraction_min: 0.995
+  pregrasp_position_tolerance_m: 0.025
+  pregrasp_orientation_tolerance_deg: 6.0
+  maximum_approach_object_displacement_m: 0.005
+  maximum_grasp_object_displacement_m: 0.010
+  # Pick/place acceptance. These are task-space motion and evidence limits,
+  # not Gazebo mass/friction/PID/contact-model changes.
+  # Retract along the selected object's opposite approach axis.  For the
+  # -30deg top-oblique grasp, 47 mm along this axis requests about 40.7 mm in
+  # world z without shearing the third finger sideways.  The measured object
+  # must still independently satisfy lift and airborne gates below.
+  # 52 mm previously reached only 92.3% Cartesian coverage; 45 mm was fully
+  # executable.  Use 47 mm, still below the observed ~48 mm path boundary,
+  # and require physical airborne evidence below.
+  lift_distance_along_opposite_approach_m: 0.047
+  minimum_actual_object_lift_z_fraction: 0.90
+  # Contact-limited CLOSE stops at first stable enclosure.  Before lifting,
+  # retain that shape and add only a small position preload: f3 receives much
+  # less extra flexion so its distal link cannot roll past the box.  In the
+  # real failed lift, f3 contact disappeared at 0.5581 rad after reaching the
+  # former ~0.554 rad target; limit the additional f3 travel to 0.01 rad.
+  # These are command angles, not PID/effort/friction/model changes.
+  lift_preload_flexion_delta_rad:
+    f1j2: 0.08
+    f2j1: 0.08
+    f3j2: 0.01
+  lift_preload_duration_s: 0.75
+  lift_preload_goal_tolerance_rad: 0.10
+  lift_preload_palm_tolerance_rad: 0.02
+  # The successful three-contact trajectory physically moved the object by
+  # 20.79 mm.  Accept >=20 mm only together with an independently stable
+  # absence of target/table contact, so a tilted/sliding box cannot pass.
+  minimum_object_lift_m: 0.020
+  airborne_no_table_support_stability_s: 0.30
+  airborne_no_table_support_timeout_s: 2.0
+  maximum_object_tool_disagreement_m: 0.010
+  minimum_lift_place_duration_s: 8.0
+  # The arm trajectory controller's normal 0.03 rad goal tolerance can leave
+  # task-space error in a loaded wrist pose.  Keep the final setpoint active
+  # to a modestly tighter 0.025 rad; actual object lift, hand/object agreement
+  # and placement gates below remain authoritative. STOP is failure-only.
+  post_execution_joint_tolerance_rad: 0.025
+  post_execution_settle_stability_s: 0.20
+  post_execution_settle_timeout_s: 4.0
+  physical_hold_duration_s: 2.0
+  contact_message_timeout_s: 0.20
+  contact_loss_grace_s: 0.15
+  object_place_tolerance_m: 0.015
+  table_support_stability_s: 0.30
+  table_support_timeout_s: 3.0
+  release_contact_clear_stability_s: 0.50
+  release_contact_clear_timeout_s: 5.0
+  release_settle_duration_s: 2.0
+  retreat_distance_m: 0.040
+  minimum_retreat_duration_s: 4.0

@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- No-load hand-only validation. This does not command the ABB arm. -->
+  <arg name="gazebo_gui" default="false"/>
+  <arg name="cycles" default="3"/>
+  <arg name="shutdown_on_task_exit" default="true"/>
+  <include file="$(find handarm_sim_demo)/launch/simulation_baseline.launch">
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)"/>
+    <arg name="rviz" value="false"/>
+    <arg name="start_moveit" value="false"/>
+    <arg name="initialize_arm_trajectory" value="true"/>
+    <arg name="simulation" value="true"/>
+    <arg name="use_real_robot" value="false"/>
+    <arg name="use_real_hand" value="false"/>
+  </include>
+  <node name="run_hand_stability_tests" pkg="handarm_sim_demo"
+        type="run_hand_stability_tests.py" output="screen"
+        required="$(arg shutdown_on_task_exit)">
+    <param name="hand_config"
+           value="$(find handarm_sim_demo)/config/hand_commands.yaml"/>
+    <param name="cycles" value="$(arg cycles)"/>
+  </node>
+</launch>

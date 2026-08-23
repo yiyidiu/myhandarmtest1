@@ -1,0 +1,44 @@
+<launch>
+  <!--
+    Start this node before pressing c in the camera sender.
+    In RViz:
+      Fixed Frame: base_link
+      Add -> MarkerArray
+      Topic: /handarm_trajectory/markers
+  -->
+
+  <arg name="base_frame" default="base_link"/>
+  <arg name="ee_frame" default="tool0"/>
+  <arg name="target_topic" default="/target_ee_pose"/>
+  <arg name="marker_topic" default="/handarm_trajectory/markers"/>
+
+  <arg name="sample_rate" default="30.0"/>
+  <arg name="min_target_distance" default="0.002"/>
+  <arg name="min_actual_distance" default="0.002"/>
+  <arg name="max_points" default="3000"/>
+
+  <node pkg="handarm_moveit_demo"
+        type="handarm_trajectory_rviz.py"
+        name="handarm_trajectory"
+        output="screen">
+
+    <param name="base_frame" value="$(arg base_frame)"/>
+    <param name="ee_frame" value="$(arg ee_frame)"/>
+    <param name="target_topic" value="$(arg target_topic)"/>
+    <param name="marker_topic" value="$(arg marker_topic)"/>
+
+    <param name="sample_rate" value="$(arg sample_rate)"/>
+    <param name="min_target_distance" value="$(arg min_target_distance)"/>
+    <param name="min_actual_distance" value="$(arg min_actual_distance)"/>
+    <param name="max_points" value="$(arg max_points)"/>
+
+    <param name="target_line_width" value="0.008"/>
+    <param name="actual_line_width" value="0.006"/>
+    <param name="start_sphere_scale" value="0.035"/>
+    <param name="current_sphere_scale" value="0.025"/>
+
+    <!-- 0 disables jump-triggered automatic clearing. -->
+    <param name="auto_reset_jump" value="0.0"/>
+  </node>
+</launch>
+

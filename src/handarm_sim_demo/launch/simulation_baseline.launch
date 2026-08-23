@@ -1,0 +1,107 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="gazebo_gui" default="true"/>
+  <arg name="rviz" default="true"/>
+  <arg name="rviz_config" default="$(find abb120_moveit_config1)/launch/moveit.rviz"/>
+  <arg name="paused" default="false"/>
+  <arg name="scene_config" default="$(find handarm_sim_demo)/config/demo_scene.yaml"/>
+  <arg name="grasp_config" default="$(find handarm_sim_demo)/config/grasp_demo.yaml"/>
+  <arg name="run_avoidance_demo" default="false"/>
+  <arg name="run_pick_demo" default="false"/>
+  <arg name="start_moveit" default="true"/>
+  <arg name="shutdown_on_task_exit" default="false"/>
+  <arg name="initialize_arm_trajectory" default="true"/>
+  <arg name="grasp_mode" default="approach_only"/>
+  <arg name="allow_nonphysical_attachment" default="false"/>
+  <arg name="simulation" default="true"/>
+  <arg name="use_real_robot" default="false"/>
+  <arg name="use_real_hand" default="false"/>
+  <arg name="world_name" default="$(find handarm_sim_demo)/worlds/handarm_pick_obstacle.world"/>
+  <arg name="expected_models" default="[robot, work_table, target_object, obstacle_a, obstacle_b]"/>
+  <arg name="scenario" default="double_obstacle"/>
+  <arg name="avoidance_repetitions" default="1"/>
+  <arg name="initial_joint_positions" default="-J f1j1 0.18 -J f3j1 0.18 -J f1j2 0.20 -J f1j3 0.20 -J f2j1 0.20 -J f2j2 0.20 -J f3j2 0.20 -J f3j3 0.20 -J joint_1 0.4675 -J joint_2 -0.4737 -J joint_3 -0.3083 -J joint_4 -0.7072 -J joint_5 -0.3808 -J joint_6 -0.4533"/>
+
+  <node pkg="handarm_sim_demo" type="simulation_guard.py"
+        name="simulation_guard" output="screen" required="true">
+    <param name="simulation" value="$(arg simulation)"/>
+    <param name="use_real_robot" value="$(arg use_real_robot)"/>
+    <param name="use_real_hand" value="$(arg use_real_hand)"/>
+    <param name="grasp_mode" value="$(arg grasp_mode)"/>
+    <param name="allow_nonphysical_attachment" value="$(arg allow_nonphysical_attachment)"/>
+    <param name="world_name" value="$(arg world_name)"/>
+  </node>
+
+  <rosparam command="load" file="$(find abb120_moveit_config1)/config/gazebo_controllers.yaml"/>
+  <rosparam command="load" file="$(find handarm_sim_demo)/config/trajectory_controllers.yaml"/>
+  <rosparam command="load"
+            file="$(find handarm_sim_demo)/config/gazebo_hand_position_pid.yaml"
+            ns="gazebo_ros_control/pid_gains"/>
+  <param name="robot_description"
+         textfile="$(find abb120_moveit_config1)/config/gazebo_handarm.urdf"/>
+
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="$(arg world_name)"/>
+    <arg name="gui" value="$(arg gazebo_gui)"/>
+    <arg name="paused" value="true"/>
+    <arg name="use_sim_time" value="true"/>
+  </include>
+
+  <node name="spawn_gazebo_model" pkg="gazebo_ros" type="spawn_model"
+        args="-urdf -param robot_description -model robot"
+        output="screen"/>
+
+  <node name="robot_state_publisher" pkg="robot_state_publisher"
+        type="robot_state_publisher" output="screen"/>
+  <node name="startup_coordinator" pkg="handarm_sim_demo"
+        type="startup_coordinator.py" output="screen" required="true">
+    <rosparam command="load" file="$(find handarm_sim_demo)/config/startup_configuration.yaml"/>
+    <param name="paused" value="$(arg paused)"/>
+    <param name="initialize_arm_trajectory"
+           value="$(arg initialize_arm_trajectory)"/>
+    <param name="startup_timeout" value="60.0"/>
+    <rosparam param="expected_models" subst_value="true">$(arg expected_models)</rosparam>
+  </node>
+
+  <include file="$(find abb120_moveit_config1)/launch/move_group.launch"
+           if="$(arg start_moveit)">
+    <arg name="pipeline" value="ompl"/>
+    <arg name="allow_trajectory_execution" value="true"/>
+    <arg name="moveit_controller_manager" value="ros_control"/>
+    <arg name="load_robot_description" value="false"/>
+  </include>
+  <include file="$(find abb120_moveit_config1)/launch/moveit_rviz.launch"
+           if="$(eval arg('start_moveit') and arg('rviz'))">
+    <arg name="rviz_config" value="$(arg rviz_config)"/>
+  </include>
+
+  <node name="scene_manager" pkg="handarm_sim_demo" type="scene_manager.py"
+        output="screen" required="true" if="$(arg start_moveit)">
+    <param name="scene_config" value="$(arg scene_config)"/>
+    <param name="scenario" value="$(arg scenario)"/>
+    <param name="startup_timeout" value="90.0"/>
+  </node>
+
+  <node name="scripted_avoidance_demo" pkg="handarm_sim_demo"
+        type="scripted_avoidance_demo.py" output="screen"
+        required="$(arg shutdown_on_task_exit)"
+        if="$(arg run_avoidance_demo)">
+    <param name="scene_config" value="$(arg scene_config)"/>
+    <param name="avoidance_config" value="$(find handarm_sim_demo)/config/avoidance_demo.yaml"/>
+    <param name="startup_config" value="$(find handarm_sim_demo)/config/startup_configuration.yaml"/>
+    <param name="scenario" value="$(arg scenario)"/>
+    <param name="repetitions" value="$(arg avoidance_repetitions)"/>
+  </node>
+
+  <node name="scripted_pick_demo" pkg="handarm_sim_demo"
+        type="scripted_pick_demo.py" output="screen"
+        required="$(arg shutdown_on_task_exit)"
+        if="$(arg run_pick_demo)">
+    <param name="scene_config" value="$(arg scene_config)"/>
+    <param name="grasp_config" value="$(arg grasp_config)"/>
+    <param name="hand_config" value="$(find handarm_sim_demo)/config/hand_commands.yaml"/>
+    <param name="startup_config" value="$(find handarm_sim_demo)/config/startup_configuration.yaml"/>
+    <param name="grasp_mode" value="$(arg grasp_mode)"/>
+    <param name="allow_nonphysical_attachment" value="$(arg allow_nonphysical_attachment)"/>
+  </node>
+</launch>

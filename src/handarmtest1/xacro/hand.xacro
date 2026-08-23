@@ -1,0 +1,535 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot
+  name="323test2" xmlns:xacro="http://ros.org/wiki/xacro">
+  <link
+    name="handbase_link">
+    <inertial>
+      <origin
+        xyz="-0.0039983 -0.0026437 0.074626"
+        rpy="0 0 0" />
+      <mass
+        value="1.4123" />
+      <inertia
+        ixx="0.0011684"
+        ixy="-6.3622E-05"
+        ixz="4.0137E-06"
+        iyy="0.0011186"
+        iyz="5.7004E-06"
+        izz="0.0020571" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://handarmtest1/meshes/myhand/handbase_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0.94902 0.89804 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://handarmtest1/meshes/myhand/handbase_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="arm_hand" type="fixed">
+    <parent link="flange"/>  
+    <child link="handbase_link"/>
+    <origin xyz="0 0 0" rpy="0 1.57 0"/>
+    <axis xyz="0 0 0"/>
+  </joint>
+  
+  <link
+    name="f1link1">
+    <inertial>
+      <origin
+        xyz="0.029065 0.029278 0.024048"
+        rpy="0 0 0" />
+      <mass
+        value="0.23481" />
+      <inertia
+        ixx="7.0416E-05"
+        ixy="1.909E-05"
+        ixz="4.2733E-06"
+        iyy="7.0445E-05"
+        iyz="4.157E-06"
+        izz="6.9476E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://handarmtest1/meshes/myhand/f1link1.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0.94902 0.89804 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://handarmtest1/meshes/myhand/f1link1.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="f1j1"
+    type="revolute">
+    <origin
+      xyz="-0.029993 0.030537 0.10643"
+      rpy="0 0 0" />
+    <parent
+      link="handbase_link" />
+    <child
+      link="f1link1" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="0"
+      upper="3.14"
+      effort="100"
+      velocity="4" />
+  </joint>
+  <link
+    name="f1link2">
+    <inertial>
+      <origin
+        xyz="0.021394 0.023595 0.018942"
+        rpy="0 0 0" />
+      <mass
+        value="0.073035" />
+      <inertia
+        ixx="2.621E-05"
+        ixy="1.5725E-05"
+        ixz="-1.137E-07"
+        iyy="2.0845E-05"
+        iyz="-1.3104E-07"
+        izz="4.4461E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://handarmtest1/meshes/myhand/f1link2.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0.94902 0.89804 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://handarmtest1/meshes/myhand/f1link2.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="f1j2"
+    type="revolute">
+    <origin
+      xyz="0.01888 0.04575 0.0501"
+      rpy="1.5708 0 0.7854" />
+    <parent
+      link="f1link1" />
+    <child
+      link="f1link2" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="0"
+      upper="1.3963"
+      effort="100"
+      velocity="4" />
+  </joint>
+  <link
+    name="f1link3">
+    <inertial>
+      <origin
+        xyz="0.012483 0.023726 0.011999"
+        rpy="0 0 0" />
+      <mass
+        value="0.057879" />
+      <inertia
+        ixx="2.0428E-05"
+        ixy="8.2594E-06"
+        ixz="-6.6201E-09"
+        iyy="9.1787E-06"
+        iyz="-1.3618E-08"
+        izz="2.4528E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://handarmtest1/meshes/myhand/f1link3.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0.94902 0.89804 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://handarmtest1/meshes/myhand/f1link3.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="f1j3"
+    type="continuous">
+    <origin
+      xyz="0.044995 0.053623 0.007"
+      rpy="0 0 0" />
+    <parent
+      link="f1link2" />
+    <child
+      link="f1link3" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="0"
+      upper="0"
+      effort="100"
+      velocity="4" />
+    <mimic
+      joint="f1j2"
+      multiplier="1"
+      offset="0" />
+  </joint>
+  <link
+    name="f3link1">
+    <inertial>
+      <origin
+        xyz="-0.029065 0.029278 -0.024048"
+        rpy="0 0 0" />
+      <mass
+        value="0.23481" />
+      <inertia
+        ixx="7.0416E-05"
+        ixy="-1.909E-05"
+        ixz="4.2733E-06"
+        iyy="7.0445E-05"
+        iyz="-4.157E-06"
+        izz="6.9476E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://handarmtest1/meshes/myhand/f3link1.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0.94902 0.89804 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://handarmtest1/meshes/myhand/f3link1.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="f3j1"
+    type="continuous">
+    <origin
+      xyz="0.029404 -0.02886 0.10643"
+      rpy="-3.1416 0 3.1416" />
+    <parent
+      link="handbase_link" />
+    <child
+      link="f3link1" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="0"
+      upper="0"
+      effort="100"
+      velocity="4" />
+    <mimic
+      joint="f1j1"
+      multiplier="1"
+      offset="0" />
+  </joint>
+  <link
+    name="f3link2">
+    <inertial>
+      <origin
+        xyz="0.021394 0.023595 0.018942"
+        rpy="0 0 0" />
+      <mass
+        value="0.073035" />
+      <inertia
+        ixx="2.621E-05"
+        ixy="1.5725E-05"
+        ixz="-1.137E-07"
+        iyy="2.0845E-05"
+        iyz="-1.3104E-07"
+        izz="4.4461E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://handarmtest1/meshes/myhand/f3link2.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0.94902 0.89804 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://handarmtest1/meshes/myhand/f3link2.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="f3j2"
+    type="revolute">
+    <origin
+      xyz="-0.01888 0.04575 -0.0501"
+      rpy="-1.5708 0 2.3562" />
+    <parent
+      link="f3link1" />
+    <child
+      link="f3link2" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="0"
+      upper="1.3963"
+      effort="100"
+      velocity="4" />
+  </joint>
+  <link
+    name="f3link3">
+    <inertial>
+      <origin
+        xyz="0.012483 0.023726 0.011999"
+        rpy="0 0 0" />
+      <mass
+        value="0.057879" />
+      <inertia
+        ixx="2.0428E-05"
+        ixy="8.2594E-06"
+        ixz="-6.6203E-09"
+        iyy="9.1787E-06"
+        iyz="-1.3616E-08"
+        izz="2.4528E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://handarmtest1/meshes/myhand/f3link3.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0.94902 0.89804 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://handarmtest1/meshes/myhand/f3link3.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="f3j3"
+    type="continuous">
+    <origin
+      xyz="0.044995 0.053623 0.007"
+      rpy="0 0 0" />
+    <parent
+      link="f3link2" />
+    <child
+      link="f3link3" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="0"
+      upper="0"
+      effort="100"
+      velocity="4" />
+    <mimic
+      joint="f3j2"
+      multiplier="1"
+      offset="0" />
+  </joint>
+  <link
+    name="f2link1">
+    <inertial>
+      <origin
+        xyz="0.021394 0.023595 0.018942"
+        rpy="0 0 0" />
+      <mass
+        value="0.073035" />
+      <inertia
+        ixx="2.621E-05"
+        ixy="1.5725E-05"
+        ixz="-1.137E-07"
+        iyy="2.0845E-05"
+        iyz="-1.3104E-07"
+        izz="4.4461E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://handarmtest1/meshes/myhand/f2link1.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0.94902 0.89804 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://handarmtest1/meshes/myhand/f2link1.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="f2j1"
+    type="revolute">
+    <origin
+      xyz="-0.020058 -0.044098 0.15603"
+      rpy="1.5708 0 -2.3562" />
+    <parent
+      link="handbase_link" />
+    <child
+      link="f2link1" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="0"
+      upper="1.3963"
+      effort="100"
+      velocity="4" />
+  </joint>
+  <link
+    name="f2link2">
+    <inertial>
+      <origin
+        xyz="0.012483 0.023726 0.011999"
+        rpy="0 0 0" />
+      <mass
+        value="0.057879" />
+      <inertia
+        ixx="2.0428E-05"
+        ixy="8.2594E-06"
+        ixz="-6.6201E-09"
+        iyy="9.1787E-06"
+        iyz="-1.3618E-08"
+        izz="2.4528E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://handarmtest1/meshes/myhand/f2link2.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0.94902 0.89804 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://handarmtest1/meshes/myhand/f2link2.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="f2j2"
+    type="continuous">
+    <origin
+      xyz="0.044995 0.053623 0.0058"
+      rpy="0 0 0" />
+    <parent
+      link="f2link1" />
+    <child
+      link="f2link2" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="0"
+      upper="0"
+      effort="100"
+      velocity="4" />
+    <mimic
+      joint="f2j1"
+      multiplier="1"
+      offset="0" />
+  </joint>
+</robot>
