@@ -52,7 +52,8 @@ def main():
         np.radians(normalized[
             "robot_orientation_negative_extent_deg"]),
         np.radians(normalized[
-            "robot_orientation_positive_extent_deg"]), True)
+            "robot_orientation_positive_extent_deg"]),
+        normalized.get("combine_translation_rotation", True))
     zero = np.asarray(args.robot_zero, dtype=np.float64)
     if not workspace.contains(zero):
         raise SystemExit("robot zero lies outside configured ground sector")
@@ -110,9 +111,21 @@ def main():
             target_position, target_rotation = mapper.map(
                 np.zeros(3), so3_exp(hand_vector), zero, np.eye(3))
             target_vector_deg = np.degrees(so3_log(target_rotation))
-            expected_angle_deg = sign * (
+            robot_boundary_deg = (
                 robot_rotation_positive[axis] if sign > 0
                 else robot_rotation_negative[axis])
+            # Independent live mode preserves the measured wrist angle 1:1
+            # and only caps it when the robot's directional extent is smaller.
+            # Combined legacy mode maps the human endpoint to the configured
+            # robot endpoint because all six components share one radius.
+            if normalized.get("combine_translation_rotation", True):
+                expected_magnitude_deg = robot_boundary_deg
+            else:
+                expected_magnitude_deg = min(
+                    abs(math.degrees(hand_angle)) *
+                    float(profile["rotation_gain"][axis]),
+                    robot_boundary_deg)
+            expected_angle_deg = sign * expected_magnitude_deg
             diagnostics = mapper.mapping_diagnostics()
             orientation_rows.append({
                 "case": "LOCAL_{}_{}".format(

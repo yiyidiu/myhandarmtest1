@@ -1512,10 +1512,61 @@ class CameraRangeWorkspaceMapper(RelativePoseMapper):
                 robot_zero_position, robot_zero_rotation)
         target_position = self._translation_target(
             relative_hand_position, robot_zero_position, record=True)
-        _, target_rotation = super().map(
-            [0.0, 0.0, 0.0], relative_hand_rotation,
-            robot_zero_position, robot_zero_rotation)
+        if self.human_orientation_negative_extent is None:
+            _, target_rotation = super().map(
+                [0.0, 0.0, 0.0], relative_hand_rotation,
+                robot_zero_position, robot_zero_rotation)
+        else:
+            target_rotation = self._independent_rotation_target(
+                relative_hand_rotation, robot_zero_rotation)
         return target_position, target_rotation
+
+    def _independent_rotation_target(
+            self, relative_hand_rotation: Sequence[Sequence[float]],
+            robot_zero_rotation: Sequence[Sequence[float]]) -> np.ndarray:
+        """Keep wrist rotation independent from the positional workspace ray.
+
+        The live hand angle remains 1:1 until the configured directional robot
+        orientation boundary is reached.  Unlike the former combined 6-D
+        radius, translation can no longer consume wrist range and a difficult
+        wrist orientation can no longer shorten an otherwise reachable
+        position target.
+        """
+
+        hand_vector = so3_log(relative_hand_rotation)
+        zero_rotation = project_to_so3(robot_zero_rotation)
+        normalized_hand = self._normalized_components(
+            hand_vector, self.human_orientation_negative_extent,
+            self.human_orientation_positive_extent)
+        human_fraction = float(np.linalg.norm(normalized_hand))
+        mapped_vector = (
+            self.rotation_matrix @ hand_vector) * self.rotation_gain
+        mapped_size = float(np.linalg.norm(mapped_vector))
+        if mapped_size < EPS:
+            self._last_mapping.update({
+                "orientation_mapping": "INDEPENDENT_1_TO_1_DIRECTIONAL_CAP",
+                "human_rotation_fraction": 0.0,
+                "robot_rotation_boundary_deg": 0.0,
+                "target_rotation_deg": 0.0,
+                "rotation_saturated": False,
+            })
+            return zero_rotation
+
+        mapped_axis = mapped_vector / mapped_size
+        robot_boundary = self._directional_boundary(
+            mapped_axis, self.robot_orientation_negative_extent,
+            self.robot_orientation_positive_extent)
+        target_size = min(mapped_size, robot_boundary)
+        target_vector = target_size * mapped_axis
+        self._last_mapping.update({
+            "orientation_mapping": "INDEPENDENT_1_TO_1_DIRECTIONAL_CAP",
+            "human_rotation_fraction": human_fraction,
+            "robot_rotation_boundary_deg": float(math.degrees(
+                robot_boundary)),
+            "target_rotation_deg": float(math.degrees(target_size)),
+            "rotation_saturated": bool(mapped_size >= robot_boundary),
+        })
+        return project_to_so3(zero_rotation @ so3_exp(target_vector))
 
     def map_target_velocity(
             self, raw_hand_velocity: Sequence[float],
@@ -1540,6 +1591,12 @@ class CameraRangeWorkspaceMapper(RelativePoseMapper):
         legacy = super().map_target_velocity(
             raw, hand_zero_rotation, robot_zero_rotation)
         legacy[:3] = linear
+        # At an orientation boundary the absolute pose target remains active.
+        # Removing only angular feed-forward prevents a continuing hand motion
+        # from pushing Servo farther into the same joint limit; moving back
+        # immediately produces pose-error feedback toward C-zero.
+        if self._last_mapping.get("rotation_saturated", False):
+            legacy[3:] = 0.0
         return legacy
 
     def mapping_diagnostics(self) -> Dict[str, object]:

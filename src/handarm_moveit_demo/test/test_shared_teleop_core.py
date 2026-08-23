@@ -636,6 +636,44 @@ class SixDofCommandTest(unittest.TestCase):
             mapper.mapping_diagnostics()["human_pose_fraction"],
             math.sqrt(2.0))
 
+    def test_independent_camera_pose_keeps_full_position_and_y_rotation(self):
+        workspace = GroundSectorWorkspace(
+            [0.0, 0.0, 0.5], [1.0, 1.0, 1.0], 0.0, 0.0)
+        mapper = CameraRangeWorkspaceMapper(
+            np.eye(3), np.eye(3), np.ones(3), math.radians(179.0),
+            [0.1] * 3, [0.1] * 3, workspace, 1.0,
+            np.radians([90.0] * 3), np.radians([90.0] * 3),
+            np.radians([60.0, 76.2, 120.0]),
+            np.radians([60.0, 30.8, 120.0]), False)
+        zero = np.array([0.25, 0.0, 0.5])
+
+        target_position, target_rotation = mapper.map(
+            [0.1, 0.0, 0.0],
+            so3_exp([0.0, math.radians(20.0), 0.0]),
+            zero, np.eye(3))
+        np.testing.assert_allclose(
+            target_position, [1.0, 0.0, 0.5], atol=1.0e-9)
+        np.testing.assert_allclose(
+            so3_log(target_rotation),
+            [0.0, math.radians(20.0), 0.0], atol=1.0e-9)
+
+        _, positive_limit = mapper.map(
+            np.zeros(3), so3_exp([0.0, math.radians(90.0), 0.0]),
+            zero, np.eye(3))
+        _, negative_inside = mapper.map(
+            np.zeros(3), so3_exp([0.0, math.radians(-50.0), 0.0]),
+            zero, np.eye(3))
+        np.testing.assert_allclose(
+            so3_log(positive_limit),
+            [0.0, math.radians(30.8), 0.0], atol=1.0e-9)
+        np.testing.assert_allclose(
+            so3_log(negative_inside),
+            [0.0, math.radians(-50.0), 0.0], atol=1.0e-9)
+        diagnostics = mapper.mapping_diagnostics()
+        self.assertEqual(
+            diagnostics["orientation_mapping"],
+            "INDEPENDENT_1_TO_1_DIRECTIONAL_CAP")
+
     def test_pose_ray_interpolation_preserves_axis_and_zero_return(self):
         start_position = np.array([0.3, 0.0, 0.4])
         start_rotation = so3_exp([0.2, -0.1, 0.05])
@@ -920,6 +958,12 @@ class SafetyConfigurationTest(unittest.TestCase):
             profile["robot_workspace"]["minimum_tool_z_m"], 0.0)
         self.assertGreaterEqual(
             profile["robot_workspace"]["minimum_tool_z_m"], 0.10)
+        self.assertFalse(
+            profile["normalized_pose_mapping"][
+                "combine_translation_rotation"])
+        self.assertFalse(
+            profile["normalized_pose_mapping"][
+                "reachability_projection"]["enabled"])
 
         calibration = yaml.safe_load((
             PACKAGE / "config/camera_workspace_calibration.yaml").read_text(

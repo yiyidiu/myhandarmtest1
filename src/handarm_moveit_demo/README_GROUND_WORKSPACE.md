@@ -118,9 +118,29 @@ cd /home/diu/myhandarmtest1
 ./scripts/run_live_human_gazebo_acceptance.sh --duration-s 30
 ```
 
+## 2026-08-24 小幅刚性与六维解耦试验
+
+实时日志确认旧的联合六维映射把平移和姿态放在同一个归一化半径内，并继续用
+一个全姿态 IK 比例同时缩放两者。故障帧中人手已经达到配置范围的 2.099 倍，
+但机器人目标只保留 0.195，导致侧方位置和 Y 轴姿态同时被截短。
+
+当前 Gazebo profile 做了以下可回退调整：
+
+- 平移和姿态独立映射；关闭会同步截短两者的全姿态射线投影。
+- 姿态保持 1:1，达到当前 C-zero 的方向关节余量后才截断。初始
+  `[0,0,0,0,90,0]` 下，局部 Y 负/正方向约为 `76.2/30.8 deg`。
+- 2026-08-24 真人日志的 3213 个独立有效帧给出相机 X 稳定负/正范围约
+  `0.153/0.306 m`；试验配置取保守的 `0.16/0.30 m`，Y/Z 暂不改变。
+- Gazebo 腕部速度 PID 的 P 值从 `5/2/3` 小幅调至 `6/2.5/3.5`，I/D
+  保持为零。该参数只有重启 Gazebo 后才生效。
+
+验收结果：62 项自动测试全部通过；独立 Gazebo 六方向验收中 X/Y/Z 姿态
+响应比为 `0.998/0.996/0.998`，Servo 危险状态为空，回零误差为
+`0.091 mm / 0.031 deg`。
+
 ## 回退点
 
-修改前快照：
+修改前快照（返回本轮工作开始前）：
 
 `/home/diu/myhandarmtest1/backups/teleop_before_workspace_mapping_20260823_204342.tar.gz`
 
@@ -128,11 +148,29 @@ SHA256：
 
 `44da6db40e1f0ed18d706a93c07d93299cf891cd9e676a049f4a990864837884`
 
+本轮全部验收通过后的快照：
+
+`/home/diu/myhandarmtest1/backups/teleop_ground_workspace_passed_20260824_002737.tar.gz`
+
+SHA256：
+
+`157865c9db15dee09daa2739ad5a5feaa894e1c4eef1edf4a3fc757aca3c1504`
+
+本次小幅调整前快照：
+
+`/home/diu/myhandarmtest1/backups/teleop_before_stiffness_pose_decoupling_20260824_043042.tar.gz`
+
+SHA256：
+
+`ad54e4f0f4dd43cb7714fd178eaa75065a44ee7afa313b1d0228c5eb9b662a45`
+
 先验证：
 
 ```bash
 cd /home/diu/myhandarmtest1/backups
 sha256sum -c teleop_before_workspace_mapping_20260823_204342.sha256
+sha256sum -c teleop_ground_workspace_passed_20260824_002737.sha256
+sha256sum -c teleop_before_stiffness_pose_decoupling_20260824_043042.sha256
 ```
 
 不要直接覆盖当前工程。需要回退时，先解压到单独目录进行比较：

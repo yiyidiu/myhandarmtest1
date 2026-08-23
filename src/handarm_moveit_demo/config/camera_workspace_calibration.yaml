@@ -1,18 +1,21 @@
 schema_version: 1
-status: PROVISIONAL_SIMULATION_DEFAULT_REPLACE_WITH_MEASURED_FILE
+status: PROVISIONAL_LIVE_SESSION_X_RANGE_20260824
 frame_id: camera_color_optical_frame
 units: m
 
 # Positive magnitudes from the C-zero wrist position to the stable visible-hand
 # boundary in each D455 optical direction (X right, Y down, Z forward). These
-# provisional values make the new Gazebo profile runnable; use
-# calibrate_camera_workspace_udp.py before quantitative acceptance.
+# Y/Z remain provisional defaults.  X uses the stable 1%/99% extrema from
+# 3213 independent valid hand frames in the 2026-08-24 live session.  This is
+# intentionally asymmetric because the operator/camera framing provided about
+# 0.153 m to camera-left and 0.306 m to camera-right from C-zero.  A dedicated
+# calibrate_camera_workspace_udp.py run still supersedes these trial values.
 human_workspace:
-  negative_extent_m: [0.28, 0.18, 0.25]
-  positive_extent_m: [0.28, 0.18, 0.25]
+  negative_extent_m: [0.16, 0.18, 0.25]
+  positive_extent_m: [0.30, 0.18, 0.25]
   neutral_position_m: null
-  sample_count: 0
-  quantile: null
+  sample_count: 3213
+  quantile: 0.99
 
 human_orientation:
   negative_extent_deg: [90.0, 90.0, 90.0]

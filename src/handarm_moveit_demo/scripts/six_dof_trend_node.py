@@ -141,6 +141,8 @@ class SixDofTrendNode:
             normalized_pose = profile.get("normalized_pose_mapping", {})
             normalized_pose_enabled = bool(
                 normalized_pose.get("enabled", False))
+            combine_translation_rotation = bool(normalized_pose.get(
+                "combine_translation_rotation", normalized_pose_enabled))
             human_orientation_negative = human_orientation.get(
                 "negative_extent_deg")
             human_orientation_positive = human_orientation.get(
@@ -183,12 +185,17 @@ class SixDofTrendNode:
                 (None if not normalized_pose_enabled else np.radians(
                     normalized_pose.get(
                         "robot_orientation_positive_extent_deg"))),
-                normalized_pose_enabled,
+                combine_translation_rotation,
             )
             projection = normalized_pose.get(
                 "reachability_projection", {})
             self.pose_reachability_enabled = bool(
                 normalized_pose_enabled and projection.get("enabled", False))
+            if (self.pose_reachability_enabled and
+                    not combine_translation_rotation):
+                raise ValueError(
+                    "pose-ray reachability projection requires combined "
+                    "translation/rotation mapping")
             self.pose_reachability_ik_service_name = str(projection.get(
                 "ik_service", "/compute_ik"))
             self.pose_reachability_ik_group = str(projection.get(

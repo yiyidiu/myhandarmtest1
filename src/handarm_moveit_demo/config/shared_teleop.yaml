@@ -60,12 +60,16 @@ mapping_profiles:
     status: SIMULATION_PROFILE_REQUIRES_PER_OPERATOR_CAMERA_RANGE_CALIBRATION
     translation_matrix: [[0.0, 0.0, -1.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]]
     rotation_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
-    # Keep the existing MANO C-zero-local SO(3) behavior while positional
-    # workspace normalization is evaluated independently.
+    # Keep MANO's C-zero-local SO(3) as the orientation input. The calibrated
+    # human and robot angle extents below provide the max-to-max scaling.
     rotation_gain: [1.0, 1.0, 1.0]
     response_exponent: 1.0
     normalized_pose_mapping:
       enabled: true
+      # Live acceptance showed that a single 6-D radius let translation and
+      # orientation consume each other's range.  Keep them independent so a
+      # difficult wrist pose cannot shorten a reachable position target.
+      combine_translation_rotation: false
       # Kinematic limits measured with MoveIt's IRB120 IK at the requested
       # [0,0,0,0,90,0] C-zero. They are deliberately asymmetric: joint_5 has
       # much less remaining travel in one local-Y direction. The online ray
@@ -74,7 +78,11 @@ mapping_profiles:
       robot_orientation_negative_extent_deg: [94.7, 76.2, 179.0]
       robot_orientation_positive_extent_deg: [94.7, 30.8, 179.0]
       reachability_projection:
-        enabled: true
+        # The former full-pose ray projection scaled position and orientation
+        # by the same IK fraction (0.195 in the observed failure), preventing
+        # both side objects from being reached.  Servo/URDF joint bounds remain
+        # active; this switch restores the old behavior immediately if needed.
+        enabled: false
         ik_service: /compute_ik
         ik_group: abbarm
         ik_timeout_s: 0.012
