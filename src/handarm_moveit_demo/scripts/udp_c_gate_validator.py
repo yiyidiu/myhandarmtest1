@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate that live UDP motion is locked until a C-reference token exists."""
+"""Validate that live UDP motion requires a new C edge after receiver start."""
 
 import argparse
 import json
@@ -135,19 +135,21 @@ class UdpCGateValidator:
         initial = self.wait_ready()
         hand_zero = np.array([0.0, 0.0, 0.55])
 
-        # Simulate large hand motion while the camera is open but C has not
-        # been pressed. The arm must remain at the launch pose.
+        # Simulate a camera process that was already enabled by an old C press
+        # before Gazebo/this receiver restarted.  The old token must not move
+        # the freshly spawned arm, even though it is otherwise well formed.
         locked_samples = self.stage(
             2.0,
             lambda elapsed: hand_zero + np.array([
                 0.08 if int(elapsed*5.0) % 2 == 0 else -0.08, 0.0, 0.0]),
-            enabled=False, epoch=0)
+            enabled=True, epoch=1)
         locked_max_motion = max(
             [float(np.linalg.norm(value-initial)) for value in locked_samples]
             or [float("inf")])
 
-        # This token is the network equivalent of one successful C press.
-        self.stage(1.0, lambda _elapsed: hand_zero, enabled=True, epoch=1)
+        # A changed epoch is the network equivalent of pressing C again after
+        # the receiver is ready.
+        self.stage(1.0, lambda _elapsed: hand_zero, enabled=True, epoch=2)
         reference_ready = bool(
             self.latest_diagnostic.get("reference_ready", False))
         accepted_token = self.latest_diagnostic.get("active_reference_token")
@@ -158,14 +160,14 @@ class UdpCGateValidator:
         right_samples = self.stage(
             0.8, lambda elapsed: hand_zero + np.array([
                 0.025 * min(1.0, elapsed/0.75), 0.0, 0.0]),
-            enabled=True, epoch=1)
+            enabled=True, epoch=2)
         before_gap = (
             right_samples[-1] if right_samples else self.tool_position())
         gap_samples = self.silent_stage(1.2)
         after_gap = gap_samples[-1] if gap_samples else self.tool_position()
         right_samples.extend(self.stage(
             2.0, lambda _elapsed: hand_zero + np.array([0.025, 0.0, 0.0]),
-            enabled=True, epoch=1))
+            enabled=True, epoch=2))
         moved = right_samples[-1] if right_samples else self.tool_position()
         base_y_motion = float(moved[1]-initial[1])
         gap_base_y_motion = float(after_gap[1]-before_gap[1])
@@ -203,17 +205,18 @@ class UdpCGateValidator:
             and minimum_gap_base_y_motion >= -0.018)
 
         return_samples = self.stage(
-            3.0, lambda _elapsed: hand_zero, enabled=True, epoch=1)
+            3.0, lambda _elapsed: hand_zero, enabled=True, epoch=2)
         returned = return_samples[-1] if return_samples else self.tool_position()
         return_error = float(np.linalg.norm(returned-initial))
         dangerous = sorted(set(value for value in self.statuses
                                if value in (2, 4, 5)))
-        waiting_seen = "WAITING_FOR_OPERATOR_C_REFERENCE" in self.reasons
+        waiting_seen = (
+            "WAITING_FOR_NEW_C_REFERENCE_AFTER_STARTUP" in self.reasons)
         passed = bool(
             locked_max_motion <= 0.003
             and waiting_seen
             and reference_ready
-            and accepted_token == "{}:1".format(self.session)
+            and accepted_token == "{}:2".format(self.session)
             # Ported AprilTag V3 wrist relation: image-right is base -Y and
             # 25 mm of hand motion targets 15 mm of tool motion.
             and base_y_motion <= -0.010
@@ -222,9 +225,10 @@ class UdpCGateValidator:
             and not dangerous)
         return {
             "passed": passed,
-            "locked_before_c": locked_max_motion <= 0.003,
+            "old_c_token_locked_after_receiver_restart": (
+                locked_max_motion <= 0.003),
             "locked_max_tool_motion_m": locked_max_motion,
-            "waiting_for_c_diagnostic_seen": waiting_seen,
+            "waiting_for_new_c_after_startup_diagnostic_seen": waiting_seen,
             "reference_ready_after_c": reference_ready,
             "accepted_reference_token": accepted_token,
             "image_right_base_negative_y_motion_m": base_y_motion,

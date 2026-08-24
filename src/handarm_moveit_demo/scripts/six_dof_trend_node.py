@@ -13,7 +13,7 @@ import yaml
 from geometry_msgs.msg import PoseStamped
 from moveit_msgs.msg import MoveItErrorCodes
 from moveit_msgs.srv import GetPositionIK, GetPositionIKRequest
-from std_msgs.msg import Float64, Int8, String
+from std_msgs.msg import Bool, Float64, Int8, String
 from std_srvs.srv import Empty, Trigger, TriggerResponse
 
 from handarm_moveit_demo.msg import HamerHandPose, HandCommand
@@ -23,10 +23,20 @@ from handarm_moveit_demo.shared_teleop_core import (
     RelativePoseMapper, RelativePoseServoController,
     SixDofTrendEstimator, StationaryFeedforwardGate,
     SymmetricSideGraspProjector,
+    confirmed_position_reference_hold,
     interpolate_pose_ray,
     matrix_to_quaternion_xyzw,
     quaternion_xyzw_to_matrix, so3_log,
 )
+
+
+def three_axis_private_parameter(name, fallback):
+    """Read a scalar-or-three-vector private ROS response parameter."""
+
+    value = rospy.get_param("~{}".format(name), fallback)
+    if isinstance(value, (int, float)):
+        return [float(value)] * 3
+    return value
 
 
 class SixDofTrendNode:
@@ -52,6 +62,8 @@ class SixDofTrendNode:
             "processing_ms": 0.0,
         }
         self.require_confirmation = bool(reference.get("require_confirmation", True))
+        self.require_new_c_after_receiver_start = bool(reference.get(
+            "require_new_c_after_receiver_start", True))
         self.reference_armed = not self.require_confirmation
         self.reference_ready = False
         self.reference_policy = reference.get(
@@ -257,19 +269,39 @@ class SixDofTrendNode:
                 "feedforward_angular_full_radps", 0.60),
         )
         self.pose_servo = RelativePoseServoController(
-            control.get("translation_error_gain_per_s", [4.0]*3),
-            control.get("rotation_error_gain_per_s", [5.0]*3),
-            limits.get("maximum_linear_velocity_mps", [0.1]*3),
-            limits.get("maximum_angular_velocity_radps", [0.6]*3),
-            control.get("maximum_linear_speed_norm_mps", 0.10),
-            control.get("maximum_angular_speed_norm_radps", 1.20),
-            control.get("translation_feedforward_gain", [0.0]*3),
-            control.get("rotation_feedforward_gain", [0.0]*3),
+            three_axis_private_parameter(
+                "translation_error_gain_per_s",
+                control.get("translation_error_gain_per_s", [4.0]*3)),
+            three_axis_private_parameter(
+                "rotation_error_gain_per_s",
+                control.get("rotation_error_gain_per_s", [5.0]*3)),
+            three_axis_private_parameter(
+                "maximum_linear_velocity_mps",
+                limits.get("maximum_linear_velocity_mps", [0.1]*3)),
+            three_axis_private_parameter(
+                "maximum_angular_velocity_radps",
+                limits.get("maximum_angular_velocity_radps", [0.6]*3)),
+            rospy.get_param(
+                "~maximum_linear_speed_norm_mps",
+                control.get("maximum_linear_speed_norm_mps", 0.10)),
+            rospy.get_param(
+                "~maximum_angular_speed_norm_radps",
+                control.get("maximum_angular_speed_norm_radps", 1.20)),
+            three_axis_private_parameter(
+                "translation_feedforward_gain",
+                control.get("translation_feedforward_gain", [0.0]*3)),
+            three_axis_private_parameter(
+                "rotation_feedforward_gain",
+                control.get("rotation_feedforward_gain", [0.0]*3)),
         )
         self.target_linear_speed_limit = float(
-            control.get("target_linear_speed_limit_mps", 0.30))
+            rospy.get_param(
+                "~target_linear_speed_limit_mps",
+                control.get("target_linear_speed_limit_mps", 0.30)))
         self.target_angular_speed_limit = float(
-            control.get("target_angular_speed_limit_radps", 2.0))
+            rospy.get_param(
+                "~target_angular_speed_limit_radps",
+                control.get("target_angular_speed_limit_radps", 2.0)))
         if (self.target_linear_speed_limit <= 0.0 or
                 self.target_angular_speed_limit <= 0.0):
             raise ValueError("target pose speed limits must be positive")
@@ -287,6 +319,12 @@ class SixDofTrendNode:
             control.get("target_hold_timeout_s", 0.0))
         if self.target_hold_timeout < 0.0:
             raise ValueError("control.target_hold_timeout_s must be >= 0")
+        self.position_hold_after_target_loss_s = float(rospy.get_param(
+            "~position_hold_after_target_loss_s", 0.0))
+        if (not math.isfinite(self.position_hold_after_target_loss_s) or
+                self.position_hold_after_target_loss_s < 0.0):
+            raise ValueError(
+                "position_hold_after_target_loss_s must be finite and >= 0")
         self.collision_retreat_guard = CollisionRetreatGuard(
             enter_scale=control.get("collision_guard_enter_scale", 0.20),
             release_scale=control.get("collision_guard_release_scale", 0.80),
@@ -302,6 +340,14 @@ class SixDofTrendNode:
         self.diagnostics = rospy.Publisher(
             topics.get("trend_diagnostics", "/shared_teleop/trend_diagnostics"),
             String, queue_size=1)
+        position_hold_topic = str(rospy.get_param(
+            "~position_hold_topic", "")).strip()
+        self.position_hold_publisher = (
+            rospy.Publisher(
+                position_hold_topic, Bool, queue_size=1, latch=True)
+            if position_hold_topic else None)
+        if self.position_hold_publisher is not None:
+            self.position_hold_publisher.publish(Bool(data=False))
         self.listener = tf.TransformListener()
         self.lock = threading.Lock()
         self.robot_zero_position = None
@@ -312,6 +358,14 @@ class SixDofTrendNode:
         self.reference_revision = 0
         self.active_reference_token = None
         self.blocked_reference_token = None
+        # Fail closed across process restarts.  If the camera was left enabled,
+        # its current token predates this receiver and must not be treated as a
+        # new operator confirmation.  A disabled gate packet or a changed token
+        # proves that C was operated after this node became ready.
+        self.startup_c_gate_satisfied = not (
+            self.require_confirmation and
+            self.require_new_c_after_receiver_start)
+        self.startup_blocked_reference_token = None
         self.servo_interlock_status = None
         self.last_servo_status = 0
         self.collision_velocity_scale = 1.0
@@ -601,6 +655,8 @@ class SixDofTrendNode:
         enabled = bool(message.control_enabled and token)
         if not enabled:
             with self.lock:
+                self.startup_c_gate_satisfied = True
+                self.startup_blocked_reference_token = None
                 state_changed = bool(
                     self.reference_armed or self.reference_ready or
                     self.active_reference_token is not None or
@@ -615,6 +671,25 @@ class SixDofTrendNode:
             rospy.logwarn_throttle(
                 2.0, "Gazebo control LOCKED: hold a neutral hand pose and "
                 "press C in the camera window")
+            return False
+
+        with self.lock:
+            startup_token_blocked = False
+            if not self.startup_c_gate_satisfied:
+                if self.startup_blocked_reference_token is None:
+                    self.startup_blocked_reference_token = token
+                if token == self.startup_blocked_reference_token:
+                    startup_token_blocked = True
+                else:
+                    self.startup_c_gate_satisfied = True
+                    self.startup_blocked_reference_token = None
+        if startup_token_blocked:
+            self.publish_waiting(
+                message, "WAITING_FOR_NEW_C_REFERENCE_AFTER_STARTUP")
+            rospy.logwarn_throttle(
+                2.0, "Gazebo control LOCKED: the camera is still sending a "
+                "C reference that predates this receiver; hold the hand at "
+                "neutral and press C again")
             return False
 
         with self.lock:
@@ -752,6 +827,9 @@ class SixDofTrendNode:
             "collision_velocity_scale": self.collision_velocity_scale,
             "target_input_age_s": None,
             "target_hold_active": False,
+            "position_reference_hold_active": False,
+            "position_hold_after_target_loss_s": (
+                self.position_hold_after_target_loss_s),
             "collision_retreat_guard_active": False,
             "collision_retreat_reason": "NONE",
             "linear_retreat_allowed": True,
@@ -1046,10 +1124,18 @@ class SixDofTrendNode:
         holding_last_target = bool(
             target_hold_allowed and
             (target_hold_reason is not None or target_age_s > 0.05))
+        position_reference_hold = confirmed_position_reference_hold(
+            holding_last_target, target_age_s,
+            self.position_hold_after_target_loss_s)
+        if self.position_hold_publisher is not None:
+            self.position_hold_publisher.publish(
+                Bool(data=position_reference_hold))
         valid = state["valid"]
         reason = (
             target_hold_reason if holding_last_target and
             target_hold_reason is not None else state["reason"])
+        if position_reference_hold:
+            reason = "POSITION_REFERENCE_HOLD_TARGET_LOSS"
         current_position = None
         current_rotation = None
         position_error = None
@@ -1065,42 +1151,44 @@ class SixDofTrendNode:
                 position_error = state["target_position"] - current_position
                 rotation_error = so3_log(
                     state["target_rotation"] @ current_rotation.T)
-                # A V3 HOLD_LAST packet repeats a fixed target pose.  Its
-                # target velocity therefore decays to zero; retaining the
-                # final measured hand velocity would drive past that target.
-                target_velocity = (
-                    np.zeros(6) if holding_last_target else
-                    state["target_velocity"])
-                velocity = self.pose_servo.command(
-                    current_position, current_rotation,
-                    state["target_position"], state["target_rotation"],
-                    target_velocity)
-                velocity[:3][
-                    np.abs(position_error) <= self.position_tolerance] = 0.0
-                if np.linalg.norm(rotation_error) <= self.rotation_tolerance_rad:
-                    velocity[3:] = 0.0
-                servo_retreat_active = bool(
-                    self.last_servo_status in self.servo_retreat_statuses)
-                retreat_scale = (
-                    0.0 if servo_retreat_active else
-                    self.collision_velocity_scale)
-                retreat_reason = (
-                    "SERVO_STATUS_{}_RETURN_TOWARD_C_ZERO".format(
-                        self.last_servo_status)
-                    if servo_retreat_active else
-                    "COLLISION_PROXIMITY_RETURN_TOWARD_C_ZERO")
-                with self.lock:
-                    collision_retreat = self.collision_retreat_guard.apply(
-                        retreat_scale,
+                if not position_reference_hold:
+                    # A V3 HOLD_LAST packet repeats a fixed target pose.  Its
+                    # target velocity therefore decays to zero; retaining the
+                    # final measured hand velocity would drive past it.
+                    target_velocity = (
+                        np.zeros(6) if holding_last_target else
+                        state["target_velocity"])
+                    velocity = self.pose_servo.command(
                         current_position, current_rotation,
-                        state["robot_zero_position"],
-                        state["robot_zero_rotation"], velocity,
-                        active_reason=retreat_reason)
-                velocity = collision_retreat.velocity
-                (servo_reset_attempted, servo_reset_succeeded,
-                 servo_recovery_reason) = (
-                    self.maybe_reset_recoverable_servo_halt(
-                        target_age_s, velocity, collision_retreat))
+                        state["target_position"], state["target_rotation"],
+                        target_velocity)
+                    velocity[:3][
+                        np.abs(position_error) <= self.position_tolerance] = 0.0
+                    if (np.linalg.norm(rotation_error) <=
+                            self.rotation_tolerance_rad):
+                        velocity[3:] = 0.0
+                    servo_retreat_active = bool(
+                        self.last_servo_status in self.servo_retreat_statuses)
+                    retreat_scale = (
+                        0.0 if servo_retreat_active else
+                        self.collision_velocity_scale)
+                    retreat_reason = (
+                        "SERVO_STATUS_{}_RETURN_TOWARD_C_ZERO".format(
+                            self.last_servo_status)
+                        if servo_retreat_active else
+                        "COLLISION_PROXIMITY_RETURN_TOWARD_C_ZERO")
+                    with self.lock:
+                        collision_retreat = self.collision_retreat_guard.apply(
+                            retreat_scale,
+                            current_position, current_rotation,
+                            state["robot_zero_position"],
+                            state["robot_zero_rotation"], velocity,
+                            active_reason=retreat_reason)
+                    velocity = collision_retreat.velocity
+                    (servo_reset_attempted, servo_reset_succeeded,
+                     servo_recovery_reason) = (
+                        self.maybe_reset_recoverable_servo_halt(
+                            target_age_s, velocity, collision_retreat))
             except Exception as exc:
                 valid = False
                 reason = "CONTROL_TF_ERROR"
@@ -1136,6 +1224,7 @@ class SixDofTrendNode:
             "servo_recovery_reason": servo_recovery_reason,
             "target_input_age_s": target_age_s,
             "target_hold_active": holding_last_target,
+            "position_reference_hold_active": position_reference_hold,
             "collision_retreat_guard_active": bool(
                 collision_retreat is not None and collision_retreat.active),
             "collision_retreat_reason": (

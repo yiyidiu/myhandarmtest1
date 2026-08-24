@@ -25,6 +25,10 @@ reference:
   frame: camera_color_optical_frame
   policy: EXPLICIT_CONFIRM_NEXT_VALID_FRAME
   require_confirmation: true
+  # A camera process may still be publishing the previous C token when Gazebo
+  # is restarted.  Never let that old token move a freshly spawned arm: the
+  # receiver must see the locked state once, or a newer C-token edge.
+  require_new_c_after_receiver_start: true
   allow_automatic_rezero: false
   # Translation stays in fixed D455 optical axes; orientation is the
   # C-zero-local MANO delta right-multiplied onto the captured tool0 pose.
@@ -72,9 +76,8 @@ mapping_profiles:
       combine_translation_rotation: false
       # Kinematic limits measured with MoveIt's IRB120 IK at the requested
       # [0,0,0,0,90,0] C-zero. They are deliberately asymmetric: joint_5 has
-      # much less remaining travel in one local-Y direction. The online ray
-      # projection below recomputes the attainable fraction for mixed
-      # translation/rotation commands and for a C-zero captured elsewhere.
+      # much less remaining travel in one local-Y direction.  These caps stay
+      # independent from the positional ray in the current live profile.
       robot_orientation_negative_extent_deg: [94.7, 76.2, 179.0]
       robot_orientation_positive_extent_deg: [94.7, 30.8, 179.0]
       reachability_projection:

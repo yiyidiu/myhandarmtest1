@@ -15,9 +15,11 @@
   `[-1,+1]`，再沿相应机器人方向映射到前方、左右和地面截断后的可用边界。
 - 姿态不拆成欧拉角累加，而是在 C 零位局部坐标中使用 SO(3) 相对旋转。
   人手各正、负方向的最大可识别角分别映射到机器人该方向的可达角。
-- 平移和旋转同时发生时组成一个六维方向，共享同一个归一化半径。在线
-  `/compute_ik` 沿这条六维射线投影，避免分别达到上限后组合成不可达目标。
+- 平移和旋转当前独立映射：平移使用相机可见范围到机器人边界的比例，姿态保持
+  1:1 并在当前配置的方向关节余量处截断，不再让二者互相压缩量程。
 - 手回到 C 零位时，目标严格返回按 C 时捕获的机器人 `tool0` 位姿。
+- Gazebo 每次重新启动后必须重新按一次 `C`。即使相机仍在发送上一轮的 C-token，
+  机械臂也保持启动关节位，不会沿用旧参考突然运动。
 
 IRB120 的原始 FK 点云外包络来自 100 万组关节样本；实际遥操作只开放
 `base_link +X` 前方区域。地面场景中考虑了三指手爪尺寸：C 零位姿态下的
@@ -66,27 +68,42 @@ python perception_hamer/scripts/run_d455_hamer_crop.py \
   --teleop-udp-port 5010
 ```
 
-默认的 `camera_workspace_calibration.yaml` 只是可运行的仿真占位范围，不应作为
-真人最大范围的定量结论。
+默认的 `camera_workspace_calibration.yaml` 已使用本次真人日志得到的左右范围
+`0.16/0.30 m`；上下和前后仍是临时范围 `0.18/0.25 m`。因此当前已经实现
+“配置的人手边界映射到机器人前方工作空间边界”，但只有左右方向来自真人数据，
+尚不能把六个方向都称为最终实测最大距离。
 
 ## 正式运行：两个终端
 
-终端 1（Gazebo、MoveIt Servo、UDP 接收和地面物体一次启动）：
+终端 1（推荐的新 EGM 式位置参考 profile；Gazebo、MoveIt Servo、UDP 接收和
+地面物体一次启动）：
 
 ```bash
 cd /home/diu/myhandarmtest1
 source /opt/ros/noetic/setup.bash
 source devel/setup.bash
+roslaunch handarm_moveit_demo live_human_ground_gazebo_egm_teleop.launch \
+  with_ground_object:=true
+```
+
+它只替换 Gazebo 执行层：MoveIt Servo 的最新关节速度在 250 Hz 下积分成持续位置
+参考，停手后保持该参考，并用开启重力的有限力矩 PI-D 关节伺服恢复扰动。HaMeR/
+MANO、C 零位和相机范围映射全部沿用当前实现。这是 Gazebo 的 EGM 行为仿真，
+不是 ABB 真机 EGM UDP 驱动。原速度方案没有删除，立即回退命令为：
+
+```bash
 roslaunch handarm_moveit_demo live_human_ground_gazebo_teleop.launch \
-  camera_workspace_calibration_file:=/home/diu/myhandarmtest1/camera_workspace_measured.yaml \
   with_ground_object:=true
 ```
 
 终端 2使用上面的相机命令。Gazebo 完全启动且相机显示手部测量有效后，把手放在
 固定中立位，按一次 `C`；在按 C 前机器人不会跟随。
 
-若只是验证结构、尚未生成实测范围，可省略
-`camera_workspace_calibration_file:=...`，但此时终端会明确提示 provisional。
+生成 `/home/diu/myhandarmtest1/camera_workspace_measured.yaml` 后，再在命令中追加：
+
+```bash
+camera_workspace_calibration_file:=/home/diu/myhandarmtest1/camera_workspace_measured.yaml
+```
 
 ## 可重复验收
 
@@ -118,6 +135,9 @@ cd /home/diu/myhandarmtest1
 ./scripts/run_live_human_gazebo_acceptance.sh --duration-s 30
 ```
 
+新执行层的锁位/抗扰/回零验收见
+[`docs/18_EGM_POSITION_REFERENCE_PROFILE.md`](docs/18_EGM_POSITION_REFERENCE_PROFILE.md)。
+
 ## 2026-08-24 小幅刚性与六维解耦试验
 
 实时日志确认旧的联合六维映射把平移和姿态放在同一个归一化半径内，并继续用
@@ -137,6 +157,15 @@ cd /home/diu/myhandarmtest1
 验收结果：62 项自动测试全部通过；独立 Gazebo 六方向验收中 X/Y/Z 姿态
 响应比为 `0.998/0.996/0.998`，Servo 危险状态为空，回零误差为
 `0.091 mm / 0.031 deg`。
+
+补充现场结论：固定 C-zero 位置的纯局部 Y 轴 Gazebo 测试中，目标
+`-60/+25 deg` 分别到达 `-59.97/+24.96 deg`，全过程 Servo 状态为 0。
+因此当前 Y 轴量程和执行器增益本身已经生效。真人日志中，操作者认为的“大幅
+绕 Y”并不是纯 Y 输入：在 `|Y| >= 45 deg` 的帧里，姿态 X/Y/Z 绝对值中位数
+约为 `33/56/114 deg`，同时还带有约 `15/67/200 mm` 的三轴平移。这个混合
+六维目标可能沿另一条关节路径接近奇异位，触发 Servo 状态 1/2，表现为姿态
+变慢或停止。下一阶段若要消除该现象，应增加可关闭的姿态意图/单轴锁定模式，
+而不是继续提高 PID 或关闭奇异保护；自由 6D 模式目前保持不变。
 
 ## 回退点
 
@@ -164,6 +193,30 @@ SHA256：
 
 `ad54e4f0f4dd43cb7714fd178eaa75065a44ee7afa313b1d0228c5eb9b662a45`
 
+本次小幅调整验收通过后的快照：
+
+`/home/diu/myhandarmtest1/backups/teleop_small_stiffness_pose_decoupling_passed_20260824_044327.tar.gz`
+
+SHA256：
+
+`daa8aa9544802b2ec4f6dad051451fe312b0e3a3f944ecc774c18df99447a651`
+
+启动零位保护和工作空间边界映射验收通过后的快照：
+
+`/home/diu/myhandarmtest1/backups/teleop_startup_zero_workspace_mapping_passed_20260824_050420.tar.gz`
+
+SHA256：
+
+`daa59f27ddd38ab9b42bb656ef7e55ffd2038b937bce07bcbcfe567ed6f86ac3`
+
+新增 EGM 式位置参考层前、包含完整旧速度 profile 的快照：
+
+`/home/diu/myhandarmtest1/backups/teleop_before_egm_position_reference_20260824_154746.tar.gz`
+
+SHA256：
+
+`47258b6966f683754e3243ee60ba3b429f83eb05e1b7631facf40617ce5a04ea`
+
 先验证：
 
 ```bash
@@ -171,6 +224,9 @@ cd /home/diu/myhandarmtest1/backups
 sha256sum -c teleop_before_workspace_mapping_20260823_204342.sha256
 sha256sum -c teleop_ground_workspace_passed_20260824_002737.sha256
 sha256sum -c teleop_before_stiffness_pose_decoupling_20260824_043042.sha256
+sha256sum -c teleop_small_stiffness_pose_decoupling_passed_20260824_044327.sha256
+sha256sum -c teleop_startup_zero_workspace_mapping_passed_20260824_050420.sha256
+sha256sum -c teleop_before_egm_position_reference_20260824_154746.sha256
 ```
 
 不要直接覆盖当前工程。需要回退时，先解压到单独目录进行比较：

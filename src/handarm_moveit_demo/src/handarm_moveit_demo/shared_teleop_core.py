@@ -1684,6 +1684,29 @@ class RelativePoseServoController:
         return np.concatenate((linear, angular))
 
 
+def confirmed_position_reference_hold(
+        holding_last_target: bool, target_age_s: float,
+        confirmation_delay_s: float) -> bool:
+    """Request a stiff joint-reference hold after a confirmed target loss.
+
+    Short HaMeR frame gaps must keep using the last Cartesian target so live
+    tracking does not repeatedly brake.  Once the configured delay elapses,
+    however, continuing to servo toward a stale and possibly unreachable 6-D
+    pose can excite singularity recovery.  A positive delay enables the
+    position-reference hold; zero keeps the established velocity profile
+    behavior unchanged.
+    """
+
+    delay = float(confirmation_delay_s)
+    age = float(target_age_s)
+    if not math.isfinite(delay) or delay < 0.0:
+        raise ValueError(
+            "position-reference hold delay must be finite and non-negative")
+    if not holding_last_target or delay == 0.0:
+        return False
+    return math.isfinite(age) and age >= delay
+
+
 @dataclass(frozen=True)
 class ShapedCommand:
     velocity: np.ndarray

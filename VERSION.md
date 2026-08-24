@@ -1,19 +1,19 @@
-# v0.2.0-pose-decoupling
+# v0.3.0-egm-stable-hold
 
-重建自 2026-08-24 04:43（Asia/Shanghai）的平移/姿态解耦通过检查点。
+重建自 2026-08-24 18:31:22（Asia/Shanghai）的稳定 EGM 位置参考检查点。
 
 ## 冻结时证据
 
-- Catkin 构建通过；
-- 62 项测试，0 错误、0 失败、0 跳过；
-- 离线六方向平移和六方向姿态检查通过；
-- 隔离 Gazebo 六方向检查通过，Servo 只出现状态 0；
-- 回零误差约 0.091 mm / 0.031°。
+- 87 项 Python 测试通过；
+- ROS launch 解析和 profile 参数注入通过；
+- 无头 Gazebo 外环 50 Hz、位置参考 250 Hz；
+- 丢失输入后六轴命令参考跨度为 0 rad；
+- 重新获取输入时从 `POSITION_HOLD` 回到 `TRACKING`，无参考跳变。
 
 ## 原始冻结包
 
-`teleop_small_stiffness_pose_decoupling_passed_20260824_044327.tar.gz`
+`egm_stable_stiff_hold_passed_20260824_183122.tar.gz`
 
-SHA-256：`daa8aa9544802b2ec4f6dad051451fe312b0e3a3f944ecc774c18df99447a651`
+SHA-256：`7b9ea411fddf5beaf5a427ac81576f499396dce17d6c343a21eba154871cc860`
 
-真人自由六维输入仍可能因感知轴耦合接近奇异位形。该检查点不是实体机器人验收。
+原包只有 15 个最终变更文件。本 Git 版本以最近的完整 EGM 源码快照为基础叠加这些文件，并补齐共同依赖。

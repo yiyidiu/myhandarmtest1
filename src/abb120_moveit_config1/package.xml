@@ -36,6 +36,12 @@
   <!-- This package is referenced in the warehouse launch files, but does not build out of the box at the moment. Commented the dependency until this works. -->
   <!-- <run_depend>warehouse_ros_mongo</run_depend> -->
   <run_depend>handarmtest1</run_depend>
+  <run_depend>handarm_sim_demo</run_depend>
+  <run_depend>controller_manager</run_depend>
+  <run_depend>gazebo_ros</run_depend>
+  <run_depend>gazebo_ros_control</run_depend>
+  <run_depend>joint_state_controller</run_depend>
+  <run_depend>position_controllers</run_depend>
 
   <run_depend>moveit_servo</run_depend>
 </package>

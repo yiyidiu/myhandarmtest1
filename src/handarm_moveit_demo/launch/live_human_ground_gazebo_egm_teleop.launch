@@ -1,16 +1,17 @@
 <?xml version="1.0"?>
 <launch>
-  <!-- New, reversible workspace-normalized simulation entry point. The legacy
-       live_human_gazebo_teleop.launch remains unchanged in behavior. -->
+  <!-- New opt-in EGM position-reference profile. The established velocity
+       entry live_human_ground_gazebo_teleop.launch is intentionally untouched. -->
   <arg name="gazebo_gui" default="true" />
   <arg name="with_ground_object" default="true" />
   <arg name="enable_logger" default="true" />
-  <arg name="log_directory" default="/tmp/handarm_ground_teleop_logs" />
+  <arg name="legacy_moveit_servo_reference" default="false"
+       doc="true restores the first archived EGM qdot-integration experiment" />
+  <arg name="stable_position_reference_profile" default="true"
+       doc="false restores the previous aggressive EGM response" />
+  <arg name="log_directory" default="/tmp/handarm_ground_egm_teleop_logs" />
   <arg name="camera_workspace_calibration_file"
        default="$(find handarm_moveit_demo)/config/camera_workspace_calibration.yaml" />
-  <!-- Explicitly forward the requested arm zero all the way to spawn_model.
-       Keeping it here prevents a legacy Gazebo default from silently taking
-       over when this ground-workspace entry point is used. -->
   <arg name="safe_initial_joint_positions"
        default=" -J f1j1 0.051 -J f1j2 0.0317 -J f2j1 0.0227 -J f3j2 0.0363 -J joint_1 0.0 -J joint_2 0.0 -J joint_3 0.0 -J joint_4 0.0 -J joint_5 1.5707963267948966 -J joint_6 0.0" />
   <arg name="empty_ground_world"
@@ -20,8 +21,9 @@
   <arg name="world_name"
        default="$(eval arg('ground_object_world') if arg('with_ground_object') else arg('empty_ground_world'))" />
 
-  <include file="$(find handarm_moveit_demo)/launch/live_human_gazebo_teleop.launch">
+  <include file="$(find handarm_moveit_demo)/launch/shared_teleop_egm_position_demo.launch">
     <arg name="gazebo_gui" value="$(arg gazebo_gui)" />
+    <arg name="input_source" value="udp" />
     <arg name="enable_logger" value="$(arg enable_logger)" />
     <arg name="log_directory" value="$(arg log_directory)" />
     <arg name="world_name" value="$(arg world_name)" />
@@ -30,5 +32,9 @@
          value="$(arg camera_workspace_calibration_file)" />
     <arg name="safe_initial_joint_positions"
          value="$(arg safe_initial_joint_positions)" />
+    <arg name="legacy_moveit_servo_reference"
+         value="$(arg legacy_moveit_servo_reference)" />
+    <arg name="stable_position_reference_profile"
+         value="$(arg stable_position_reference_profile)" />
   </include>
 </launch>

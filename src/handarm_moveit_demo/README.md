@@ -147,6 +147,19 @@ cd /home/diu/myhandarmtest1
 
 ### 使用当前 HaMeR + D455 实时输出（仍仅仿真）
 
+地面工作空间现在有两个独立执行 profile。新位置参考方案用：
+
+```bash
+roslaunch handarm_moveit_demo live_human_ground_gazebo_egm_teleop.launch \
+  with_ground_object:=true
+```
+
+它保留下面全部 HaMeR/MANO 与六维映射，在 MoveIt Servo 后增加 250 Hz、最新值
+无轨迹队列的位置参考层，并以开启重力的有限力矩 PI-D 锁位。原速度方案仍可用
+`live_human_ground_gazebo_teleop.launch` 一条命令回退。实现、验收数据和修改前快照
+见 [`docs/18_EGM_POSITION_REFERENCE_PROFILE.md`](docs/18_EGM_POSITION_REFERENCE_PROFILE.md)。
+该方案只是 Gazebo 中对 EGM 内部位置伺服行为的模拟，不是 ABB 真机 EGM 驱动。
+
 ROS 端：
 
 ```bash

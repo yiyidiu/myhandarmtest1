@@ -21,6 +21,13 @@ from handarm_moveit_demo.shared_teleop_core import (
 )
 
 
+def three_axis_private_parameter(name, fallback):
+    value = rospy.get_param("~{}".format(name), fallback)
+    if isinstance(value, (int, float)):
+        return [float(value)] * 3
+    return value
+
+
 class MoveItServoOutputAdapter:
     def __init__(self):
         self.config = rospy.get_param("/shared_teleop", {})
@@ -58,10 +65,18 @@ class MoveItServoOutputAdapter:
             )
         self.workspace_frame = selected_workspace.get(
             "reference_link", frames.get("servo_control", "tool0"))
-        maximum_velocity = limits.get("maximum_linear_velocity_mps", [0.1]*3) + \
-            limits.get("maximum_angular_velocity_radps", [0.6]*3)
-        maximum_acceleration = limits.get("maximum_linear_acceleration_mps2", [2.0]*3) + \
-            limits.get("maximum_angular_acceleration_radps2", [12.0]*3)
+        maximum_velocity = three_axis_private_parameter(
+            "maximum_linear_velocity_mps",
+            limits.get("maximum_linear_velocity_mps", [0.1]*3)) + \
+            three_axis_private_parameter(
+                "maximum_angular_velocity_radps",
+                limits.get("maximum_angular_velocity_radps", [0.6]*3))
+        maximum_acceleration = three_axis_private_parameter(
+            "maximum_linear_acceleration_mps2",
+            limits.get("maximum_linear_acceleration_mps2", [2.0]*3)) + \
+            three_axis_private_parameter(
+                "maximum_angular_acceleration_radps2",
+                limits.get("maximum_angular_acceleration_radps2", [12.0]*3))
         self.shaper = LatestCommandShaper(
             maximum_velocity, maximum_acceleration,
             safety.get("input_timeout_s", 0.09),

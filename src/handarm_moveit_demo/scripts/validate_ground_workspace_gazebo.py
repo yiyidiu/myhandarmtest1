@@ -126,8 +126,9 @@ class GroundWorkspaceGazeboValidator:
             ]),
         )
 
-    def send(self, hand_position, hand_rotation):
+    def send(self, hand_position, hand_rotation, enabled=True, epoch=1):
         self.sequence += 1
+        token = "{}:{}".format(self.session, epoch) if enabled else ""
         packet = {
             "schema": "handarm_hamer_pose_v1",
             "session_id": self.session,
@@ -143,9 +144,9 @@ class GroundWorkspaceGazeboValidator:
             "gesture": 0,
             "gesture_confidence": 0.0,
             "invalid_reason": "",
-            "control_enabled": True,
-            "control_reference_epoch": 1,
-            "control_reference_token": self.session + ":1",
+            "control_enabled": bool(enabled),
+            "control_reference_epoch": int(epoch),
+            "control_reference_token": token,
         }
         self.socket.sendto(
             json.dumps(packet, separators=(",", ":")).encode("utf-8"),
@@ -202,6 +203,12 @@ class GroundWorkspaceGazeboValidator:
         neutral = np.array([0.0, 0.0, 0.55], dtype=np.float64)
         identity = np.eye(3)
         records = []
+        # Establish the post-start locked state before creating the synthetic
+        # C token, matching the live camera workflow.
+        began = time.monotonic()
+        while time.monotonic() - began < 0.5:
+            self.send(neutral, identity, enabled=False, epoch=0)
+            time.sleep(1.0 / self.args.rate_hz)
         (zero_position, zero_rotation), diagnostic = self.publish_stage(
             neutral, neutral, 0, 0.0, 0.0, 1.5, 1.0)
         if diagnostic.get("mapping_profile") != "camera_ground_workspace":

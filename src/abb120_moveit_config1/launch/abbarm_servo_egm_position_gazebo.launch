@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Simulation-only: no physical-output switch is exposed. -->
+  <node name="servo_server" pkg="moveit_servo" type="servo_server" output="screen">
+    <rosparam file="$(find abb120_moveit_config1)/config/servo_abbarm_egm_position_gazebo.yaml"
+              command="load" />
+  </node>
+</launch>

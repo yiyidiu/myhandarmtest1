@@ -39,6 +39,8 @@ catkin_install_python(PROGRAMS
   scripts/servo_twist_pulse_test.py
   scripts/servo_pose_step_test.py
   scripts/servo_velocity_to_position_bridge.py
+  scripts/egm_position_reference_adapter.py
+  scripts/egm_position_profile_validator.py
   scripts/servo_dynamic_target_test.py
   scripts/servo_pose_tracking_node.py
   scripts/publish_target_pose_test.py
@@ -82,4 +84,5 @@ install(DIRECTORY config launch
 
 if(CATKIN_ENABLE_TESTING)
   catkin_add_nosetests(test/test_shared_teleop_core.py)
+  catkin_add_nosetests(test/test_egm_position_reference.py)
 endif()

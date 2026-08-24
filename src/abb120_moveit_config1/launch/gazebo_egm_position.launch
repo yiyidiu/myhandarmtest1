@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Independent Gazebo plant for EGM-style position-reference emulation. -->
+  <arg name="gazebo_gui" default="true" />
+  <arg name="paused" default="false" />
+  <arg name="world_name" default="worlds/empty.world" />
+  <arg name="world_pose" default="-x 0 -y 0 -z 0 -R 0 -P 0 -Y 0" />
+  <arg name="initial_joint_positions"
+       default=" -J f1j1 0.051 -J f1j2 0.0317 -J f2j1 0.0227 -J f3j2 0.0363 -J joint_1 0.0 -J joint_2 0.0 -J joint_3 0.0 -J joint_4 0.0 -J joint_5 1.5707963267948966 -J joint_6 0.0" />
+
+  <include file="$(find gazebo_ros)/launch/empty_world.launch" pass_all_args="true">
+    <arg name="paused" value="true" />
+    <arg name="gui" value="$(arg gazebo_gui)" />
+  </include>
+
+  <!-- Use PositionJointInterface plus finite-effort P/D gains. Unlike the
+       preserved velocity plant, gravity remains enabled in this URDF. -->
+  <param name="robot_description"
+         textfile="$(find abb120_moveit_config1)/config/gazebo_handarm.urdf" />
+  <rosparam file="$(find abb120_moveit_config1)/config/gazebo_controllers.yaml" />
+  <!-- Keep the new arm tuning isolated from the established speed profile. -->
+  <rosparam command="load"
+            file="$(find handarm_sim_demo)/config/gazebo_arm_egm_position_pid.yaml"
+            ns="gazebo_ros_control/pid_gains" />
+  <rosparam command="load"
+            file="$(find handarm_sim_demo)/config/gazebo_hand_only_pid.yaml"
+            ns="gazebo_ros_control/pid_gains" />
+  <include file="$(find abb120_moveit_config1)/launch/ros_controllers_egm_position.launch" />
+
+  <arg name="unpause" value="$(eval '' if arg('paused') else '-unpause')" />
+  <node name="spawn_gazebo_model" pkg="gazebo_ros" type="spawn_model"
+        args="-urdf -param robot_description -model robot $(arg unpause) $(arg world_pose) $(arg initial_joint_positions)"
+        respawn="false" output="screen" />
+  <node name="gazebo_controller_spawner" pkg="controller_manager" type="spawner"
+        respawn="false" output="screen" args="joint_state_controller" />
+  <node name="robot_state_publisher" pkg="robot_state_publisher"
+        type="robot_state_publisher" respawn="true" output="screen" />
+</launch>

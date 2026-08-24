@@ -7,6 +7,7 @@
   <arg name="hamer_session" default="" />
   <arg name="hamer_replay_speed" default="1.0" />
   <arg name="enable_logger" default="true" />
+  <arg name="enable_gesture_demo" default="true" />
   <arg name="log_directory" default="/tmp/handarm_shared_teleop_logs" />
   <arg name="world_name" default="worlds/empty.world" />
   <arg name="mapping_profile" default="current_linear" />
@@ -47,6 +48,7 @@
     <arg name="hamer_session" value="$(arg hamer_session)" />
     <arg name="hamer_replay_speed" value="$(arg hamer_replay_speed)" />
     <arg name="enable_logger" value="$(arg enable_logger)" />
+    <arg name="enable_gesture_demo" value="$(arg enable_gesture_demo)" />
     <arg name="log_directory" value="$(arg log_directory)" />
     <arg name="mapping_profile" value="$(arg mapping_profile)" />
     <arg name="camera_workspace_calibration_file"

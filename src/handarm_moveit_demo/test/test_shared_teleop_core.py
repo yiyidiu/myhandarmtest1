@@ -32,6 +32,7 @@ from handarm_moveit_demo.shared_teleop_core import (  # noqa: E402
     StationaryFeedforwardGate,
     SymmetricSideGraspProjector,
     compose_pose,
+    confirmed_position_reference_hold,
     flange_pose_for_fixed_center,
     interpolate_pose_ray,
     quaternion_xyzw_to_matrix,
@@ -842,6 +843,16 @@ class ControlLoopTest(unittest.TestCase):
 
 
 class SafetyConfigurationTest(unittest.TestCase):
+    def test_position_reference_hold_requires_confirmed_target_loss(self):
+        self.assertFalse(confirmed_position_reference_hold(True, 0.399, 0.40))
+        self.assertTrue(confirmed_position_reference_hold(True, 0.400, 0.40))
+        self.assertFalse(confirmed_position_reference_hold(False, 3.0, 0.40))
+        self.assertFalse(confirmed_position_reference_hold(True, 3.0, 0.0))
+        self.assertFalse(
+            confirmed_position_reference_hold(True, float("inf"), 0.40))
+        with self.assertRaises(ValueError):
+            confirmed_position_reference_hold(True, 1.0, -0.1)
+
     def test_configured_camera_axes_map_to_expected_base_directions(self):
         config = yaml.safe_load((PACKAGE / "config/shared_teleop.yaml").read_text(
             encoding="utf-8"))
@@ -937,6 +948,7 @@ class SafetyConfigurationTest(unittest.TestCase):
         reference = config["reference"]
         self.assertEqual(reference["frame"], "camera_color_optical_frame")
         self.assertTrue(reference["require_confirmation"])
+        self.assertTrue(reference["require_new_c_after_receiver_start"])
         self.assertFalse(reference["allow_automatic_rezero"])
         self.assertEqual(
             reference["direction_basis"],
@@ -1029,6 +1041,24 @@ class SafetyConfigurationTest(unittest.TestCase):
         self.assertEqual(
             forwarded["mapping_profile"], "camera_ground_workspace")
         self.assertIn("world_name", forwarded)
+        self.assertEqual(
+            forwarded["safe_initial_joint_positions"],
+            "$(arg safe_initial_joint_positions)")
+
+        arguments = {
+            entry.attrib["name"]: entry.attrib.get("default")
+            for entry in root.findall("arg")
+        }
+        tokens = arguments["safe_initial_joint_positions"].split()
+        positions = {
+            tokens[index + 1]: float(tokens[index + 2])
+            for index in range(0, len(tokens), 3)
+            if tokens[index] == "-J"
+        }
+        np.testing.assert_allclose(
+            [positions["joint_{}".format(index)] for index in range(1, 7)],
+            [0.0, 0.0, 0.0, 0.0, np.pi / 2.0, 0.0],
+            atol=1.0e-12)
 
         legacy = ET.parse(str(
             PACKAGE / "launch/live_human_gazebo_teleop.launch")).getroot()

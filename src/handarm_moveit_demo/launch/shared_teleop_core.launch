@@ -12,6 +12,9 @@
   <arg name="enable_logger" default="true" />
   <arg name="log_directory" default="/tmp/handarm_shared_teleop_logs" />
   <arg name="mapping_profile" default="current_linear" />
+  <!-- Opt-in response shaping for the EGM position-reference plant.  The
+       established velocity profile deliberately keeps the YAML values. -->
+  <arg name="stable_position_reference_profile" default="false" />
   <arg name="camera_workspace_calibration_file"
        default="$(find handarm_moveit_demo)/config/camera_workspace_calibration.yaml" />
 
@@ -51,6 +54,31 @@
     <param name="mapping_profile" value="$(arg mapping_profile)" />
     <param name="camera_workspace_calibration_file"
            value="$(arg camera_workspace_calibration_file)" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="translation_error_gain_per_s" value="3.0" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="rotation_error_gain_per_s" value="3.0" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="translation_feedforward_gain" value="0.20" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="rotation_feedforward_gain" value="0.15" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="maximum_linear_velocity_mps" value="0.30" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="maximum_angular_velocity_radps" value="2.0" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="maximum_linear_speed_norm_mps" value="0.30" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="maximum_angular_speed_norm_radps" value="2.0" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="target_linear_speed_limit_mps" value="0.50" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="target_angular_speed_limit_radps" value="3.0" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="position_hold_after_target_loss_s" value="0.40" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="position_hold_topic"
+           value="/shared_teleop/egm_position_hold" />
   </node>
   <node pkg="handarm_moveit_demo" type="gesture_isolation_node.py"
         name="gesture_isolation" output="screen" />
@@ -63,6 +91,14 @@
     <param name="robot_authorization" value="$(arg robot_authorization)" />
     <param name="calibration_confirmed" value="$(arg calibration_confirmed)" />
     <param name="mapping_profile" value="$(arg mapping_profile)" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="maximum_linear_velocity_mps" value="0.30" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="maximum_angular_velocity_radps" value="2.0" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="maximum_linear_acceleration_mps2" value="1.5" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="maximum_angular_acceleration_radps2" value="10.0" />
   </node>
   <node pkg="handarm_moveit_demo" type="mock_three_finger_hand_adapter.py"
         name="mock_three_finger_hand_adapter" output="screen" />
