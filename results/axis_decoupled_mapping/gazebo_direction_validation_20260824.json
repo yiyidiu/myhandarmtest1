@@ -1,0 +1,194 @@
+{
+  "passed": true,
+  "frame": "base_link",
+  "control_point": "tool0",
+  "servo_statuses_observed": [
+    0
+  ],
+  "servo_danger_statuses": [],
+  "return_to_zero_passed": true,
+  "return_translation_error_m": [
+    -0.0001019292717316378,
+    -0.00014205176638057426,
+    0.00010490362655529717
+  ],
+  "return_rotation_error_rad": [
+    2.199650958626422e-05,
+    -1.2659698424490267e-06,
+    -0.005717253823947972
+  ],
+  "return_translation_error_norm_m": 0.00020389470721928157,
+  "return_rotation_error_norm_rad": 0.005717296278535977,
+  "return_translation_threshold_m": 0.01,
+  "return_rotation_threshold_rad": 0.03490658503988659,
+  "axes": {
+    "translation_base_x": {
+      "passed": true,
+      "samples": 130,
+      "expected_base_axis": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "translation_m": [
+        0.04474575916437684,
+        -6.945891408667105e-07,
+        -0.00017134539847935004
+      ],
+      "rotation_vector_rad": [
+        1.8116891793509717e-06,
+        0.0009058694196058854,
+        2.91706552262897e-06
+      ],
+      "axis_projection": 0.04474575916437684,
+      "known_hand_input_excursion": 0.025,
+      "tool_to_hand_response_ratio": 1.7898303665750737,
+      "cross_axis_norm": 0.00017134680631433391,
+      "servo_statuses_observed": [
+        0
+      ],
+      "collision_scale_min": null,
+      "collision_scale_mean": null
+    },
+    "translation_base_y": {
+      "passed": true,
+      "samples": 128,
+      "expected_base_axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "translation_m": [
+        -0.0008056982212604202,
+        0.10617998994243007,
+        -0.0003058896153249613
+      ],
+      "rotation_vector_rad": [
+        -0.00035988676808537353,
+        0.001377081633258605,
+        -0.0007819965926672402
+      ],
+      "axis_projection": 0.10617998994243007,
+      "known_hand_input_excursion": 0.025,
+      "tool_to_hand_response_ratio": 4.247199597697202,
+      "cross_axis_norm": 0.0008618109308345177,
+      "servo_statuses_observed": [
+        0
+      ],
+      "collision_scale_min": null,
+      "collision_scale_mean": null
+    },
+    "translation_base_z": {
+      "passed": true,
+      "samples": 128,
+      "expected_base_axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "translation_m": [
+        0.00018844180200938698,
+        -0.0005966454204191585,
+        0.08301409220509143
+      ],
+      "rotation_vector_rad": [
+        -0.00019643482861031293,
+        -0.00014790441909280644,
+        -0.0005468480625668236
+      ],
+      "axis_projection": 0.08301409220509143,
+      "known_hand_input_excursion": 0.025,
+      "tool_to_hand_response_ratio": 3.320563688203657,
+      "cross_axis_norm": 0.0006256964683068776,
+      "servo_statuses_observed": [
+        0
+      ],
+      "collision_scale_min": null,
+      "collision_scale_mean": null
+    },
+    "rotation_tool_x": {
+      "passed": true,
+      "samples": 128,
+      "expected_base_axis": [
+        -0.9999978230555244,
+        0.0006053272764009692,
+        0.001996863315368502
+      ],
+      "translation_m": [
+        0.0001452829348174145,
+        1.098637110808669e-05,
+        -0.0006618539644659416
+      ],
+      "rotation_vector_rad": [
+        -0.20896282481582787,
+        -0.00035004712014484246,
+        0.00020796014752853074
+      ],
+      "axis_projection": 0.20896257329028062,
+      "known_hand_input_excursion": 0.22,
+      "tool_to_hand_response_ratio": 0.9498298785921846,
+      "cross_axis_norm": 0.0005204798975461325,
+      "servo_statuses_observed": [
+        0
+      ],
+      "collision_scale_min": null,
+      "collision_scale_mean": null
+    },
+    "rotation_tool_y": {
+      "passed": true,
+      "samples": 128,
+      "expected_base_axis": [
+        0.0006065036726842441,
+        0.9999996428697631,
+        0.000588569147464201
+      ],
+      "translation_m": [
+        9.302812076777967e-05,
+        -9.238529831631655e-06,
+        -0.0002953657213056182
+      ],
+      "rotation_vector_rad": [
+        0.0056649354209058,
+        0.20920530099660756,
+        -0.0007833892691714651
+      ],
+      "axis_projection": 0.20920820100845286,
+      "known_hand_input_excursion": 0.22,
+      "tool_to_hand_response_ratio": 0.9509463682202403,
+      "cross_axis_norm": 0.005611754445629227,
+      "servo_statuses_observed": [
+        0
+      ],
+      "collision_scale_min": null,
+      "collision_scale_mean": null
+    },
+    "rotation_tool_z": {
+      "passed": true,
+      "samples": 128,
+      "expected_base_axis": [
+        -0.001996506325269225,
+        0.0005897789711164663,
+        -0.9999978330592814
+      ],
+      "translation_m": [
+        -3.690088295027483e-05,
+        -1.225684128008129e-05,
+        -1.7520968604300968e-05
+      ],
+      "rotation_vector_rad": [
+        -0.0011011651142931453,
+        -0.005801285548933292,
+        -0.20967841782405447
+      ],
+      "axis_projection": 0.20967674047024673,
+      "known_hand_input_excursion": 0.22,
+      "tool_to_hand_response_ratio": 0.953076093046576,
+      "cross_axis_norm": 0.005964133264839319,
+      "servo_statuses_observed": [
+        0
+      ],
+      "collision_scale_min": null,
+      "collision_scale_mean": null
+    }
+  }
+}

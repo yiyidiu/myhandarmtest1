@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<!-- One-command GUI entry for the validated physical three-finger task.
+     The object is moved only by Gazebo contacts; attachment is disabled. -->
+<launch>
+  <arg name="gazebo_gui" default="true"/>
+  <arg name="rviz" default="true"/>
+  <include file="$(find handarm_sim_demo)/launch/three_finger_pick_place_demo.launch">
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)"/>
+    <arg name="rviz" value="$(arg rviz)"/>
+    <arg name="grasp_family" value="top_down"/>
+    <arg name="scene_config" value="$(find handarm_sim_demo)/config/reachable_top_grasp_scene.yaml"/>
+    <arg name="geometry_config" value="$(find handarm_sim_demo)/config/reachable_top_grasp_geometry.yaml"/>
+    <arg name="world_name" value="$(find handarm_sim_demo)/worlds/reachable_top_grasp.world"/>
+  </include>
+</launch>

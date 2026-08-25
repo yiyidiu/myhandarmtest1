@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<launch>
+  <!--
+    Compatibility entry point only.  The former launch spawned hand.xacro
+    without the validated controllers, startup coordinator or finite-effort
+    mimic setup.  Always delegate to the single simulation baseline so an old
+    command cannot silently restore the unstable hand model.
+  -->
+  <arg name="gazebo_gui" default="true"/>
+  <arg name="paused" default="false"/>
+  <include file="$(find handarm_sim_demo)/launch/simulation_baseline.launch">
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)"/>
+    <arg name="rviz" value="false"/>
+    <arg name="paused" value="$(arg paused)"/>
+    <arg name="start_moveit" value="false"/>
+    <arg name="initialize_arm_trajectory" value="true"/>
+    <arg name="run_avoidance_demo" value="false"/>
+    <arg name="run_pick_demo" value="false"/>
+    <arg name="simulation" value="true"/>
+    <arg name="use_real_robot" value="false"/>
+    <arg name="use_real_hand" value="false"/>
+  </include>
+</launch>

@@ -1,0 +1,18 @@
+{
+  "completed_host_wall_time_ns": 1786616526300532469,
+  "python": "3.8.10",
+  "result": "PASS",
+  "return_code": 0,
+  "safety_constraints": {
+    "camera_opened": false,
+    "gazebo_started": false,
+    "physical_camera_unplug": "NOT_RUN",
+    "real_enospc": "NOT_RUN",
+    "real_filesystem_fill": "NOT_RUN"
+  },
+  "schema_version": 1,
+  "scope": "MOCK_ONLY_NO_CAMERA_NO_GAZEBO",
+  "started_host_wall_time_ns": 1786616524940032554,
+  "suite": "P2_SAFE_FAULT_INJECTION",
+  "test_count": 24
+}

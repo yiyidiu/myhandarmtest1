@@ -1,0 +1,42 @@
+schema_version: 1
+evidence_scope: USB2_DEVELOPMENT_ONLY
+formal_usb3_validated: false
+
+bbox_convention: continuous_xyxy_half_open_original_rgb
+provider_order:
+  - manual_roi
+  - tracker_roi
+  - mediapipe_bbox
+
+manual_roi:
+  confidence_semantics: visible_area_fraction
+
+tracker_roi:
+  backend: KLT_RANSAC_AFFINE_PARTIAL_2D
+  max_features: 160
+  min_tracked_points: 8
+  quality_level: 0.01
+  min_distance_px: 5.0
+  max_forward_backward_error_px: 1.5
+  ransac_reprojection_threshold_px: 2.5
+  minimum_visible_fraction: 0.50
+  minimum_scale_change: 0.50
+  maximum_scale_change: 2.00
+  bbox_smoothing_alpha: 0.35
+  stale_bbox_on_loss_allowed: false
+  explicit_reinitialize_required: true
+
+mediapipe_bbox:
+  handedness_semantics: coarse_detector_label_unverified_for_unmirrored_d455
+  allowed_outputs:
+    - hand_presence
+    - bbox_xyxy_2d
+    - coarse_handedness
+  forbidden_outputs:
+    - world_landmarks
+    - landmark_depth
+    - palm_orientation
+    - robot_pose
+  maximum_hands: 1
+  minimum_detection_confidence: 0.5
+  bbox_margin_fraction: 0.15

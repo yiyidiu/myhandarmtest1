@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Simulation-only response-first Servo. No physical-output argument is
+       exposed here, so this launch cannot opt into a real ABB command path. -->
+  <node name="servo_server" pkg="moveit_servo" type="servo_server" output="screen">
+    <rosparam file="$(find abb120_moveit_config1)/config/servo_abbarm_velocity_realtime_gazebo.yaml"
+              command="load" />
+  </node>
+</launch>

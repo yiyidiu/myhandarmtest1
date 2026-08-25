@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="gazebo_gui" default="true" />
+  <arg name="rviz" default="true" />
+  <arg name="grasp_family" default="auto" />
+
+  <include file="$(find handarm_sim_demo)/launch/three_finger_grasp_pose_demo.launch">
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)" />
+    <arg name="rviz" value="$(arg rviz)" />
+    <arg name="grasp_family" value="$(arg grasp_family)" />
+    <arg name="scene_config"
+         value="$(find handarm_sim_demo)/config/ground_grasp_scene.yaml" />
+    <arg name="world_name"
+         value="$(find handarm_sim_demo)/worlds/handarm_ground_grasp.world" />
+    <arg name="expected_models"
+         value="[robot, target_object, ground_object_left, ground_object_right]" />
+  </include>
+</launch>

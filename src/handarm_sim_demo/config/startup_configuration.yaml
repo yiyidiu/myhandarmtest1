@@ -1,0 +1,20 @@
+initial_configuration:
+  duration: 1.0
+  tolerance: 0.04
+  # All controlled joints are revolute. Gazebo/ros_control may report any of
+  # them in an equivalent 2*pi branch during a cold start. This only affects
+  # verification; commanded targets and URDF limits remain unchanged.
+  wraparound_joints:
+    [joint_1, joint_2, joint_3, joint_4, joint_5, joint_6,
+     f1j1, f1j2, f2j1, f3j2]
+  arm:
+    joint_names: [joint_1, joint_2, joint_3, joint_4, joint_5, joint_6]
+    positions: [0.4675, -0.4737, -0.3083, -0.7072, -0.3808, -0.4533]
+    action: /controller_gazebo/follow_joint_trajectory
+    path_tolerance: 7.0
+  hand:
+    joint_names: [f1j1, f1j2, f2j1, f3j2]
+    # Fixed opposed-finger grasp configuration. OPEN/CLOSE retain f1j1=0.18.
+    positions: [0.18, 0.20, 0.20, 0.20]
+    action: /controller_gazebo_hand/follow_joint_trajectory
+    path_tolerance: 3.2

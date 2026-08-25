@@ -1,0 +1,16 @@
+<?xml version="1.0" ?>
+
+<robot name="handarm_g" xmlns:xacro="http://ros.org/wiki/xacro">
+  <!-- <xacro:include filename="$(find abb_irb120_gazebo)/urdf/irb120_3_58_macro.xacro"/> -->
+  <xacro:include filename="$(find handarmtest1)/xacro/arm_macro_g.xacro"/>
+  <xacro:include filename="$(find handarmtest1)/xacro/hand_g.xacro"/>
+  <xacro:abb_irb120_3_58_g prefix=""/>
+
+
+  <!-- Fix robot to Gazebo world -->
+  <!-- <link name="world"/>
+  <joint name="world-base_link-fixed" type="fixed">
+    <parent link="world"/>
+    <child link="base_link"/>
+  </joint> -->
+</robot>

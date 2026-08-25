@@ -1,0 +1,61 @@
+###############################################
+# MoveIt Servo configuration for ABB IRB120 arm
+# ROS Noetic / MoveIt 1 / Gazebo
+#
+# Debug/stabilized version:
+# - Servo outputs raw joint velocity trajectory to /servo_server/raw_joint_cmds.
+# - servo_velocity_to_position_bridge integrates velocities to small position steps.
+# - Singularity thresholds are relaxed for simulation debugging.
+###############################################
+
+move_group_name: abbarm
+planning_frame: base_link
+ee_frame_name: tool0
+robot_link_command_frame: base_link
+
+command_in_type: speed_units
+cartesian_command_in_topic: /servo_server/delta_twist_cmds
+joint_command_in_topic: /servo_server/delta_joint_cmds
+
+# Do not publish directly to /controller_gazebo/command.
+# The bridge node converts raw Servo velocities into position trajectory commands.
+command_out_topic: /servo_server/raw_joint_cmds
+command_out_type: trajectory_msgs/JointTrajectory
+publish_joint_positions: false
+publish_joint_velocities: true
+publish_joint_accelerations: false
+
+publish_period: 0.02
+low_latency_mode: false
+incoming_command_timeout: 0.50
+num_outgoing_halt_msgs_to_publish: 4
+
+scale:
+  linear: 0.25
+  rotational: 0.25
+  joint: 0.25
+
+low_pass_filter_coeff: 2.0
+joint_topic: /joint_states
+status_topic: /servo_server/status
+warning_topic: /servo_server/status
+
+use_gazebo: true
+
+# Keep collision checking off until the servo motion chain is visibly working.
+# After the chain is validated, turn this back on and fix SRDF/collision meshes.
+check_collisions: false
+collision_check_rate: 10.0
+collision_check_type: threshold_distance
+self_collision_proximity_threshold: 0.03
+scene_collision_proximity_threshold: 0.03
+collision_distance_safety_factor: 1000.0
+min_allowable_collision_distance: 0.01
+
+# Relaxed thresholds for initial Gazebo debugging. In final experiments, use safer values.
+lower_singularity_threshold: 100.0
+hard_stop_singularity_threshold: 200.0
+leaving_singularity_threshold_multiplier: 2.0
+joint_limit_margin: 0.10
+
+is_primary_planning_scene_monitor: false

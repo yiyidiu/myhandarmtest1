@@ -1,0 +1,53 @@
+###############################################
+# Gazebo-only EGM position-reference profile.
+#
+# MoveIt Servo supplies joint-velocity feed-forward at 50 Hz.  The independent
+# egm_position_reference_adapter integrates only the latest sample into a
+# persistent 250 Hz position reference for a direct position controller.
+# This is an EGM behavior emulator, not an ABB EGM network driver.
+###############################################
+
+move_group_name: abbarm
+planning_frame: base_link
+ee_frame_name: tool0
+robot_link_command_frame: base_link
+
+command_in_type: speed_units
+cartesian_command_in_topic: /servo_server/delta_twist_cmds
+joint_command_in_topic: /servo_server/delta_joint_cmds
+command_out_topic: /egm_position_reference/raw_joint_velocity
+command_out_type: std_msgs/Float64MultiArray
+publish_joint_positions: false
+publish_joint_velocities: true
+publish_joint_accelerations: false
+
+# HaMeR target tracking remains 50 Hz. The adapter performs the 250 Hz
+# zero-order hold, acceleration limiting and position-reference integration.
+publish_period: 0.02
+low_latency_mode: true
+incoming_command_timeout: 0.10
+num_outgoing_halt_msgs_to_publish: 4
+
+scale: {linear: 0.25, rotational: 0.25, joint: 0.25}
+low_pass_filter_coeff: 0.0
+joint_topic: /joint_states
+status_topic: /servo_server/status
+warning_topic: /servo_server/status
+use_gazebo: true
+
+# The safe hybrid profile uses MoveIt Servo as the velocity/safety layer and
+# only then integrates the accepted joint velocity into a short-leash position
+# reference.  This keeps low-latency Cartesian response while restoring the
+# collision, singularity and joint-limit protections required by a real arm.
+check_collisions: true
+collision_check_rate: 60.0
+collision_check_type: threshold_distance
+self_collision_proximity_threshold: 0.01
+scene_collision_proximity_threshold: 0.03
+collision_distance_safety_factor: 1000.0
+min_allowable_collision_distance: 0.01
+lower_singularity_threshold: 17.0
+hard_stop_singularity_threshold: 30.0
+leaving_singularity_threshold_multiplier: 2.0
+joint_limit_margin: 0.08
+is_primary_planning_scene_monitor: false

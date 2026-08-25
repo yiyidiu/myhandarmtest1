@@ -1,0 +1,10 @@
+<?xml version="1.0" ?>
+
+<robot name="handarm" xmlns:xacro="http://ros.org/wiki/xacro">
+  <xacro:include filename="$(find handarmtest1)/xacro/arm_macro.xacro"/>
+
+  <xacro:include filename="$(find handarmtest1)/xacro/hand.xacro"/>
+
+  <xacro:abb_irb120_3_58 prefix=""/>
+
+</robot>

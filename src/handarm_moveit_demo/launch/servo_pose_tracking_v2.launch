@@ -1,0 +1,87 @@
+<launch>
+  <arg name="base_frame" default="base_link"/>
+  <arg name="ee_frame" default="tool0"/>
+
+  <arg name="target_topic" default="/target_ee_pose"/>
+  <arg name="twist_topic" default="/servo_server/delta_twist_cmds"/>
+
+  <arg name="kp_pos" default="0.8"/>
+  <arg name="kp_rot" default="0.5"/>
+
+  <arg name="kff_pos" default="0.8"/>
+  <arg name="kff_rot" default="0.5"/>
+
+  <arg name="alpha_pos" default="0.35"/>
+  <arg name="beta_pos" default="0.08"/>
+
+  <arg name="alpha_rot" default="0.35"/>
+  <arg name="beta_rot" default="0.08"/>
+
+  <arg name="delay_comp" default="0.05"/>
+
+  <arg name="max_linear_speed" default="0.04"/>
+  <arg name="max_angular_speed" default="0.25"/>
+
+  <arg name="max_linear_accel" default="0.20"/>
+  <arg name="max_angular_accel" default="1.00"/>
+
+  <arg name="target_linear_speed_limit" default="0.30"/>
+  <arg name="target_angular_speed_limit" default="2.00"/>
+
+  <arg name="pos_deadband" default="0.001"/>
+  <arg name="rot_deadband" default="0.01"/>
+
+  <arg name="cmd_lpf_alpha" default="1.0"/>
+
+  <arg name="target_timeout" default="0.5"/>
+  <arg name="target_jump_threshold" default="0.20"/>
+  <arg name="rot_jump_threshold" default="1.00"/>
+
+  <arg name="rate" default="50.0"/>
+
+  <node pkg="handarm_moveit_demo"
+        type="servo_pose_tracking_node_v2.py"
+        name="servo_pose_tracking_node_v2"
+        output="screen">
+
+    <param name="base_frame" value="$(arg base_frame)"/>
+    <param name="ee_frame" value="$(arg ee_frame)"/>
+
+    <param name="target_topic" value="$(arg target_topic)"/>
+    <param name="twist_topic" value="$(arg twist_topic)"/>
+
+    <param name="kp_pos" value="$(arg kp_pos)"/>
+    <param name="kp_rot" value="$(arg kp_rot)"/>
+
+    <param name="kff_pos" value="$(arg kff_pos)"/>
+    <param name="kff_rot" value="$(arg kff_rot)"/>
+
+    <param name="alpha_pos" value="$(arg alpha_pos)"/>
+    <param name="beta_pos" value="$(arg beta_pos)"/>
+
+    <param name="alpha_rot" value="$(arg alpha_rot)"/>
+    <param name="beta_rot" value="$(arg beta_rot)"/>
+
+    <param name="delay_comp" value="$(arg delay_comp)"/>
+
+    <param name="max_linear_speed" value="$(arg max_linear_speed)"/>
+    <param name="max_angular_speed" value="$(arg max_angular_speed)"/>
+
+    <param name="max_linear_accel" value="$(arg max_linear_accel)"/>
+    <param name="max_angular_accel" value="$(arg max_angular_accel)"/>
+
+    <param name="target_linear_speed_limit" value="$(arg target_linear_speed_limit)"/>
+    <param name="target_angular_speed_limit" value="$(arg target_angular_speed_limit)"/>
+
+    <param name="pos_deadband" value="$(arg pos_deadband)"/>
+    <param name="rot_deadband" value="$(arg rot_deadband)"/>
+
+    <param name="cmd_lpf_alpha" value="$(arg cmd_lpf_alpha)"/>
+
+    <param name="target_timeout" value="$(arg target_timeout)"/>
+    <param name="target_jump_threshold" value="$(arg target_jump_threshold)"/>
+    <param name="rot_jump_threshold" value="$(arg rot_jump_threshold)"/>
+
+    <param name="rate" value="$(arg rate)"/>
+  </node>
+</launch>

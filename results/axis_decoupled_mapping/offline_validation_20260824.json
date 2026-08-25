@@ -1,0 +1,32 @@
+{
+  "checks": {
+    "axis_mapper_depth_sweep_cross_axis_below_1mm": true,
+    "boundary_does_not_create_lateral_velocity": true,
+    "c_zero_return_below_1um": true,
+    "edge_depth_increment_keeps_ik_lateral_axes": true,
+    "edge_depth_increment_keeps_workspace_lateral_axes": true,
+    "legacy_radial_coupling_reproduced_above_10mm": true,
+    "perspective_fixed_ray_cross_axis_below_1e-9": true
+  },
+  "metrics": {
+    "c_zero_return_error_m": 0.0,
+    "direction_preserving_boundary_output_mps": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "edge_depth_ik_cross_axis_delta_m": 0.0,
+    "edge_depth_workspace_cross_axis_delta_m": 0.0,
+    "fixed_ray_decoupled_cross_axis_max": 3.398641912117826e-17,
+    "fixed_ray_raw_metric_lateral_coupling_m": 0.16509466981099058,
+    "legacy_boundary_output_mps": [
+      0.099950536293768,
+      -0.09999998776670807,
+      0.0
+    ],
+    "new_depth_sweep_robot_y_range_m": 0.0,
+    "old_depth_sweep_robot_y_range_m": 0.43765377602230204
+  },
+  "passed": true,
+  "schema": "handarm_axis_decoupled_acceptance_v2"
+}

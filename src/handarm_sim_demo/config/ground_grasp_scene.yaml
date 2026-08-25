@@ -1,0 +1,54 @@
+schema_version: 1
+frame_id: world
+units: {length: m, angle: rad, mass: kg}
+support_surface_key: ground
+
+objects:
+  # Logical support surface used by grasp-clearance calculations. Gazebo owns
+  # the standard ground_plane model; this entry is not synchronized as a box.
+  ground:
+    name: teleop_ground_safety
+    type: box
+    # Keep a 3 mm numerical gap below z=0 so the fixed base is not born in
+    # collision while every moving arm/hand link is still protected.
+    pose: {position: [0.0, 0.0, -0.011], orientation_rpy: [0.0, 0.0, 0.0]}
+    size: [4.0, 4.0, 0.016]
+    mass: 0.0
+    static: true
+    collision_enabled: true
+    planning_scene_enabled: true
+    scene_manager_enabled: false
+  target:
+    name: target_object
+    type: box
+    pose: {position: [0.48, 0.0, 0.051], orientation_rpy: [0.0, 0.0, 0.0]}
+    size: [0.05, 0.06, 0.10]
+    planning_padding_m: [0.02, 0.02, 0.02]
+    mass: 0.10
+    static: false
+    collision_enabled: true
+    planning_scene_enabled: true
+  left_object:
+    name: ground_object_left
+    type: box
+    pose: {position: [0.40, 0.28, 0.041], orientation_rpy: [0.0, 0.0, 0.0]}
+    size: [0.06, 0.06, 0.08]
+    mass: 0.08
+    static: false
+    collision_enabled: true
+    planning_scene_enabled: true
+  right_object:
+    name: ground_object_right
+    type: box
+    pose: {position: [0.40, -0.28, 0.061], orientation_rpy: [0.0, 0.0, 0.0]}
+    size: [0.08, 0.05, 0.12]
+    mass: 0.12
+    static: false
+    collision_enabled: true
+    planning_scene_enabled: true
+
+scenario_object_sets:
+  no_obstacle: [ground, target, left_object, right_object]
+  target_only: [ground, target]
+  ground_only: [ground]
+  ground_objects: [ground, target, left_object, right_object]

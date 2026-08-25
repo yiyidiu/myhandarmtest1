@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<!-- Coarse screen only: Gazebo target untouched and no robot execution. -->
+<launch>
+  <arg name="gazebo_gui" default="false"/>
+  <arg name="rviz" default="false"/>
+  <include file="$(find handarm_sim_demo)/launch/simulation_baseline.launch">
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)"/>
+    <arg name="rviz" value="$(arg rviz)"/>
+    <arg name="paused" value="false"/>
+    <arg name="scene_config" value="$(find handarm_sim_demo)/config/three_finger_large_xy_probe_02_scene.yaml"/>
+    <arg name="grasp_config" value="$(find handarm_sim_demo)/config/physical_grasp_demo.yaml"/>
+    <arg name="run_avoidance_demo" value="false"/>
+    <arg name="run_pick_demo" value="false"/>
+    <arg name="start_moveit" value="true"/>
+    <arg name="shutdown_on_task_exit" value="false"/>
+    <arg name="grasp_mode" value="approach_only"/>
+    <arg name="allow_nonphysical_attachment" value="false"/>
+    <arg name="world_name" value="$(find handarm_sim_demo)/worlds/handarm_three_finger_large_xy_probe_02.world"/>
+    <arg name="expected_models" value="[robot, work_table, target_object]"/>
+    <arg name="scenario" value="no_obstacle"/>
+    <arg name="simulation" value="true"/>
+    <arg name="use_real_robot" value="false"/>
+    <arg name="use_real_hand" value="false"/>
+  </include>
+  <node name="three_finger_xy_ik_probe"
+        pkg="handarm_sim_demo" type="grasp_xy_ik_probe.py"
+        output="screen" required="false">
+    <param name="scene_config" value="$(find handarm_sim_demo)/config/three_finger_large_xy_probe_02_scene.yaml"/>
+    <param name="geometry_config" value="$(find handarm_sim_demo)/config/three_finger_size_control_geometry.yaml"/>
+    <param name="grasp_family" value="top_down"/>
+    <param name="planning_group" value="abbarm"/>
+    <param name="target_object_key" value="target"/>
+    <param name="object_center_z_m" value="0.44"/>
+    <rosparam param="probes">[[0.30, 0.10], [0.34, 0.10], [0.30, -0.10], [0.34, -0.10], [0.38, 0.00], [0.38, 0.10]]</rosparam>
+  </node>
+</launch>

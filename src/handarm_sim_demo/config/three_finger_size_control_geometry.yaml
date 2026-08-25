@@ -1,0 +1,106 @@
+schema_version: 1
+frames: {base: base_link, tool: tool0, hand: handbase_link, grasp_center: grasp_center}
+fixed_palm:
+  joint: f1j1
+  value_rad: 0.18
+  open_flexion_rad: {f1j2: 0.20, f2j1: 0.20, f3j2: 0.20}
+  close_flexion_rad: {f1j2: 0.85, f2j1: 0.85, f3j2: 0.90}
+  closure_samples: 31
+finger_geometry:
+  families:
+    f1: [f1link2, f1link3]
+    f2: [f2link1, f2link2]
+    f3: [f3link2, f3link3]
+  distal_pad_links: {f1: f1link3, f2: f2link2, f3: f3link3}
+  non_contact_links: [handbase_link, f1link1, f3link1]
+  capsule_axis_samples: 31
+mesh_collision_box_proxies:
+  handbase_link:
+    - center_xyz_m: [-0.00136, -0.00082, 0.0825]
+      half_extents_m: [0.069, 0.069, 0.0895]
+grasp_center:
+  reference_closure_fraction: 0.50
+  expected_handbase_xyz_m: [0.008705, 0.010090, 0.250669]
+  expected_tool0_xyz_m: [0.008506, 0.010090, 0.080676]
+  validation_tolerance_m: 0.002
+contact_geometry:
+  contact_tolerance_m: 0.001
+  required_open_clearance_m: 0.001
+  maximum_contact_fraction_spread: 0.35
+  minimum_table_clearance_m: 0.008
+  minimum_palm_object_clearance_m: 0.003
+  minimum_cross_finger_clearance_m: -0.001
+  minimum_projected_triangle_area_m2: 0.0001
+  envelope_tolerance_m: 0.004
+  required_finger_families: [f1, f2, f3]
+search:
+  expected_object_size_m: [0.07, 0.08, 0.14]
+  center_offsets_m: [-0.010, 0.0, 0.010]
+  top_object_center_in_grasp_frame_z_m: 0.005
+  top_oblique_tilt_axial_pairs:
+    - {tilt_deg: -30, object_center_axial_offset_m: 0.052}
+  coarse_roll_step_deg: 15
+  fine_roll_half_width_deg: 15
+  fine_roll_step_deg: 2
+  top_oblique_planar_offsets_m: [[0.006, -0.009]]
+  f3_contact_lag_penalty_per_fraction: 200.0
+  minimum_planned_table_clearance_m: 0.024
+  minimum_coarse_table_clearance_m: 0.020
+  contact_calibrated_top_oblique_roll_window_deg: [268.0, 268.0]
+  pregrasp_distance_m: 0.040
+  side_height_offsets_m: [0.0, 0.010, 0.020]
+  # This experiment must never fall back to the historical oblique edge grip.
+  grasp_families: [top_down]
+# Legacy/default reference: gate the object centre axial offset.
+quality_reference_mode: centered_object
+quality_gates:
+  maximum_centered_object_center_axial_offset_m: 0.025
+  maximum_contact_fraction_spread: 0.20
+  minimum_projected_contact_area_m2: 0.001
+  minimum_normalized_contact_area_fraction: 0.30
+  maximum_contact_height_ratio: 0.70
+  minimum_lift_world_z_fraction: 0.95
+runtime_acceptance:
+  object_pose_stability_samples: 10
+  object_pose_position_range_m: 0.001
+  object_pose_orientation_range_deg: 1.0
+  object_scene_sync_position_tolerance_m: 0.001
+  object_scene_sync_orientation_tolerance_deg: 1.0
+  required_actual_finger_families: [f1, f2, f3]
+  contact_stability_s: 0.30
+  contact_wait_timeout_s: 4.0
+  contact_limited_close_timeout_s: 9.5
+  approach_velocity_scaling: 0.03
+  approach_acceleration_scaling: 0.02
+  cartesian_eef_step_m: 0.002
+  cartesian_fraction_min: 0.995
+  pregrasp_position_tolerance_m: 0.025
+  pregrasp_orientation_tolerance_deg: 6.0
+  maximum_approach_object_displacement_m: 0.005
+  maximum_grasp_object_displacement_m: 0.010
+  # Request margin above the 60 mm physical acceptance threshold.
+  lift_distance_along_opposite_approach_m: 0.085
+  minimum_actual_object_lift_z_fraction: 0.90
+  lift_preload_flexion_delta_rad: {f1j2: 0.08, f2j1: 0.08, f3j2: 0.01}
+  lift_preload_duration_s: 0.75
+  lift_preload_goal_tolerance_rad: 0.10
+  lift_preload_palm_tolerance_rad: 0.02
+  minimum_object_lift_m: 0.060
+  airborne_no_table_support_stability_s: 0.30
+  airborne_no_table_support_timeout_s: 2.0
+  maximum_object_tool_disagreement_m: 0.010
+  minimum_lift_place_duration_s: 8.0
+  post_execution_joint_tolerance_rad: 0.025
+  post_execution_settle_stability_s: 0.20
+  post_execution_settle_timeout_s: 4.0
+  physical_hold_duration_s: 5.0
+  contact_message_timeout_s: 0.20
+  contact_loss_grace_s: 0.15
+  object_place_tolerance_m: 0.015
+  table_support_stability_s: 0.30
+  table_support_timeout_s: 3.0
+  release_contact_clear_stability_s: 0.50
+  release_contact_clear_timeout_s: 5.0
+  release_settle_duration_s: 2.0
+  retreat_distance_m: 0.040
+  minimum_retreat_duration_s: 4.0

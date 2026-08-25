@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<!-- Safe first stage: visualize and validate a strict top-down pose only. -->
+<launch>
+  <arg name="gazebo_gui" default="true"/>
+  <arg name="rviz" default="true"/>
+  <include file="$(find handarm_sim_demo)/launch/three_finger_grasp_pose_demo.launch">
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)"/>
+    <arg name="rviz" value="$(arg rviz)"/>
+    <arg name="grasp_family" value="top_down"/>
+    <arg name="scene_config" value="$(find handarm_sim_demo)/config/three_finger_size_control_scene.yaml"/>
+    <arg name="geometry_config" value="$(find handarm_sim_demo)/config/three_finger_size_control_geometry.yaml"/>
+    <arg name="world_name" value="$(find handarm_sim_demo)/worlds/handarm_three_finger_size_control.world"/>
+  </include>
+</launch>

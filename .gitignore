@@ -1,0 +1,54 @@
+# Catkin/catkin_tools and local runtime products
+/.catkin_tools/
+/.catkin_workspace
+/build/
+/devel/
+/install/
+/log/
+/logs/
+/.runtime/
+/src/CMakeLists.txt
+
+# Editor and agent-local state
+/.codex/
+/.vscode/
+.idea/
+*.swp
+*~
+
+# Large, generated, or machine-local project data
+/artifacts/
+/backups/
+/datasets/
+/perception_hamer/_DATA/
+/perception_hamer/benchmark_results/
+/perception_hamer/recordings/
+
+# Generated results stay local, except for two compact acceptance records
+/results/*
+!/results/axis_decoupled_mapping/
+/results/axis_decoupled_mapping/*
+!/results/axis_decoupled_mapping/gazebo_direction_validation_20260824.json
+!/results/axis_decoupled_mapping/offline_validation_20260824.json
+
+# Recorded datasets and media
+*.bag
+*.db3
+*.mp4
+*.avi
+*.pcd
+
+# Python caches and test/tool output
+__pycache__/
+*.py[cod]
+.coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ROS/Gazebo runtime output and local calibration
+*.log
+/camera_workspace_measured.yaml
+
+# Accidental download residue seen in the original workspace
+/]+.deb[^'<> ]*

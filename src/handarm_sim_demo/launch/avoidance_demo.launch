@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="gazebo_gui" default="true"/>
+  <arg name="rviz" default="true"/>
+  <arg name="paused" default="false"/>
+  <arg name="scene_config" default="$(find handarm_sim_demo)/config/demo_scene.yaml"/>
+  <arg name="scenario" default="double_obstacle"/>
+  <arg name="repetitions" default="1"/>
+  <arg name="shutdown_on_task_exit" default="false"/>
+  <include file="$(find handarm_sim_demo)/launch/simulation_baseline.launch">
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)"/>
+    <arg name="rviz" value="$(arg rviz)"/>
+    <arg name="paused" value="$(arg paused)"/>
+    <arg name="scene_config" value="$(arg scene_config)"/>
+    <arg name="scenario" value="$(arg scenario)"/>
+    <arg name="avoidance_repetitions" value="$(arg repetitions)"/>
+    <arg name="shutdown_on_task_exit" value="$(arg shutdown_on_task_exit)"/>
+    <arg name="run_avoidance_demo" value="true"/>
+    <arg name="run_pick_demo" value="false"/>
+    <arg name="simulation" value="true"/>
+    <arg name="use_real_robot" value="false"/>
+    <arg name="use_real_hand" value="false"/>
+  </include>
+</launch>

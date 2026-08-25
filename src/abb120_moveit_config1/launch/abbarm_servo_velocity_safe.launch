@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="enable_robot" default="false" />
+  <node name="servo_server" pkg="moveit_servo" type="servo_server" output="screen">
+    <rosparam file="$(find abb120_moveit_config1)/config/servo_abbarm_velocity_safe.yaml" command="load" />
+  </node>
+</launch>

@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<!-- Plan-only reachable strict top-down pose validation. No contact close,
+     no hand command, no attachment, no lift/place stage and no execution. -->
+<launch>
+  <arg name="gazebo_gui" default="true"/>
+  <arg name="rviz" default="true"/>
+  <include file="$(find handarm_sim_demo)/launch/three_finger_grasp_pose_demo.launch">
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)"/>
+    <arg name="rviz" value="$(arg rviz)"/>
+    <arg name="grasp_family" value="top_down"/>
+    <arg name="scene_config" value="$(find handarm_sim_demo)/config/reachable_top_grasp_scene.yaml"/>
+    <arg name="geometry_config" value="$(find handarm_sim_demo)/config/reachable_top_grasp_geometry.yaml"/>
+    <arg name="world_name" value="$(find handarm_sim_demo)/worlds/reachable_top_grasp.world"/>
+  </include>
+</launch>

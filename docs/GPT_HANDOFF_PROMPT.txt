@@ -1,0 +1,21 @@
+请先完整阅读压缩包根目录的 GPT_PROJECT_HANDOFF_20260815.md，再审阅当前源码、配置和 selected_results。不要被历史报告中的旧参数或旧 PASS 结论误导。
+
+你的任务是：
+
+1. 复核当前工程完成到哪一步，严格区分“已实现”“单元测试通过”“Gazebo 实际通过”“NOT PASS/NOT RUN”。
+2. 重点审查当前唯一未完成主线：ABB IRB120 三指手通过真实 Gazebo 接触与摩擦完成“接近—闭合—抬升—放回—单次松开—撤离”。
+3. 禁止建议 fixed-joint attachment、set_model_state 搬运、隐藏导轨/支撑、关闭碰撞、放宽验收门限来制造 PASS，或把不同 trial 的局部成功拼接为完整成功。
+4. `GRASP/RELEASE` 必须只控制手指屈伸，掌型关节目标不变，也不得夹带机械臂动作。
+5. 以 selected_results 中最新 JSON 为证据，解释放置误差、物体/工具跟随差和负载 RELEASE 失败的最可能原因；明确哪些是事实、哪些是推断。
+6. 给出最小、串行、一次只改一个变量的修复方案，并给出对应单元测试、headless Gazebo 测试、GUI 观察点和最终三次冷启动验收标准。
+7. 不要把 HaMeR 的 global_orient、MANO joint palm frame 或 rigid vertex frame用于机械臂姿态；P5 KLT–Kabsch 当前也未达到接 MoveIt 的最低条件。
+
+请先输出：
+
+- 当前状态裁定；
+- 证据文件引用；
+- 根因假设优先级；
+- 最小补丁计划；
+- 每一步的可复现实验与停止条件。
+
+在没有新的同一次完整冷启动 Gazebo 证据前，不得将完整物理抓取裁定为 PASS。

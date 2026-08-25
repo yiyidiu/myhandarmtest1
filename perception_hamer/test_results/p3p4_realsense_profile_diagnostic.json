@@ -1,0 +1,51 @@
+{
+  "date": "2026-08-13",
+  "purpose": "read-only diagnosis retained without changing capture tolerances",
+  "requested_profile": "640x480@30 depth Z16 + color RGB8",
+  "raw_depth": {
+    "stream": "depth",
+    "stream_index": 0,
+    "profile_unique_id": 0,
+    "format": "z16",
+    "width": 640,
+    "height": 480,
+    "fps": 30,
+    "fx": 389.1182861328125,
+    "fy": 389.1182861328125,
+    "ppx": 323.28057861328125,
+    "ppy": 239.29983520507812,
+    "distortion": "brown_conrady"
+  },
+  "raw_and_aligned_target_color": {
+    "stream": "color",
+    "stream_index": 0,
+    "profile_unique_id": 3,
+    "format": "rgb8",
+    "width": 640,
+    "height": 480,
+    "fps": 30,
+    "fx": 387.17852783203125,
+    "fy": 386.748046875,
+    "ppx": 317.37567138671875,
+    "ppy": 245.79708862304688,
+    "distortion": "inverse_brown_conrady"
+  },
+  "aligned_depth": {
+    "stream": "depth",
+    "stream_index": 0,
+    "profile_unique_id": 10,
+    "format": "z16",
+    "width": 640,
+    "height": 480,
+    "fps": 30,
+    "fx": 387.17852783203125,
+    "fy": 386.748046875,
+    "ppx": 317.37567138671875,
+    "ppy": 245.79708862304688,
+    "distortion": "inverse_brown_conrady"
+  },
+  "comparison_contract": "aligned depth intrinsics are compared with the aligned target color intrinsics, not raw depth intrinsics",
+  "observed_result": "aligned depth and aligned target color intrinsics matched in this read-only probe",
+  "tolerance_changed": false,
+  "blocks_hamer_development": false
+}

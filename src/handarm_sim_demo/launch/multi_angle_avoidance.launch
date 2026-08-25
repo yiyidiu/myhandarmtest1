@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="gazebo_gui" default="true"/>
+  <arg name="rviz" default="true"/>
+  <arg name="rviz_config" default="$(find handarm_sim_demo)/config/multi_angle_avoidance.rviz"/>
+  <arg name="paused" default="false"/>
+  <arg name="repetitions" default="1"/>
+  <arg name="shutdown_on_task_exit" default="false"/>
+  <arg name="run_label" default="development"/>
+  <arg name="results_dir" default="$(find handarm_sim_demo)/../../results/sim_baseline"/>
+  <arg name="scene_config" default="$(find handarm_sim_demo)/config/demo_scene.yaml"/>
+  <arg name="course_config" default="$(find handarm_sim_demo)/config/multi_angle_obstacle_course.yaml"/>
+
+  <include file="$(find handarm_sim_demo)/launch/simulation_baseline.launch">
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)"/>
+    <arg name="rviz" value="$(arg rviz)"/>
+    <arg name="rviz_config" value="$(arg rviz_config)"/>
+    <arg name="paused" value="$(arg paused)"/>
+    <arg name="scene_config" value="$(arg scene_config)"/>
+    <arg name="scenario" value="multi_angle_obstacle_course"/>
+    <arg name="run_avoidance_demo" value="false"/>
+    <arg name="run_pick_demo" value="false"/>
+    <arg name="simulation" value="true"/>
+    <arg name="use_real_robot" value="false"/>
+    <arg name="use_real_hand" value="false"/>
+  </include>
+
+  <node name="multi_angle_avoidance_course" pkg="handarm_sim_demo"
+        type="multi_angle_avoidance_course.py" output="screen"
+        required="$(arg shutdown_on_task_exit)">
+    <param name="scene_config" value="$(arg scene_config)"/>
+    <param name="course_config" value="$(arg course_config)"/>
+    <param name="startup_config" value="$(find handarm_sim_demo)/config/startup_configuration.yaml"/>
+    <param name="repetitions" value="$(arg repetitions)"/>
+    <param name="run_label" value="$(arg run_label)"/>
+    <param name="results_dir" value="$(arg results_dir)"/>
+  </node>
+</launch>

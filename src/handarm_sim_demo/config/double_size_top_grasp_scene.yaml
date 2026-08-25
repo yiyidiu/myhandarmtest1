@@ -1,0 +1,29 @@
+schema_version: 1
+frame_id: world
+units: {length: m, angle: rad, mass: kg}
+
+objects:
+  table:
+    name: work_table
+    type: box
+    pose: {position: [0.65, 0.0, 0.33], orientation_rpy: [0.0, 0.0, 0.0]}
+    size: [0.80, 0.90, 0.08]
+    mass: 80.0
+    static: true
+    collision_enabled: true
+    planning_scene_enabled: true
+  target:
+    name: target_object
+    type: box
+    # Single-variable doubled-size control: same xy and mass as baseline; only
+    # size/z/inertia change.  z = table_top + half_height = 0.37 + 0.10.
+    pose: {position: [0.34, 0.18, 0.47], orientation_rpy: [0.0, 0.0, 0.0]}
+    size: [0.10, 0.12, 0.20]
+    planning_padding_m: [0.02, 0.02, 0.02]
+    mass: 0.10
+    static: false
+    collision_enabled: true
+    planning_scene_enabled: true
+
+scenario_object_sets:
+  no_obstacle: [table, target]

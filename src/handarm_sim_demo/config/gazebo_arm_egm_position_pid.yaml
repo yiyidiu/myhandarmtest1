@@ -1,0 +1,13 @@
+# Gazebo-only arm gains for the EGM-style position-reference profile.
+#
+# These gains are intentionally independent from gazebo_hand_position_pid.yaml,
+# which remains the rollback profile for the established simulation/grasp
+# paths.  The position reference is finite-effort and gravity remains enabled:
+# P/D supplies servo stiffness and damping, while the bounded I term removes
+# the loaded shoulder/elbow offset that a P-only loop needs to resist gravity.
+joint_1: {p: 500.0, i: 30.0,  d: 10.0, i_clamp: 12.0, antiwindup: true}
+joint_2: {p: 1200.0, i: 160.0, d: 25.0, i_clamp: 25.0, antiwindup: true}
+joint_3: {p: 900.0, i: 140.0, d: 22.0, i_clamp: 25.0, antiwindup: true}
+joint_4: {p: 350.0, i: 30.0,  d: 7.0,  i_clamp: 10.0, antiwindup: true}
+joint_5: {p: 350.0, i: 30.0,  d: 7.0,  i_clamp: 10.0, antiwindup: true}
+joint_6: {p: 180.0, i: 15.0,  d: 3.0,  i_clamp: 8.0, antiwindup: true}

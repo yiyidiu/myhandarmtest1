@@ -1,0 +1,77 @@
+schema_version: 1
+frame_id: world
+units: {length: m, angle: rad, mass: kg}
+
+objects:
+  table:
+    name: work_table
+    type: box
+    pose: {position: [0.65, 0.0, 0.33], orientation_rpy: [0.0, 0.0, 0.0]}
+    size: [0.80, 0.90, 0.08]
+    mass: 80.0
+    static: true
+    collision_enabled: true
+    planning_scene_enabled: true
+  target:
+    name: target_object
+    type: box
+    pose: {position: [0.50, 0.05, 0.42], orientation_rpy: [0.0, 0.0, 0.0]}
+    size: [0.05, 0.05, 0.10]
+    mass: 0.10
+    static: false
+    collision_enabled: true
+    planning_scene_enabled: true
+  obstacle_a:
+    name: obstacle_a
+    type: box
+    pose: {position: [0.36, 0.04, 0.545], orientation_rpy: [0.0, 0.0, 0.0]}
+    size: [0.08, 0.26, 0.35]
+    mass: 20.0
+    static: true
+    collision_enabled: true
+    planning_scene_enabled: true
+  obstacle_b:
+    name: obstacle_b
+    type: box
+    pose: {position: [0.54, -0.20, 0.51], orientation_rpy: [0.0, 0.0, 0.0]}
+    size: [0.08, 0.18, 0.28]
+    mass: 20.0
+    static: true
+    collision_enabled: true
+    planning_scene_enabled: true
+
+targets:
+  object_pose_source: config_known_pose
+  pregrasp_offset_tool0: [0.0, 0.0, 0.36]
+  approach_vector_world: [0.0, 0.0, -0.10]
+  approach_distance: 0.10
+  lift_vector_world: [0.0, 0.0, 0.10]
+  lift_distance: 0.10
+  place_position: [0.45, -0.25, 0.42]
+
+avoidance_goals:
+  no_obstacle: &reachable_avoidance_goal
+    frame_id: world
+    position: [0.44, -0.15, 0.80]
+    orientation_xyzw: [-0.2556933, 0.0853322, -0.2822040, 0.9207064]
+    expected_outcome: success
+  single_obstacle: *reachable_avoidance_goal
+  double_obstacle: *reachable_avoidance_goal
+  unreachable:
+    frame_id: world
+    position: [1.50, 0.00, 1.50]
+    orientation_xyzw: [-0.2556933, 0.0853322, -0.2822040, 0.9207064]
+    expected_outcome: safe_failure
+  fully_blocked:
+    frame_id: world
+    position: [0.36, 0.04, 0.545]
+    orientation_xyzw: [-0.2556933, 0.0853322, -0.2822040, 0.9207064]
+    expected_outcome: safe_failure
+
+scenario_object_sets:
+  no_obstacle: [table, target]
+  single_obstacle: [table, target, obstacle_a]
+  double_obstacle: [table, target, obstacle_a, obstacle_b]
+  multi_angle_obstacle_course: [table, target, obstacle_a, obstacle_b]
+  unreachable: [table, target]
+  fully_blocked: [table, target, obstacle_a, obstacle_b]

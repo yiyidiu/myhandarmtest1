@@ -1,0 +1,87 @@
+schema_version: 1
+joint_names: [f1j1, f1j2, f2j1, f3j2]
+joint_limits:
+  f1j1: [0.0, 3.14]
+  f1j2: [0.0, 1.3963]
+  f2j1: [0.0, 1.3963]
+  f3j2: [0.0, 1.3963]
+mimic_joints:
+  f3j1: {source: f1j1, multiplier: 1.0, offset: 0.0}
+  f1j3: {source: f1j2, multiplier: 1.0, offset: 0.0}
+  f2j2: {source: f2j1, multiplier: 1.0, offset: 0.0}
+  f3j3: {source: f3j2, multiplier: 1.0, offset: 0.0}
+commands:
+  OPEN:
+    # The palm-configuration joint is fixed before any object approach.  Both
+    # OPEN and CLOSE use the same value, so GRASP/RELEASE only flex fingers.
+    positions: [0.18, 0.20, 0.20, 0.20]
+    source: fixed_opposed_finger_configuration_release_clearance
+  CLOSE:
+    # f1j1 is the palm/finger-placement joint. Keep it identical to OPEN;
+    # GRASP changes flexion only and never changes the hand configuration.
+    # In this fixed initial palm configuration f1/f2 oppose the box.  Driving
+    # the unloaded f3 distal chain to 1.30 rad folds f3link3 into handbase;
+    # stop f3 at the audited collision-free flexion instead.
+    # Closing traces show opposing contact begins near 0.50--0.56 rad.  The
+    # former 1.30 rad endpoint kept loading the box for another six seconds
+    # and made the otherwise centred grasp sensitive to contact solver noise.
+    # 0.80 rad passed static grasp but slipped during lift; 0.90 rad produced
+    # a later 11.2 mm closing shove. Use the midpoint as the next bounded
+    # preload, still far below the rejected 1.30 rad endpoint.
+    positions: [0.18, 0.85, 0.85, 0.90]
+    source: fixed_initial_configuration_contact_limited_flexion_only
+  PRE_SHAPE_A:
+    positions: [3.1196, 0.952, 0.9158, 0.9067]
+    source: SRDF_grasp1_neutral_label
+  PRE_SHAPE_B:
+    positions: [1.57, 0.6664, 0.6664, 0.6664]
+    source: SRDF_grasp2_neutral_label
+  HOLD: {dynamic_current_position: true}
+  STOP: {cancel_active_goal: true}
+execution:
+  # Slow flexion reduces closing-stage impulse on the free-standing object.
+  duration_s: 8.0
+  # All three flexion joints move in one synchronized trajectory. GRASP never
+  # reconfigures the palm and never lets one finger sweep the free box before
+  # its opposing finger has begun closing.
+  configuration_joint_names: [f1j1]
+  flexion_joint_names: [f1j2, f2j1, f3j2]
+  # RELEASE first retracts the previously obstructed f2 while f1 keeps the
+  # object supported against the table, then opens f1/f3. A diagnostic run of
+  # the opposite order left f2j1 physically wedged at 0.26088 rad. The palm-
+  # configuration joint never changes target.
+  open_delayed_joints: [f1j2, f3j2]
+  # A finger opposed by the object is expected to stop before the empty-hand
+  # target. This tolerance keeps the controller goal active; physical grasp
+  # success is verified independently by lifting the Gazebo object.
+  grasp_goal_tolerance_rad: 1.30
+  grasp_minimum_progress_rad:
+    f1j2: 0.40
+    f2j1: 0.40
+    f3j2: 0.60
+  timeout_s: 10.0
+  joint_tolerance_rad: 0.05
+  mimic_tolerance_rad: 0.08
+  mimic_stability_samples: 10
+  mimic_stability_period_s: 0.05
+  mimic_stability_range_rad: 0.02
+  path_tolerance_rad: 3.2
+stability_test:
+  # Independent post-command no-load validation; it does not control the arm.
+  observation_s: 5.0
+  sample_period_s: 0.05
+  tail_s: 3.0
+  position_limit_margin_rad: 0.005
+  active_target_tolerance_rad: 0.05
+  configuration_hold_tolerance_rad: 0.03
+  mimic_relation_tolerance_rad: 0.03
+  passive_tail_range_rad: 0.005
+  # The 20 Hz GetJointProperties calls are sequential and can observe an ODE
+  # joint midway through a physics update. Sustained jitter is checked here;
+  # every post-update >0.05 rad/s event is independently rejected by the
+  # 1 kHz mimic plugin diagnostic used by run_hand_stability_tests.py.
+  max_settled_velocity_p95_rad_s: 0.05
+  # Even a post-step-disproved service spike exposes a degraded asynchronous
+  # observation channel. More than one per joint/tail window is fail-closed.
+  max_supported_service_outliers_per_joint: 1
+  post_step_velocity_threshold_rad_s: 0.05

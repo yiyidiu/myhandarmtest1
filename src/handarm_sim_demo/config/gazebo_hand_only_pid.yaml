@@ -1,0 +1,17 @@
+# Gazebo PIDs used by the hand while the ABB arm is exposed through a
+# VelocityJointInterface for MoveIt Servo. Do not add joint_1..joint_6 here:
+# DefaultRobotHWSim switches a velocity interface to effort/PID mode whenever
+# a PID exists for that joint. Position-tuned arm PIDs then make a zero
+# velocity command unable to hold the simulated arm against gravity.
+# Keep the last dynamically stable hand gains.  Higher gains were tested with
+# physics self-collision enabled and amplified contact impulses into sustained
+# finger oscillation, so stiffness must not be increased here to hide a
+# collision-model problem.
+f1j1: {p: 20.0, i: 0.0, d: 0.30, i_clamp: 0.0}
+f1j2: {p: 4.0, i: 0.0, d: 0.10, i_clamp: 0.0}
+f2j1: {p: 4.0, i: 0.0, d: 0.10, i_clamp: 0.0}
+f3j2: {p: 4.0, i: 0.0, d: 0.10, i_clamp: 0.0}
+f3j1: {p: 20.0, i: 0.0, d: 0.30, i_clamp: 0.0}
+f1j3: {p: 1.0, i: 0.0, d: 0.0, i_clamp: 0.0}
+f2j2: {p: 1.0, i: 0.0, d: 0.0, i_clamp: 0.0}
+f3j3: {p: 1.0, i: 0.0, d: 0.0, i_clamp: 0.0}

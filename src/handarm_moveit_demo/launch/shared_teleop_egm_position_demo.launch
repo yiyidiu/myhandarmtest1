@@ -1,0 +1,151 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Independent Gazebo-only EGM position-reference experiment. -->
+  <arg name="gazebo_gui" default="false" />
+  <arg name="input_source" default="synthetic" />
+  <arg name="input_csv" default="" />
+  <arg name="hamer_session" default="" />
+  <arg name="hamer_replay_speed" default="1.0" />
+  <arg name="enable_logger" default="true" />
+  <arg name="enable_gesture_demo" default="true" />
+  <arg name="log_directory" default="/tmp/handarm_egm_position_teleop_logs" />
+  <arg name="world_name" default="worlds/empty.world" />
+  <arg name="mapping_profile" default="current_linear" />
+  <arg name="require_scene_ready" default="false" />
+  <!-- Default: MoveIt Servo performs velocity, collision, singularity and
+       joint-limit safety; the adapter adds a bounded position reference for
+       realistic stiffness.  The old direct Cartesian IK path remains an
+       explicit simulation-only rollback. -->
+  <arg name="use_moveit_servo_safety" default="true" />
+  <arg name="legacy_moveit_servo_reference"
+       default="$(arg use_moveit_servo_safety)"
+       doc="deprecated compatibility alias; false selects direct IK rollback" />
+  <arg name="stable_position_reference_profile" default="true"
+       doc="true enables bounded low-latency motion plus stiff hold; false restores the prior aggressive EGM response" />
+  <arg name="settled_position_hold" default="true"
+       doc="false disables only the quiet-command joint hold while keeping the IK projection and stable EGM gains" />
+  <arg name="hand_stability_profile" default="physical_grasp"
+       doc="physical_grasp is finite-force and contact-capable; rigid_transport is the kinematic rollback; original restores the legacy PID plant" />
+  <arg name="camera_workspace_calibration_file"
+       default="$(find handarm_moveit_demo)/config/camera_workspace_calibration.yaml" />
+  <arg name="safe_initial_joint_positions"
+       default=" -J f1j1 0.051 -J f1j2 0.0317 -J f2j1 0.0227 -J f3j2 0.0363 -J joint_1 0.0 -J joint_2 0.0 -J joint_3 0.0 -J joint_4 0.0 -J joint_5 1.5707963267948966 -J joint_6 0.0" />
+
+  <include file="$(find abb120_moveit_config1)/launch/gazebo_egm_position.launch">
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)" />
+    <arg name="paused" value="false" />
+    <arg name="world_name" value="$(arg world_name)" />
+    <arg name="initial_joint_positions" value="$(arg safe_initial_joint_positions)" />
+    <arg name="hand_stability_profile" value="$(arg hand_stability_profile)" />
+  </include>
+  <include file="$(find abb120_moveit_config1)/launch/demo.launch">
+    <arg name="load_robot_description" value="false" />
+    <arg name="moveit_controller_manager" value="ros_control" />
+    <arg name="use_rviz" value="false" />
+  </include>
+  <include if="$(arg legacy_moveit_servo_reference)"
+           file="$(find abb120_moveit_config1)/launch/abbarm_servo_egm_position_gazebo.launch" />
+
+  <node if="$(arg legacy_moveit_servo_reference)"
+        pkg="handarm_moveit_demo" type="egm_position_reference_adapter.py"
+        name="egm_position_reference_adapter" output="screen" required="true">
+    <param name="rate_hz" value="250.0" />
+    <param name="raw_velocity_topic"
+           value="/egm_position_reference/raw_joint_velocity" />
+    <param name="controller_topic"
+           value="/abbarm_egm_position_controller/command" />
+    <param name="command_timeout_s" value="0.10" />
+    <param name="joint_limit_margin_rad" value="0.01" />
+    <param name="maximum_step_dt_s" value="0.02" />
+    <param name="hard_stop_collision_scale" value="0.20" />
+    <param name="collision_scale_timeout_s" value="0.25" />
+    <param name="retreat_authorization_timeout_s" value="0.12" />
+    <param name="retreat_authorization_topic"
+           value="/shared_teleop/collision_retreat_authorized" />
+    <rosparam param="arm_joints">[joint_1, joint_2, joint_3, joint_4, joint_5, joint_6]</rosparam>
+    <rosparam param="initial_reference">[0.0, 0.0, 0.0, 0.0, 1.5707963267948966, 0.0]</rosparam>
+    <rosparam param="lower_limits">[-2.87979, -1.91986, -1.91986, -2.79253, -2.094395, -6.981317]</rosparam>
+    <rosparam param="upper_limits">[2.87979, 1.91986, 1.22173, 2.79253, 2.094395, 6.981317]</rosparam>
+    <rosparam param="maximum_velocity">[4.36332, 4.36332, 4.36332, 5.58505, 5.58505, 7.33038]</rosparam>
+    <rosparam param="maximum_acceleration">[8.0, 8.0, 8.0, 12.0, 12.0, 16.0]</rosparam>
+    <!-- The position target may lead feedback only by a few degrees.  It can
+         stiffen/hold the plant but can never become a large open-loop backlog. -->
+    <rosparam param="maximum_following_error_rad">[0.04, 0.04, 0.04, 0.06, 0.06, 0.08]</rosparam>
+  </node>
+
+  <node unless="$(arg legacy_moveit_servo_reference)"
+        pkg="handarm_moveit_demo" type="egm_cartesian_reference_adapter.py"
+        name="egm_cartesian_reference_adapter" output="screen" required="true">
+    <param name="rate_hz" value="250.0" />
+    <param name="base_frame" value="base_link" />
+    <param name="tip_frame" value="tool0" />
+    <param name="cartesian_twist_topic"
+           value="/servo_server/delta_twist_cmds" />
+    <param name="controller_topic"
+           value="/abbarm_egm_position_controller/command" />
+    <param name="status_topic" value="/servo_server/status" />
+    <param name="command_timeout_s" value="0.10" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="latch_on_twist_timeout" value="true" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="synchronize_reference_on_start" value="false" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="settled_position_hold_enabled"
+           value="$(arg settled_position_hold)" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="settled_position_hold_delay_s" value="0.25" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="settled_position_hold_linear_enter_mps" value="0.008" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="settled_position_hold_angular_enter_radps" value="0.06" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="settled_position_hold_linear_release_mps" value="0.025" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="settled_position_hold_angular_release_radps" value="0.18" />
+    <param name="position_hold_topic"
+           value="/shared_teleop/egm_position_hold" />
+    <!-- MoveIt Servo previously emergency-stopped at 200 and was blindly
+         reset. Start damping earlier, remember a nearby safe q, and release
+         with hysteresis after directional retreat. -->
+    <param name="damping_start_condition" value="60.0" />
+    <param name="hard_condition" value="180.0" />
+    <param name="release_condition" value="45.0" />
+    <param name="minimum_damping" value="0.0001" />
+    <param name="maximum_damping" value="0.12" />
+    <param name="posture_gain_per_s" value="0.35" />
+    <param name="recovery_gain_per_s" value="2.0" />
+    <param name="recovery_velocity_utilization" value="0.45" />
+    <param name="prediction_horizon_s" value="0.04" />
+    <param name="release_cycles" value="8" />
+    <param name="joint_soft_margin_rad" value="0.12" />
+    <param name="joint_limit_margin_rad" value="0.01" />
+    <param name="maximum_step_dt_s" value="0.02" />
+    <rosparam param="arm_joints">[joint_1, joint_2, joint_3, joint_4, joint_5, joint_6]</rosparam>
+    <rosparam param="initial_reference">[0.0, 0.0, 0.0, 0.0, 1.5707963267948966, 0.0]</rosparam>
+    <rosparam param="lower_limits">[-2.87979, -1.91986, -1.91986, -2.79253, -2.094395, -6.981317]</rosparam>
+    <rosparam param="upper_limits">[2.87979, 1.91986, 1.22173, 2.79253, 2.094395, 6.981317]</rosparam>
+    <rosparam param="maximum_velocity">[4.36332, 4.36332, 4.36332, 5.58505, 5.58505, 7.33038]</rosparam>
+    <rosparam param="maximum_acceleration">[20.0, 20.0, 20.0, 30.0, 30.0, 40.0]</rosparam>
+    <!-- Feedback-following leash: the EGM reference may lead the simulated
+         joint slightly, but can never integrate several radians ahead. -->
+    <rosparam param="maximum_following_error_rad">[0.08, 0.08, 0.08, 0.12, 0.12, 0.16]</rosparam>
+  </node>
+
+  <include file="$(find handarm_moveit_demo)/launch/shared_teleop_core.launch">
+    <arg name="enable_robot" value="false" />
+    <arg name="simulation" value="true" />
+    <arg name="input_source" value="$(arg input_source)" />
+    <arg name="input_csv" value="$(arg input_csv)" />
+    <arg name="hamer_session" value="$(arg hamer_session)" />
+    <arg name="hamer_replay_speed" value="$(arg hamer_replay_speed)" />
+    <arg name="enable_logger" value="$(arg enable_logger)" />
+    <arg name="enable_gesture_demo" value="$(arg enable_gesture_demo)" />
+    <arg name="log_directory" value="$(arg log_directory)" />
+    <arg name="mapping_profile" value="$(arg mapping_profile)" />
+    <arg name="require_scene_ready" value="$(arg require_scene_ready)" />
+    <arg name="stable_position_reference_profile"
+         value="$(arg stable_position_reference_profile)" />
+    <arg name="camera_workspace_calibration_file"
+         value="$(arg camera_workspace_calibration_file)" />
+  </include>
+</launch>

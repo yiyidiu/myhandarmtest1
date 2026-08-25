@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="gazebo_gui" default="true"/>
+  <arg name="rviz" default="true"/>
+  <arg name="paused" default="false"/>
+  <arg name="grasp_mode" default="physical_contact"/>
+  <arg name="allow_nonphysical_attachment" default="false"/>
+  <arg name="physical_scene_config" default="$(find handarm_sim_demo)/config/physical_grasp_scene.yaml"/>
+  <arg name="nonphysical_scene_config" default="$(find handarm_sim_demo)/config/demo_scene.yaml"/>
+  <arg name="scene_config" default="$(eval arg('nonphysical_scene_config') if arg('allow_nonphysical_attachment') else arg('physical_scene_config'))"/>
+  <arg name="physical_grasp_config" default="$(find handarm_sim_demo)/config/physical_grasp_demo.yaml"/>
+  <arg name="nonphysical_grasp_config" default="$(find handarm_sim_demo)/config/grasp_demo.yaml"/>
+  <arg name="grasp_config" default="$(eval arg('nonphysical_grasp_config') if arg('allow_nonphysical_attachment') else arg('physical_grasp_config'))"/>
+  <arg name="physical_world" default="$(find handarm_sim_demo)/worlds/handarm_physical_grasp.world"/>
+  <arg name="nonphysical_world" default="$(find handarm_sim_demo)/worlds/handarm_pick_obstacle_nonphysical_attachment.world"/>
+  <arg name="world_name" default="$(eval arg('nonphysical_world') if arg('allow_nonphysical_attachment') else arg('physical_world'))"/>
+  <arg name="physical_expected_models" default="[robot, work_table, target_object]"/>
+  <arg name="nonphysical_expected_models" default="[robot, work_table, target_object, obstacle_a, obstacle_b]"/>
+  <arg name="expected_models" default="$(eval arg('nonphysical_expected_models') if arg('allow_nonphysical_attachment') else arg('physical_expected_models'))"/>
+  <arg name="repetitions" default="1"/>
+  <arg name="shutdown_on_task_exit" default="false"/>
+  <include file="$(find handarm_sim_demo)/launch/simulation_baseline.launch">
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)"/>
+    <arg name="rviz" value="$(arg rviz)"/>
+    <arg name="paused" value="$(arg paused)"/>
+    <arg name="scene_config" value="$(arg scene_config)"/>
+    <arg name="grasp_config" value="$(arg grasp_config)"/>
+    <arg name="run_avoidance_demo" value="false"/>
+    <arg name="run_pick_demo" value="true"/>
+    <arg name="grasp_mode" value="$(arg grasp_mode)"/>
+    <arg name="allow_nonphysical_attachment" value="$(arg allow_nonphysical_attachment)"/>
+    <arg name="world_name" value="$(arg world_name)"/>
+    <arg name="expected_models" value="$(arg expected_models)"/>
+    <arg name="shutdown_on_task_exit" value="$(arg shutdown_on_task_exit)"/>
+    <arg name="scenario" value="no_obstacle"/>
+    <arg name="simulation" value="true"/>
+    <arg name="use_real_robot" value="false"/>
+    <arg name="use_real_hand" value="false"/>
+  </include>
+  <rosparam param="/scripted_pick_demo/repetitions" subst_value="true">$(arg repetitions)</rosparam>
+</launch>

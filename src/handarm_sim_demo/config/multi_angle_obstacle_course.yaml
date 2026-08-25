@@ -1,0 +1,64 @@
+schema_version: 1
+course_id: multi_angle_obstacle_course_v1
+frame_id: world
+planning_group: abbarm
+end_effector_link: tool0
+planner_id: RRTConnect
+planning_time_s: 6.0
+planning_attempts: 8
+planning_retries: 2
+velocity_scaling: 0.10
+acceleration_scaling: 0.10
+goal_position_tolerance_m: 0.015
+goal_orientation_tolerance_rad: 0.0349066
+verification_position_tolerance_m: 0.020
+verification_orientation_tolerance_deg: 4.0
+home_joint_tolerance_rad: 0.020
+trajectory_start_tolerance_rad: 0.010
+settle_timeout_s: 2.0
+settle_max_joint_velocity_rad_s: 0.030
+settle_consecutive_samples: 3
+direct_path_eef_step_m: 0.005
+direct_path_complete_fraction: 0.999
+minimum_unsafe_direct_segments: 3
+minimum_collision_proven_direct_segments: 3
+hold_time_s: 1.0
+marker_frame: world
+
+# The five targets were derived from the configured obstacle AABBs, then
+# screened against live TRAC-IK, joint limits and /check_state_validity.  The
+# clearance constraints below are revalidated at runtime; they are not labels.
+waypoints:
+  - id: waypoint_1_a_positive_y_high
+    role: obstacle_a_positive_y
+    position: [0.28, 0.34, 0.86]
+    orientation_xyzw: [-0.1744754775, 0.1096031626, -0.2736929039, 0.9394879716]
+    clearance_constraints:
+      - {object: obstacle_a, axis: y, direction: positive, minimum_m: 0.16}
+      - {object: obstacle_a, axis: z, direction: positive, minimum_m: 0.12}
+  - id: waypoint_2_a_negative_y_mid
+    role: obstacle_a_negative_y
+    position: [0.40, -0.22, 0.80]
+    orientation_xyzw: [-0.2793160235, 0.1652523163, -0.2588449525, 0.9097656410]
+    clearance_constraints:
+      - {object: obstacle_a, axis: y, direction: negative, minimum_m: 0.12}
+      - {object: obstacle_a, axis: z, direction: positive, minimum_m: 0.07}
+  - id: waypoint_3_a_positive_y_mid
+    role: obstacle_a_positive_y
+    position: [0.28, 0.34, 0.80]
+    orientation_xyzw: [-0.2472831377, 0.1072926075, -0.3613749433, 0.8926071344]
+    clearance_constraints:
+      - {object: obstacle_a, axis: y, direction: positive, minimum_m: 0.16}
+      - {object: obstacle_a, axis: z, direction: positive, minimum_m: 0.07}
+  - id: waypoint_4_b_negative_y_low
+    role: obstacle_b_negative_y
+    position: [0.28, -0.38, 0.74]
+    orientation_xyzw: [-0.2556933176, 0.0853321812, -0.2822039648, 0.9207063964]
+    clearance_constraints:
+      - {object: obstacle_b, axis: y, direction: negative, minimum_m: 0.08}
+      - {object: obstacle_b, axis: z, direction: positive, minimum_m: 0.08}
+  - id: final_goal
+    role: final_goal
+    position: [0.44, -0.15, 0.80]
+    orientation_xyzw: [-0.2556933176, 0.0853321812, -0.2822039648, 0.9207063964]
+    clearance_constraints: []

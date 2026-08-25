@@ -1,0 +1,93 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://ros.org/wiki/xacro">
+  <xacro:include filename="$(find handarmtest1)/xacro/hand.xacro"/>
+
+  <transmission name="handtran1">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="f1j2">
+      <hardwareInterface>PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="handmotor1">
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+
+  <transmission name="handtran2">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="f2j1">
+      <hardwareInterface>PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="handmotor2">
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+
+  <transmission name="handtran3">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="f3j2">
+      <hardwareInterface>PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="handmotor3">
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+
+  <transmission name="handtran4">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="f1j1">
+      <hardwareInterface>PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="handmotor4">
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+
+  <gazebo reference="handbase_link">
+    <material>Gazebo/Black</material>
+    <turnGravityOff>false</turnGravityOff>
+  </gazebo>
+
+  <gazebo reference="f1link1">
+    <material>Gazebo/Grey</material>
+    <turnGravityOff>false</turnGravityOff>
+    <mu1>1.5</mu1><mu2>1.5</mu2>
+  </gazebo>
+  <gazebo reference="f1link2">
+    <material>Gazebo/Grey</material>
+    <turnGravityOff>false</turnGravityOff>
+    <mu1>1.5</mu1><mu2>1.5</mu2>
+  </gazebo>
+  <gazebo reference="f1link3">
+    <material>Gazebo/Grey</material>
+    <turnGravityOff>false</turnGravityOff>
+    <mu1>1.5</mu1><mu2>1.5</mu2>
+  </gazebo>
+  <gazebo reference="f2link1">
+    <material>Gazebo/Grey</material>
+    <turnGravityOff>false</turnGravityOff>
+    <mu1>1.5</mu1><mu2>1.5</mu2>
+  </gazebo>
+  <gazebo reference="f2link2">
+    <material>Gazebo/Grey</material>
+    <turnGravityOff>false</turnGravityOff>
+    <mu1>1.5</mu1><mu2>1.5</mu2>
+  </gazebo>
+  <gazebo reference="f3link1">
+    <material>Gazebo/Grey</material>
+    <turnGravityOff>false</turnGravityOff>
+    <mu1>1.5</mu1><mu2>1.5</mu2>
+  </gazebo>
+  <gazebo reference="f3link2">
+    <material>Gazebo/Grey</material>
+    <turnGravityOff>false</turnGravityOff>
+    <mu1>1.5</mu1><mu2>1.5</mu2>
+  </gazebo>
+  <gazebo reference="f3link3">
+    <material>Gazebo/Grey</material>
+    <turnGravityOff>false</turnGravityOff>
+    <mu1>1.5</mu1><mu2>1.5</mu2>
+  </gazebo>
+
+
+
+</robot>
