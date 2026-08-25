@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com)
      Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
      For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
 <robot
@@ -34,24 +34,24 @@
           rgba="1 0.94902 0.89804 1" />
       </material>
     </visual>
+    <!-- The former enclosing cylinder filled the finger-root cut-outs and
+         forced MoveIt to ignore real hand-base collision pairs.  This reduced
+         CAD mesh preserves the cut-outs while remaining practical at 60 Hz. -->
     <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh
-          filename="package://handarmtest1/meshes/myhand/handbase_link.STL" />
+        <mesh filename="package://handarmtest1/meshes/myhand/handbase_link_collision_8mm.STL" />
       </geometry>
     </collision>
   </link>
 
   <joint name="arm_hand" type="fixed">
-    <parent link="flange"/>  
+    <parent link="flange"/>
     <child link="handbase_link"/>
     <origin xyz="0 0 0" rpy="0 1.57 0"/>
     <axis xyz="0 0 0"/>
   </joint>
-  
+
   <link
     name="f1link1">
     <inertial>
@@ -83,13 +83,12 @@
       </material>
     </visual>
     <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="package://handarmtest1/meshes/myhand/f1link1.STL" />
-      </geometry>
+      <origin xyz="0 0 -0.0065" rpy="0 0 0" />
+      <geometry><cylinder radius="0.019" length="0.021" /></geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.035 0.035 0.033" rpy="0 0 0.785398" />
+      <geometry><box size="0.083 0.042 0.066" /></geometry>
     </collision>
   </link>
   <joint
@@ -107,8 +106,9 @@
     <limit
       lower="0"
       upper="3.14"
-      effort="100"
-      velocity="4" />
+      effort="4.0"
+      velocity="0.8" />
+    <dynamics damping="0.05" friction="0.0" />
   </joint>
   <link
     name="f1link2">
@@ -141,13 +141,16 @@
       </material>
     </visual>
     <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="package://handarmtest1/meshes/myhand/f1link2.STL" />
-      </geometry>
+      <origin xyz="0.01955 0.02385 0.0179" rpy="0 1.570796 0.8840" />
+      <geometry><cylinder radius="0.0179" length="0.06167" /></geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0 0.0179" rpy="0 0 0" />
+      <geometry><sphere radius="0.0179" /></geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.0391 0.0477 0.0179" rpy="0 0 0" />
+      <geometry><sphere radius="0.0179" /></geometry>
     </collision>
   </link>
   <joint
@@ -165,8 +168,9 @@
     <limit
       lower="0"
       upper="1.3963"
-      effort="100"
-      velocity="4" />
+      effort="2.0"
+      velocity="0.8" />
+    <dynamics damping="0.04" friction="0.0" />
   </joint>
   <link
     name="f1link3">
@@ -199,18 +203,21 @@
       </material>
     </visual>
     <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="package://handarmtest1/meshes/myhand/f1link3.STL" />
-      </geometry>
+      <origin xyz="0.014835 0.025415 0.012" rpy="0 1.570796 1.0425" />
+      <geometry><cylinder radius="0.0125" length="0.05886" /></geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0 0.012" rpy="0 0 0" />
+      <geometry><sphere radius="0.0125" /></geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.02967 0.05083 0.012" rpy="0 0 0" />
+      <geometry><sphere radius="0.0125" /></geometry>
     </collision>
   </link>
   <joint
     name="f1j3"
-    type="continuous">
+    type="revolute">
     <origin
       xyz="0.044995 0.053623 0.007"
       rpy="0 0 0" />
@@ -222,9 +229,10 @@
       xyz="0 0 1" />
     <limit
       lower="0"
-      upper="0"
-      effort="100"
-      velocity="4" />
+      upper="1.3963"
+      effort="2.0"
+      velocity="0.8" />
+    <dynamics damping="0.01" friction="0.0" />
     <mimic
       joint="f1j2"
       multiplier="1"
@@ -261,18 +269,17 @@
       </material>
     </visual>
     <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="package://handarmtest1/meshes/myhand/f3link1.STL" />
-      </geometry>
+      <origin xyz="0 0 0.0065" rpy="0 0 0" />
+      <geometry><cylinder radius="0.019" length="0.021" /></geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.035 0.035 -0.033" rpy="0 0 2.356194" />
+      <geometry><box size="0.083 0.042 0.066" /></geometry>
     </collision>
   </link>
   <joint
     name="f3j1"
-    type="continuous">
+    type="revolute">
     <origin
       xyz="0.029404 -0.02886 0.10643"
       rpy="-3.1416 0 3.1416" />
@@ -284,9 +291,10 @@
       xyz="0 0 1" />
     <limit
       lower="0"
-      upper="0"
-      effort="100"
-      velocity="4" />
+      upper="3.14"
+      effort="4.0"
+      velocity="0.8" />
+    <dynamics damping="0.05" friction="0.0" />
     <mimic
       joint="f1j1"
       multiplier="1"
@@ -323,13 +331,16 @@
       </material>
     </visual>
     <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="package://handarmtest1/meshes/myhand/f3link2.STL" />
-      </geometry>
+      <origin xyz="0.01955 0.02385 0.0179" rpy="0 1.570796 0.8840" />
+      <geometry><cylinder radius="0.0179" length="0.06167" /></geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0 0.0179" rpy="0 0 0" />
+      <geometry><sphere radius="0.0179" /></geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.0391 0.0477 0.0179" rpy="0 0 0" />
+      <geometry><sphere radius="0.0179" /></geometry>
     </collision>
   </link>
   <joint
@@ -347,8 +358,9 @@
     <limit
       lower="0"
       upper="1.3963"
-      effort="100"
-      velocity="4" />
+      effort="2.0"
+      velocity="0.8" />
+    <dynamics damping="0.04" friction="0.0" />
   </joint>
   <link
     name="f3link3">
@@ -381,18 +393,21 @@
       </material>
     </visual>
     <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="package://handarmtest1/meshes/myhand/f3link3.STL" />
-      </geometry>
+      <origin xyz="0.014835 0.025415 0.012" rpy="0 1.570796 1.0425" />
+      <geometry><cylinder radius="0.0125" length="0.05886" /></geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0 0.012" rpy="0 0 0" />
+      <geometry><sphere radius="0.0125" /></geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.02967 0.05083 0.012" rpy="0 0 0" />
+      <geometry><sphere radius="0.0125" /></geometry>
     </collision>
   </link>
   <joint
     name="f3j3"
-    type="continuous">
+    type="revolute">
     <origin
       xyz="0.044995 0.053623 0.007"
       rpy="0 0 0" />
@@ -404,9 +419,10 @@
       xyz="0 0 1" />
     <limit
       lower="0"
-      upper="0"
-      effort="100"
-      velocity="4" />
+      upper="1.3963"
+      effort="2.0"
+      velocity="0.8" />
+    <dynamics damping="0.01" friction="0.0" />
     <mimic
       joint="f3j2"
       multiplier="1"
@@ -443,13 +459,16 @@
       </material>
     </visual>
     <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="package://handarmtest1/meshes/myhand/f2link1.STL" />
-      </geometry>
+      <origin xyz="0.01955 0.02385 0.0179" rpy="0 1.570796 0.8840" />
+      <geometry><cylinder radius="0.0179" length="0.06167" /></geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0 0.0179" rpy="0 0 0" />
+      <geometry><sphere radius="0.0179" /></geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.0391 0.0477 0.0179" rpy="0 0 0" />
+      <geometry><sphere radius="0.0179" /></geometry>
     </collision>
   </link>
   <joint
@@ -467,8 +486,9 @@
     <limit
       lower="0"
       upper="1.3963"
-      effort="100"
-      velocity="4" />
+      effort="2.0"
+      velocity="0.8" />
+    <dynamics damping="0.04" friction="0.0" />
   </joint>
   <link
     name="f2link2">
@@ -501,18 +521,21 @@
       </material>
     </visual>
     <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="package://handarmtest1/meshes/myhand/f2link2.STL" />
-      </geometry>
+      <origin xyz="0.014835 0.025415 0.012" rpy="0 1.570796 1.0425" />
+      <geometry><cylinder radius="0.0125" length="0.05886" /></geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0 0.012" rpy="0 0 0" />
+      <geometry><sphere radius="0.0125" /></geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.02967 0.05083 0.012" rpy="0 0 0" />
+      <geometry><sphere radius="0.0125" /></geometry>
     </collision>
   </link>
   <joint
     name="f2j2"
-    type="continuous">
+    type="revolute">
     <origin
       xyz="0.044995 0.053623 0.0058"
       rpy="0 0 0" />
@@ -524,12 +547,25 @@
       xyz="0 0 1" />
     <limit
       lower="0"
-      upper="0"
-      effort="100"
-      velocity="4" />
+      upper="1.3963"
+      effort="2.0"
+      velocity="0.8" />
+    <dynamics damping="0.01" friction="0.0" />
     <mimic
       joint="f2j1"
       multiplier="1"
       offset="0" />
   </joint>
+  <!-- Physics-level backstop. MoveIt/SRDF remains the predictive command
+       gate; Gazebo contact must still prevent non-parent links from passing
+       through one another if a command-side defect ever escapes that gate. -->
+  <gazebo reference="handbase_link"><selfCollide>true</selfCollide></gazebo>
+  <gazebo reference="f1link1"><selfCollide>true</selfCollide></gazebo>
+  <gazebo reference="f1link2"><selfCollide>true</selfCollide></gazebo>
+  <gazebo reference="f1link3"><selfCollide>true</selfCollide></gazebo>
+  <gazebo reference="f2link1"><selfCollide>true</selfCollide></gazebo>
+  <gazebo reference="f2link2"><selfCollide>true</selfCollide></gazebo>
+  <gazebo reference="f3link1"><selfCollide>true</selfCollide></gazebo>
+  <gazebo reference="f3link2"><selfCollide>true</selfCollide></gazebo>
+  <gazebo reference="f3link3"><selfCollide>true</selfCollide></gazebo>
 </robot>

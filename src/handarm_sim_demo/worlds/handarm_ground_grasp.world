@@ -7,7 +7,9 @@
       <max_step_size>0.001</max_step_size>
       <real_time_update_rate>1000</real_time_update_rate>
       <ode>
-        <solver><type>quick</type><iters>100</iters><sor>1.3</sor></solver>
+        <!-- SOR=1.0 avoids over-relaxed contact corrections that made the
+             small finger links alternate across an object surface. -->
+        <solver><type>quick</type><iters>100</iters><sor>1.0</sor></solver>
         <constraints>
           <cfm>0.0</cfm><erp>0.2</erp>
           <contact_max_correcting_vel>0.1</contact_max_correcting_vel>
@@ -30,8 +32,8 @@
         <collision name="collision">
           <geometry><box><size>0.05 0.06 0.10</size></box></geometry>
           <surface>
-            <friction><ode><mu>1.5</mu><mu2>1.5</mu2><slip1>0.0</slip1><slip2>0.0</slip2></ode></friction>
-            <contact><ode><kp>1000000</kp><kd>10</kd><max_vel>0.1</max_vel><min_depth>0.001</min_depth></ode></contact>
+            <friction><ode><mu>1.5</mu><mu2>1.5</mu2><slip1>0.0001</slip1><slip2>0.0001</slip2></ode></friction>
+            <contact><ode><kp>100000</kp><kd>100</kd><max_vel>0.02</max_vel><min_depth>0.001</min_depth></ode></contact>
           </surface>
         </collision>
         <visual name="visual">
@@ -58,12 +60,24 @@
         <inertial><mass>0.08</mass><inertia><ixx>0.00008</ixx><iyy>0.00008</iyy><izz>0.00008</izz></inertia></inertial>
         <collision name="collision">
           <geometry><box><size>0.06 0.06 0.08</size></box></geometry>
-          <surface><friction><ode><mu>1.2</mu><mu2>1.2</mu2></ode></friction></surface>
+          <surface>
+            <friction><ode><mu>1.2</mu><mu2>1.2</mu2><slip1>0.0001</slip1><slip2>0.0001</slip2></ode></friction>
+            <contact><ode><kp>100000</kp><kd>100</kd><max_vel>0.02</max_vel><min_depth>0.001</min_depth></ode></contact>
+          </surface>
         </collision>
         <visual name="visual">
           <geometry><box><size>0.06 0.06 0.08</size></box></geometry>
           <material><ambient>0.10 0.25 0.75 1</ambient><diffuse>0.15 0.35 0.90 1</diffuse></material>
         </visual>
+        <sensor name="left_object_contact_sensor" type="contact">
+          <always_on>true</always_on><update_rate>100.0</update_rate>
+          <contact><collision>collision</collision></contact>
+          <plugin name="left_object_contact_reporter" filename="libgazebo_ros_bumper.so">
+            <alwaysOn>true</alwaysOn><updateRate>100.0</updateRate>
+            <frameName>world</frameName>
+            <bumperTopicName>/handarm_sim_demo/left_object_contacts</bumperTopicName>
+          </plugin>
+        </sensor>
       </link>
     </model>
 
@@ -75,7 +89,10 @@
         <inertial><mass>0.12</mass><inertia><ixx>0.00015</ixx><iyy>0.00015</iyy><izz>0.00010</izz></inertia></inertial>
         <collision name="collision">
           <geometry><box><size>0.08 0.05 0.12</size></box></geometry>
-          <surface><friction><ode><mu>1.2</mu><mu2>1.2</mu2></ode></friction></surface>
+          <surface>
+            <friction><ode><mu>1.2</mu><mu2>1.2</mu2><slip1>0.0001</slip1><slip2>0.0001</slip2></ode></friction>
+            <contact><ode><kp>100000</kp><kd>100</kd><max_vel>0.02</max_vel><min_depth>0.001</min_depth></ode></contact>
+          </surface>
         </collision>
         <visual name="visual">
           <geometry><box><size>0.08 0.05 0.12</size></box></geometry>

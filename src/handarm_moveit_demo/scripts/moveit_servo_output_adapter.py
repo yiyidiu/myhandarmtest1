@@ -41,6 +41,7 @@ class MoveItServoOutputAdapter:
         self.base_frame = frames.get("base", "base_link")
         self.workspace_mode = "AXIS_ALIGNED_BOX"
         self.ground_sector_workspace = None
+        self.direction_preserving_workspace = False
         if self.mapping_profile_name == "current_linear":
             selected_workspace = workspace
         else:
@@ -63,6 +64,9 @@ class MoveItServoOutputAdapter:
                 selected_workspace.get("utilization", 1.0),
                 selected_workspace.get("boundary_margin_m", 0.0),
             )
+            self.direction_preserving_workspace = bool(
+                str(selected_workspace.get("boundary_policy", "")).upper()
+                == "DIRECTION_PRESERVING_STOP")
         self.workspace_frame = selected_workspace.get(
             "reference_link", frames.get("servo_control", "tool0"))
         maximum_velocity = three_axis_private_parameter(
@@ -103,6 +107,17 @@ class MoveItServoOutputAdapter:
         self.last_tick = None
         self.last_logged_reasons = None
         self.shutting_down = False
+        self.require_full_robot_safety = bool(rospy.get_param(
+            "~require_full_robot_safety", False))
+        self.strict_safety_timeout_s = float(rospy.get_param(
+            "~strict_safety_timeout_s", 0.20))
+        if (not np.isfinite(self.strict_safety_timeout_s) or
+                self.strict_safety_timeout_s <= 0.0):
+            raise ValueError("strict_safety_timeout_s must be finite and positive")
+        self.strict_self_collision_safe = False
+        self.strict_self_collision_wall_time = 0.0
+        self.safety_contract_ok = False
+        self.safety_contract_received = False
         self.actual_publisher = rospy.Publisher(
             topics.get("servo_twist", "/servo_server/delta_twist_cmds"),
             TwistStamped, queue_size=1)
@@ -116,6 +131,13 @@ class MoveItServoOutputAdapter:
                          HandCommand, self.command_callback, queue_size=1)
         rospy.Subscriber(topics.get("emergency_stop", "/shared_teleop/emergency_stop"),
                          Bool, self.estop_callback, queue_size=1)
+        if self.require_full_robot_safety:
+            rospy.Subscriber(
+                "/full_robot_self_collision_guard/safe", Bool,
+                self.strict_safety_callback, queue_size=1)
+            rospy.Subscriber(
+                "/shared_teleop/safety_contract_ok", Bool,
+                self.safety_contract_callback, queue_size=1)
         rospy.Service("/shared_teleop/reset_emergency_stop", Trigger, self.reset_estop)
         rate = float(self.config.get("control", {}).get("rate_hz", 50.0))
         self.timer = rospy.Timer(rospy.Duration(1.0/rate), self.tick)
@@ -147,6 +169,16 @@ class MoveItServoOutputAdapter:
         if message.data:
             rospy.logerr("Emergency stop latched; Servo command forced to zero")
 
+    def strict_safety_callback(self, message):
+        with self.lock:
+            self.strict_self_collision_safe = bool(message.data)
+            self.strict_self_collision_wall_time = time.monotonic()
+
+    def safety_contract_callback(self, message):
+        with self.lock:
+            self.safety_contract_ok = bool(message.data)
+            self.safety_contract_received = True
+
     def reset_estop(self, _request):
         with self.lock:
             if self.estop_signal:
@@ -172,6 +204,11 @@ class MoveItServoOutputAdapter:
         with self.lock:
             shaped = self.shaper.tick(now)
             estopped = self.estop_latched
+            strict_safe = self.strict_self_collision_safe
+            strict_age = (time.monotonic() -
+                          self.strict_self_collision_wall_time)
+            contract_ok = (self.safety_contract_received and
+                           self.safety_contract_ok)
         velocity = shaped.velocity.copy()
         reasons = [] if shaped.reason == "NONE" else [shaped.reason]
         try:
@@ -186,7 +223,8 @@ class MoveItServoOutputAdapter:
                     apply_ground_sector_workspace_boundary(
                         position, velocity[:3],
                         self.ground_sector_workspace,
-                        self.workspace_margin))
+                        self.workspace_margin,
+                        self.direction_preserving_workspace))
             reasons.extend(workspace_reasons)
         except Exception as exc:
             velocity[:] = 0.0
@@ -195,6 +233,14 @@ class MoveItServoOutputAdapter:
         if estopped:
             velocity[:] = 0.0
             reasons.append("EMERGENCY_STOP_LATCHED")
+        if self.require_full_robot_safety:
+            if not contract_ok:
+                velocity[:] = 0.0
+                reasons.append("SAFETY_CONTRACT_NOT_READY")
+            if (not strict_safe or
+                    strict_age > self.strict_safety_timeout_s):
+                velocity[:] = 0.0
+                reasons.append("STRICT_SELF_COLLISION_GUARD_UNSAFE")
         message = self.make_message(velocity, event.current_real)
         self.monitor_publisher.publish(message)
         if self.output_allowed:
@@ -203,11 +249,21 @@ class MoveItServoOutputAdapter:
         self.diagnostics.publish(String(data=json.dumps({
             "stamp": now, "source_input_age_s": shaped.input_age_s,
             "actual_loop_hz": 0.0 if dt <= 0.0 else 1.0/dt,
-            "processing_ms": process_ms, "valid": shaped.valid and not estopped,
+            "processing_ms": process_ms,
+            "valid": (shaped.valid and not estopped and
+                      (not self.require_full_robot_safety or
+                       (contract_ok and strict_safe and
+                        strict_age <= self.strict_safety_timeout_s))),
             "output_allowed": self.output_allowed, "simulation": self.simulation,
             "enable_robot": self.enable_robot, "reasons": reasons or ["NONE"],
             "mapping_profile": self.mapping_profile_name,
             "workspace_mode": self.workspace_mode,
+            "direction_preserving_workspace": bool(
+                self.direction_preserving_workspace),
+            "require_full_robot_safety": self.require_full_robot_safety,
+            "strict_self_collision_safe": strict_safe,
+            "strict_self_collision_status_age_s": strict_age,
+            "safety_contract_ok": contract_ok,
             "velocity": velocity.tolist(),
         }, separators=(",", ":"))))
         reason_key = tuple(reasons)

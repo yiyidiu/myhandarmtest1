@@ -11,11 +11,21 @@
   <arg name="log_directory" default="/tmp/handarm_egm_position_teleop_logs" />
   <arg name="world_name" default="worlds/empty.world" />
   <arg name="mapping_profile" default="current_linear" />
-  <!-- true restores the archived first EGM experiment (MoveIt Servo qdot
-       integration). false uses directional damped recovery and is default. -->
-  <arg name="legacy_moveit_servo_reference" default="false" />
+  <arg name="require_scene_ready" default="false" />
+  <!-- Default: MoveIt Servo performs velocity, collision, singularity and
+       joint-limit safety; the adapter adds a bounded position reference for
+       realistic stiffness.  The old direct Cartesian IK path remains an
+       explicit simulation-only rollback. -->
+  <arg name="use_moveit_servo_safety" default="true" />
+  <arg name="legacy_moveit_servo_reference"
+       default="$(arg use_moveit_servo_safety)"
+       doc="deprecated compatibility alias; false selects direct IK rollback" />
   <arg name="stable_position_reference_profile" default="true"
        doc="true enables bounded low-latency motion plus stiff hold; false restores the prior aggressive EGM response" />
+  <arg name="settled_position_hold" default="true"
+       doc="false disables only the quiet-command joint hold while keeping the IK projection and stable EGM gains" />
+  <arg name="hand_stability_profile" default="physical_grasp"
+       doc="physical_grasp is finite-force and contact-capable; rigid_transport is the kinematic rollback; original restores the legacy PID plant" />
   <arg name="camera_workspace_calibration_file"
        default="$(find handarm_moveit_demo)/config/camera_workspace_calibration.yaml" />
   <arg name="safe_initial_joint_positions"
@@ -26,6 +36,7 @@
     <arg name="paused" value="false" />
     <arg name="world_name" value="$(arg world_name)" />
     <arg name="initial_joint_positions" value="$(arg safe_initial_joint_positions)" />
+    <arg name="hand_stability_profile" value="$(arg hand_stability_profile)" />
   </include>
   <include file="$(find abb120_moveit_config1)/launch/demo.launch">
     <arg name="load_robot_description" value="false" />
@@ -46,12 +57,20 @@
     <param name="command_timeout_s" value="0.10" />
     <param name="joint_limit_margin_rad" value="0.01" />
     <param name="maximum_step_dt_s" value="0.02" />
+    <param name="hard_stop_collision_scale" value="0.20" />
+    <param name="collision_scale_timeout_s" value="0.25" />
+    <param name="retreat_authorization_timeout_s" value="0.12" />
+    <param name="retreat_authorization_topic"
+           value="/shared_teleop/collision_retreat_authorized" />
     <rosparam param="arm_joints">[joint_1, joint_2, joint_3, joint_4, joint_5, joint_6]</rosparam>
     <rosparam param="initial_reference">[0.0, 0.0, 0.0, 0.0, 1.5707963267948966, 0.0]</rosparam>
     <rosparam param="lower_limits">[-2.87979, -1.91986, -1.91986, -2.79253, -2.094395, -6.981317]</rosparam>
     <rosparam param="upper_limits">[2.87979, 1.91986, 1.22173, 2.79253, 2.094395, 6.981317]</rosparam>
     <rosparam param="maximum_velocity">[4.36332, 4.36332, 4.36332, 5.58505, 5.58505, 7.33038]</rosparam>
     <rosparam param="maximum_acceleration">[8.0, 8.0, 8.0, 12.0, 12.0, 16.0]</rosparam>
+    <!-- The position target may lead feedback only by a few degrees.  It can
+         stiffen/hold the plant but can never become a large open-loop backlog. -->
+    <rosparam param="maximum_following_error_rad">[0.04, 0.04, 0.04, 0.06, 0.06, 0.08]</rosparam>
   </node>
 
   <node unless="$(arg legacy_moveit_servo_reference)"
@@ -68,6 +87,21 @@
     <param name="command_timeout_s" value="0.10" />
     <param if="$(arg stable_position_reference_profile)"
            name="latch_on_twist_timeout" value="true" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="synchronize_reference_on_start" value="false" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="settled_position_hold_enabled"
+           value="$(arg settled_position_hold)" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="settled_position_hold_delay_s" value="0.25" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="settled_position_hold_linear_enter_mps" value="0.008" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="settled_position_hold_angular_enter_radps" value="0.06" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="settled_position_hold_linear_release_mps" value="0.025" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="settled_position_hold_angular_release_radps" value="0.18" />
     <param name="position_hold_topic"
            value="/shared_teleop/egm_position_hold" />
     <!-- MoveIt Servo previously emergency-stopped at 200 and was blindly
@@ -108,6 +142,7 @@
     <arg name="enable_gesture_demo" value="$(arg enable_gesture_demo)" />
     <arg name="log_directory" value="$(arg log_directory)" />
     <arg name="mapping_profile" value="$(arg mapping_profile)" />
+    <arg name="require_scene_ready" value="$(arg require_scene_ready)" />
     <arg name="stable_position_reference_profile"
          value="$(arg stable_position_reference_profile)" />
     <arg name="camera_workspace_calibration_file"

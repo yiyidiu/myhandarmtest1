@@ -44,18 +44,39 @@ class GroundSceneTest(unittest.TestCase):
             self.assertAlmostEqual(pose[2], expected_center_z)
             self.assertAlmostEqual(pose[2] - 0.5 * size[2], 0.001)
 
+    def test_ground_grasp_contacts_are_damped_and_blue_is_observable(self):
+        path = PACKAGE / "worlds/handarm_ground_grasp.world"
+        root = ET.parse(str(path)).getroot()
+        world = root.find("world")
+        self.assertEqual(
+            float(world.findtext("physics/ode/solver/sor")), 1.0)
+        for model in world.findall("model"):
+            ode = model.find("link/collision/surface/contact/ode")
+            self.assertIsNotNone(ode)
+            self.assertEqual(float(ode.findtext("kp")), 100000.0)
+            self.assertEqual(float(ode.findtext("kd")), 100.0)
+            self.assertEqual(float(ode.findtext("max_vel")), 0.02)
+        blue = world.find("model[@name='ground_object_left']")
+        reporter = blue.find(
+            "link/sensor/plugin[@filename='libgazebo_ros_bumper.so']")
+        self.assertIsNotNone(reporter)
+        self.assertEqual(
+            reporter.findtext("bumperTopicName"),
+            "/handarm_sim_demo/left_object_contacts")
+
     def test_ground_scene_config_uses_logical_z_zero_support(self):
         config = yaml.safe_load((PACKAGE / "config/ground_grasp_scene.yaml").read_text(
             encoding="utf-8"))
         self.assertEqual(config["support_surface_key"], "ground")
         ground = config["objects"]["ground"]
         top = ground["pose"]["position"][2] + 0.5 * ground["size"][2]
-        self.assertAlmostEqual(top, 0.0)
+        self.assertAlmostEqual(top, -0.003)
         self.assertFalse(ground["scene_manager_enabled"])
-        self.assertNotIn("ground", config["scenario_object_sets"]["no_obstacle"])
+        self.assertTrue(ground["planning_scene_enabled"])
+        self.assertIn("ground", config["scenario_object_sets"]["no_obstacle"])
         self.assertEqual(
             set(config["scenario_object_sets"]["no_obstacle"]),
-            {"target", "left_object", "right_object"})
+            {"ground", "target", "left_object", "right_object"})
 
     def test_ground_launch_is_well_formed_and_uses_new_files(self):
         path = PACKAGE / "launch/ground_grasp_pose_demo.launch"

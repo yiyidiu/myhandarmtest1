@@ -13,33 +13,50 @@
   <arg name="mapping_profile" default="current_linear" />
   <arg name="camera_workspace_calibration_file"
        default="$(find handarm_moveit_demo)/config/camera_workspace_calibration.yaml" />
-  <!-- false keeps the collision-checked regression profile.  The live-human
-       Gazebo entry explicitly sets true while real-robot output remains off. -->
-  <arg name="response_first" default="false" />
+  <!-- This public teleoperation entry always uses the collision-checked
+       non-EGM velocity Servo.  The old collision-disabled response experiment
+       is intentionally not selectable from this launch. -->
   <!-- Start the simulated arm at the operator-requested teleoperation zero:
        /abbarm/joint_target_deg = [0, 0, 0, 0, 90, 0].  Gazebo receives the
        equivalent radian joint values while spawning the model, before the
        velocity controller starts, so no competing position command is needed. -->
   <arg name="safe_initial_joint_positions"
-       default=" -J f1j1 0.051 -J f1j2 0.0317 -J f2j1 0.0227 -J f3j2 0.0363 -J joint_1 0.0 -J joint_2 0.0 -J joint_3 0.0 -J joint_4 0.0 -J joint_5 1.5707963267948966 -J joint_6 0.0" />
+       default=" -J f1j1 0.18 -J f3j1 0.18 -J f1j2 0.20 -J f1j3 0.20 -J f2j1 0.20 -J f2j2 0.20 -J f3j2 0.20 -J f3j3 0.20 -J joint_1 0.0 -J joint_2 0.0 -J joint_3 0.0 -J joint_4 0.0 -J joint_5 1.5707963267948966 -J joint_6 0.0" />
 
   <include file="$(find abb120_moveit_config1)/launch/gazebo_velocity.launch">
     <arg name="gazebo_gui" value="$(arg gazebo_gui)" />
     <arg name="paused" value="false" />
     <arg name="world_name" value="$(arg world_name)" />
     <arg name="initial_joint_positions" value="$(arg safe_initial_joint_positions)" />
+    <arg name="enable_full_robot_safety" value="true" />
   </include>
   <include file="$(find abb120_moveit_config1)/launch/demo.launch">
     <arg name="load_robot_description" value="false" />
     <arg name="moveit_controller_manager" value="ros_control" />
     <arg name="use_rviz" value="false" />
   </include>
-  <include unless="$(arg response_first)"
-           file="$(find abb120_moveit_config1)/launch/abbarm_servo_velocity_safe.launch">
+  <include file="$(find abb120_moveit_config1)/launch/abbarm_servo_velocity_safe.launch">
     <arg name="enable_robot" value="false" />
   </include>
-  <include if="$(arg response_first)"
-           file="$(find abb120_moveit_config1)/launch/abbarm_servo_velocity_realtime_gazebo.launch" />
+  <!-- Independent strict binary checker. It re-enables the four structural
+       proximity pairs excluded from Servo scaling and monitors the complete
+       arm-plus-hand JointState. required=true is the process-level backstop. -->
+  <node name="full_robot_self_collision_guard"
+        pkg="handarm_moveit_demo"
+        type="full_robot_self_collision_guard"
+        output="screen"
+        required="true">
+    <param name="state_timeout_s" value="0.25" />
+    <param name="status_rate_hz" value="50.0" />
+    <rosparam param="required_joint_names">[joint_1, joint_2, joint_3, joint_4, joint_5, joint_6, f1j1, f1j2, f2j1, f3j2]</rosparam>
+  </node>
+  <!-- required=true turns any startup/runtime safety-contract violation into
+       a fail-closed shutdown of the complete public teleoperation launch. -->
+  <node name="teleop_safety_contract_guard"
+        pkg="handarm_moveit_demo"
+        type="teleop_safety_contract_guard.py"
+        output="screen"
+        required="true" />
   <include file="$(find handarm_moveit_demo)/launch/shared_teleop_core.launch">
     <arg name="enable_robot" value="false" />
     <arg name="simulation" value="true" />
@@ -51,6 +68,7 @@
     <arg name="enable_gesture_demo" value="$(arg enable_gesture_demo)" />
     <arg name="log_directory" value="$(arg log_directory)" />
     <arg name="mapping_profile" value="$(arg mapping_profile)" />
+    <arg name="require_full_robot_safety" value="true" />
     <arg name="camera_workspace_calibration_file"
          value="$(arg camera_workspace_calibration_file)" />
   </include>

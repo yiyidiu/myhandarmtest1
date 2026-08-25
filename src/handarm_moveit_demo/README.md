@@ -154,9 +154,17 @@ roslaunch handarm_moveit_demo live_human_ground_gazebo_egm_teleop.launch \
   with_ground_object:=true
 ```
 
-它保留下面全部 HaMeR/MANO 与六维映射，在 MoveIt Servo 后增加 250 Hz、最新值
-无轨迹队列的位置参考层，并以开启重力的有限力矩 PI-D 锁位。原速度方案仍可用
-`live_human_ground_gazebo_teleop.launch` 一条命令回退。实现、验收数据和修改前快照
+它保留 HaMeR/MANO 腕口姿态和 C 零位，在 MoveIt Servo 后增加 250 Hz、最新值
+无轨迹队列的位置参考层，并以开启重力的有限力矩 PI-D 锁住机械臂。默认的
+`camera_ground_axis_decoupled` 映射把 D455 图像平面 X/Y 与深度 Z 分开，并要求
+工作空间边界与 IK 只沿原请求方向缩短/停止，避免前后运动被改成左右切向运动。
+需要只回退这层映射时追加 `mapping_profile:=camera_ground_workspace`。默认的
+`physical_grasp` 手部 profile 使用有限力矩的 ODE 隐式弹簧阻尼控制，手指接触物体时
+允许受力让位并稳定保持，同时继续提供标准 FollowJointTrajectory 接口以及
+`GRASP/RELEASE` 命令。需要回到修改前的原生位置约束方案时，在命令末尾追加
+`hand_stability_profile:=rigid_transport`；`hand_stability_profile:=original` 仅用于旧 PID
+物理模型的对照测试。原速度方案仍可用 `live_human_ground_gazebo_teleop.launch` 一条命令回退。
+实现、验收数据和修改前快照
 见 [`docs/18_EGM_POSITION_REFERENCE_PROFILE.md`](docs/18_EGM_POSITION_REFERENCE_PROFILE.md)。
 该方案只是 Gazebo 中对 EGM 内部位置伺服行为的模拟，不是 ABB 真机 EGM 驱动。
 

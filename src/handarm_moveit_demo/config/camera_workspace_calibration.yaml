@@ -11,8 +11,15 @@ units: m
 # 0.153 m to camera-left and 0.306 m to camera-right from C-zero.  A dedicated
 # calibrate_camera_workspace_udp.py run still supersedes these trial values.
 human_workspace:
+  # Legacy raw D455 metric XYZ ranges, retained for camera_ground_workspace.
   negative_extent_m: [0.16, 0.18, 0.25]
   positive_extent_m: [0.30, 0.18, 0.25]
+  # Provisional control-coordinate ranges for the new profile.  At the C-zero
+  # depth plane these equal metric XYZ; a new calibrator run measures them
+  # independently and removes perspective X/Y changes caused only by depth.
+  perspective_decoupled_negative_extent_m: [0.16, 0.18, 0.25]
+  perspective_decoupled_positive_extent_m: [0.30, 0.18, 0.25]
+  perspective_decoupling_mode: C_ZERO_REFERENCE_PLANE_PLUS_INDEPENDENT_DEPTH
   neutral_position_m: null
   sample_count: 3213
   quantile: 0.99

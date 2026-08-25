@@ -31,6 +31,11 @@ from hand_commander import (
     normalize_command,
     validate_hand_config,
 )
+from safe_hand_trajectory_proxy import (
+    interpolate_segment,
+    sampled_path,
+    validate_goal_trajectory,
+)
 from run_hand_stability_tests import (
     all_joint_limits,
     classify_service_rate_outliers,
@@ -88,8 +93,9 @@ class _FakeTrajectoryPoint:
 
 
 class _FakeJointTrajectory:
-    def __init__(self, points):
+    def __init__(self, points, joint_names=None):
         self.points = list(points)
+        self.joint_names = [] if joint_names is None else list(joint_names)
 
 
 class _FakeTrajectory:
@@ -161,6 +167,40 @@ class SceneAlgorithmsTest(unittest.TestCase):
         for name in config["execution"]["flexion_joint_names"]:
             self.assertGreater(closed[name], opened[name])
 
+    def test_safe_hand_proxy_samples_every_segment_at_20_milliradians(self):
+        names = ["f1j1", "f1j2", "f2j1", "f3j2"]
+        trajectory = _FakeJointTrajectory([
+            _FakeTrajectoryPoint(1.0, [0.18, 0.20, 0.20, 0.20]),
+            _FakeTrajectoryPoint(2.0, [0.18, 0.85, 0.85, 0.90]),
+        ], names)
+        samples = sampled_path(
+            [0.10, 0.10, 0.10, 0.10], trajectory, names, 0.02)
+        self.assertGreater(len(samples), 30)
+        previous = [0.10, 0.10, 0.10, 0.10]
+        for sample in samples:
+            self.assertLessEqual(
+                max(abs(a - b) for a, b in zip(previous, sample)),
+                0.020000000001)
+            previous = sample
+        for actual, expected in zip(
+                samples[-1], [0.18, 0.85, 0.85, 0.90]):
+            self.assertAlmostEqual(actual, expected, places=12)
+
+    def test_safe_hand_proxy_rejects_limit_violation_before_collision_query(self):
+        names = ["f1j1", "f1j2", "f2j1", "f3j2"]
+        limits = {name: (0.0, 1.0) for name in names}
+        trajectory = _FakeJointTrajectory([
+            _FakeTrajectoryPoint(1.0, [0.2, 1.01, 0.2, 0.2]),
+        ], names)
+        self.assertIn(
+            "violates f1j2 limits",
+            validate_goal_trajectory(trajectory, names, limits))
+
+    def test_segment_interpolator_includes_target_without_oversized_step(self):
+        samples = interpolate_segment([0.0, 0.0], [0.051, -0.001], 0.02)
+        self.assertEqual(len(samples), 3)
+        self.assertEqual(samples[-1], [0.051, -0.001])
+
     def test_all_runtime_urdfs_share_safe_hand_dynamics(self):
         hand_joints = {
             "f1j1", "f1j2", "f1j3", "f2j1",
@@ -198,6 +238,13 @@ class SceneAlgorithmsTest(unittest.TestCase):
                     continue
                 collisions = link.findall("collision")
                 self.assertTrue(collisions, (filename, link.get("name")))
+                if link.get("name") == "handbase_link":
+                    meshes = [collision.find("geometry/mesh")
+                              for collision in collisions]
+                    self.assertEqual(len(meshes), 1)
+                    self.assertTrue(meshes[0].get("filename").endswith(
+                        "handbase_link_collision_8mm.STL"))
+                    continue
                 for collision in collisions:
                     self.assertIsNone(
                         collision.find("geometry/mesh"),
@@ -216,6 +263,7 @@ class SceneAlgorithmsTest(unittest.TestCase):
                 )
                 for gazebo in root.findall("gazebo")
                 if gazebo.get("reference") in hand_links - {"handbase_link"}
+                and gazebo.find("mu1") is not None
             }
             self.assertEqual(set(friction), hand_links - {"handbase_link"})
             self.assertTrue(
@@ -249,8 +297,17 @@ class SceneAlgorithmsTest(unittest.TestCase):
             & hand_joints,
             hand_joints,
         )
-        for collision in root.findall("link/collision"):
-            self.assertIsNone(collision.find("geometry/mesh"))
+        for link in root.findall("link"):
+            collisions = link.findall("collision")
+            if link.get("name") == "handbase_link":
+                self.assertEqual(len(collisions), 1)
+                mesh = collisions[0].find("geometry/mesh")
+                self.assertIsNotNone(mesh)
+                self.assertTrue(mesh.get("filename").endswith(
+                    "handbase_link_collision_8mm.STL"))
+                continue
+            for collision in collisions:
+                self.assertIsNone(collision.find("geometry/mesh"))
         with open(
             os.path.join(HAND_PACKAGE, "xacro", "hand_g.xacro"),
             encoding="utf-8",
@@ -667,7 +724,7 @@ class SceneAlgorithmsTest(unittest.TestCase):
             coordinator.index('rospy.ServiceProxy("/gazebo/unpause_physics"'),
         )
 
-    def test_joint6_avoids_folded_ode_stop(self):
+    def test_joint6_preserves_the_full_abb_axis6_working_range(self):
         for filename in ("gazebo_handarm.urdf", "gazebo_handarm_velocity.urdf"):
             urdf_path = os.path.join(
                 os.path.dirname(PACKAGE),
@@ -680,8 +737,8 @@ class SceneAlgorithmsTest(unittest.TestCase):
             self.assertIsNotNone(joint, filename)
             self.assertEqual(joint.attrib["type"], "revolute", filename)
             limit = joint.find("limit")
-            self.assertAlmostEqual(float(limit.attrib["lower"]), -3.14159)
-            self.assertAlmostEqual(float(limit.attrib["upper"]), 3.14159)
+            self.assertAlmostEqual(float(limit.attrib["lower"]), -6.981317)
+            self.assertAlmostEqual(float(limit.attrib["upper"]), 6.981317)
             folded_stop = 6.98132 - 2.0 * math.pi
             self.assertGreater(abs(float(limit.attrib["lower"])), folded_stop)
 

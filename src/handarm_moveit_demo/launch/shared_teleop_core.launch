@@ -12,9 +12,12 @@
   <arg name="enable_logger" default="true" />
   <arg name="log_directory" default="/tmp/handarm_shared_teleop_logs" />
   <arg name="mapping_profile" default="current_linear" />
+  <arg name="require_full_robot_safety" default="false"
+       doc="public robot launches set true; offline algorithm-only use may leave false" />
   <!-- Opt-in response shaping for the EGM position-reference plant.  The
        established velocity profile deliberately keeps the YAML values. -->
   <arg name="stable_position_reference_profile" default="false" />
+  <arg name="require_scene_ready" default="false" />
   <arg name="camera_workspace_calibration_file"
        default="$(find handarm_moveit_demo)/config/camera_workspace_calibration.yaml" />
 
@@ -52,8 +55,13 @@
         name="six_dof_trend" output="screen">
     <param name="simulation" value="$(arg simulation)" />
     <param name="mapping_profile" value="$(arg mapping_profile)" />
+    <param name="require_scene_ready" value="$(arg require_scene_ready)" />
     <param name="camera_workspace_calibration_file"
            value="$(arg camera_workspace_calibration_file)" />
+    <!-- Opt in only for the EGM stable experiment.  YAML remains disabled so
+         live_human_ground_gazebo_teleop.launch keeps its preserved mapping. -->
+    <param if="$(arg stable_position_reference_profile)"
+           name="enable_pose_reachability_projection" value="true" />
     <param if="$(arg stable_position_reference_profile)"
            name="translation_error_gain_per_s" value="3.0" />
     <param if="$(arg stable_position_reference_profile)"
@@ -85,12 +93,14 @@
   <node pkg="handarm_moveit_demo" type="shared_control_node.py"
         name="shared_control" output="screen" />
   <node pkg="handarm_moveit_demo" type="moveit_servo_output_adapter.py"
-        name="moveit_servo_output_adapter" output="screen">
+        name="moveit_servo_output_adapter" output="screen" required="true">
     <param name="enable_robot" value="$(arg enable_robot)" />
     <param name="simulation" value="$(arg simulation)" />
     <param name="robot_authorization" value="$(arg robot_authorization)" />
     <param name="calibration_confirmed" value="$(arg calibration_confirmed)" />
     <param name="mapping_profile" value="$(arg mapping_profile)" />
+    <param name="require_full_robot_safety"
+           value="$(arg require_full_robot_safety)" />
     <param if="$(arg stable_position_reference_profile)"
            name="maximum_linear_velocity_mps" value="0.30" />
     <param if="$(arg stable_position_reference_profile)"

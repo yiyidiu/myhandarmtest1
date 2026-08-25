@@ -35,17 +35,19 @@ status_topic: /servo_server/status
 warning_topic: /servo_server/status
 use_gazebo: true
 
-# Match the preserved response-first Gazebo profile so this experiment changes
-# only the actuator/reference layer. Never load these settings on a real robot.
-check_collisions: false
-collision_check_rate: 10.0
+# The safe hybrid profile uses MoveIt Servo as the velocity/safety layer and
+# only then integrates the accepted joint velocity into a short-leash position
+# reference.  This keeps low-latency Cartesian response while restoring the
+# collision, singularity and joint-limit protections required by a real arm.
+check_collisions: true
+collision_check_rate: 60.0
 collision_check_type: threshold_distance
 self_collision_proximity_threshold: 0.01
 scene_collision_proximity_threshold: 0.03
 collision_distance_safety_factor: 1000.0
 min_allowable_collision_distance: 0.01
-lower_singularity_threshold: 100.0
-hard_stop_singularity_threshold: 200.0
+lower_singularity_threshold: 17.0
+hard_stop_singularity_threshold: 30.0
 leaving_singularity_threshold_multiplier: 2.0
-joint_limit_margin: 0.0
+joint_limit_margin: 0.08
 is_primary_planning_scene_monitor: false

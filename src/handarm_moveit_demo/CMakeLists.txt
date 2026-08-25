@@ -5,8 +5,12 @@ catkin_python_setup()
 
 find_package(catkin REQUIRED COMPONENTS
   rospy
+  roscpp
+  moveit_core
+  moveit_ros_planning
   moveit_msgs
   geometry_msgs
+  sensor_msgs
   std_msgs
   std_srvs
   message_generation
@@ -25,8 +29,23 @@ generate_messages(
 )
 
 catkin_package(
-  CATKIN_DEPENDS geometry_msgs message_runtime moveit_msgs rospy std_msgs std_srvs
+  CATKIN_DEPENDS geometry_msgs message_runtime moveit_core moveit_msgs
+    moveit_ros_planning roscpp rospy sensor_msgs std_msgs std_srvs
 )
+
+include_directories(${catkin_INCLUDE_DIRS})
+
+add_executable(full_robot_collision_distance_audit
+  src/full_robot_collision_distance_audit.cpp)
+add_dependencies(full_robot_collision_distance_audit
+  ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+target_link_libraries(full_robot_collision_distance_audit ${catkin_LIBRARIES})
+
+add_executable(full_robot_self_collision_guard
+  src/full_robot_self_collision_guard.cpp)
+add_dependencies(full_robot_self_collision_guard
+  ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+target_link_libraries(full_robot_self_collision_guard ${catkin_LIBRARIES})
 
 catkin_install_python(PROGRAMS
   scripts/01_print_moveit_info.py
@@ -40,6 +59,7 @@ catkin_install_python(PROGRAMS
   scripts/servo_pose_step_test.py
   scripts/servo_velocity_to_position_bridge.py
   scripts/egm_position_reference_adapter.py
+  scripts/egm_cartesian_reference_adapter.py
   scripts/egm_position_profile_validator.py
   scripts/servo_dynamic_target_test.py
   scripts/servo_pose_tracking_node.py
@@ -57,6 +77,7 @@ catkin_install_python(PROGRAMS
   scripts/gesture_isolation_node.py
   scripts/shared_control_node.py
   scripts/moveit_servo_output_adapter.py
+  scripts/teleop_safety_contract_guard.py
   scripts/mock_three_finger_hand_adapter.py
   scripts/synthetic_hamer_pose_publisher.py
   scripts/synthetic_direction_sequence.py
@@ -75,6 +96,8 @@ catkin_install_python(PROGRAMS
   scripts/analyze_irb120_ground_workspace.py
   scripts/check_ground_workspace_mapping.py
   scripts/validate_ground_workspace_gazebo.py
+  scripts/validate_axis_decoupled_mapping.py
+  scripts/validate_dynamic_self_collision_stop.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
@@ -82,7 +105,12 @@ install(DIRECTORY config launch
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
 
+install(TARGETS full_robot_collision_distance_audit
+                full_robot_self_collision_guard
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+
 if(CATKIN_ENABLE_TESTING)
   catkin_add_nosetests(test/test_shared_teleop_core.py)
   catkin_add_nosetests(test/test_egm_position_reference.py)
+  catkin_add_nosetests(test/test_egm_singularity_recovery.py)
 endif()

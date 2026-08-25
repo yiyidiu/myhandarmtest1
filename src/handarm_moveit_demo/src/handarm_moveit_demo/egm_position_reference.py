@@ -13,6 +13,34 @@ from typing import Optional, Sequence
 import numpy as np
 
 
+def collision_proximity_hold_required(
+        collision_scale: float, hard_hold_scale: float,
+        retreat_authorized: bool = False,
+        retreat_authorization_age_s: float = float("inf"),
+        retreat_authorization_timeout_s: float = 0.12) -> bool:
+    """Fail closed at collision proximity while permitting a fresh retreat.
+
+    MoveIt Servo's threshold-distance scaler may approach a small nonzero
+    value instead of producing a hard halt.  A position-controlled plant must
+    therefore re-anchor its reference before that residual command can creep
+    into collision.  A short-lived authorization from the C-zero retreat guard
+    is the only exception; stale or absent authorization always holds.
+    """
+
+    scale = float(collision_scale)
+    threshold = float(hard_hold_scale)
+    age = float(retreat_authorization_age_s)
+    timeout = float(retreat_authorization_timeout_s)
+    if (not np.isfinite(scale) or not np.isfinite(threshold) or
+            not 0.0 <= scale <= 1.0 or
+            not 0.0 <= threshold < 1.0 or
+            np.isnan(age) or not np.isfinite(timeout) or timeout <= 0.0):
+        raise ValueError("invalid collision proximity hold inputs")
+    retreat_is_fresh = bool(
+        retreat_authorized and 0.0 <= age <= timeout)
+    return bool(scale <= threshold and not retreat_is_fresh)
+
+
 def _finite_vector(name: str, values: Sequence[float], size: int) -> np.ndarray:
     vector = np.asarray(values, dtype=float)
     if vector.shape != (size,):
@@ -33,6 +61,115 @@ class EgmReferenceOutput:
     limit_clamped: bool
     following_error_clamped: bool
     time_reset: bool
+
+
+@dataclass(frozen=True)
+class EgmPositionHoldDecision:
+    active: bool
+    entered: bool
+    released: bool
+    source: str
+    linear_speed: float
+    angular_speed: float
+
+
+class EgmPositionHoldGate:
+    """Latch measured joints after a genuinely quiet Cartesian command.
+
+    Enter and release thresholds are intentionally different.  Small residual
+    MANO/IK-edge noise therefore cannot repeatedly unlock a stiff joint hold,
+    while a deliberate translation or wrist rotation releases it without a
+    reference jump.  Target-loss and Twist-timeout holds retain priority.
+    """
+
+    def __init__(
+            self, latch_on_twist_timeout: bool = False,
+            settled_hold_enabled: bool = False,
+            settled_delay_s: float = 0.25,
+            linear_enter_mps: float = 0.008,
+            angular_enter_radps: float = 0.06,
+            linear_release_mps: float = 0.025,
+            angular_release_radps: float = 0.18):
+        self.latch_on_twist_timeout = bool(latch_on_twist_timeout)
+        self.settled_hold_enabled = bool(settled_hold_enabled)
+        self.settled_delay_s = float(settled_delay_s)
+        self.linear_enter_mps = float(linear_enter_mps)
+        self.angular_enter_radps = float(angular_enter_radps)
+        self.linear_release_mps = float(linear_release_mps)
+        self.angular_release_radps = float(angular_release_radps)
+        values = [
+            self.settled_delay_s, self.linear_enter_mps,
+            self.angular_enter_radps, self.linear_release_mps,
+            self.angular_release_radps]
+        if (not np.all(np.isfinite(values)) or
+                self.settled_delay_s < 0.0 or
+                self.linear_enter_mps < 0.0 or
+                self.angular_enter_radps < 0.0 or
+                self.linear_release_mps < self.linear_enter_mps or
+                self.angular_release_radps < self.angular_enter_radps):
+            raise ValueError("invalid EGM position-hold gate settings")
+        self.active = False
+        self.source = "NONE"
+        self.quiet_since: Optional[float] = None
+
+    def reset(self) -> None:
+        self.active = False
+        self.source = "NONE"
+        self.quiet_since = None
+
+    def update(self, now_s: float, input_fresh: bool,
+               external_hold: bool,
+               requested_twist: Sequence[float]) -> EgmPositionHoldDecision:
+        now = float(now_s)
+        if not np.isfinite(now):
+            raise ValueError("position-hold timestamp must be finite")
+        twist = _finite_vector("requested_twist", requested_twist, 6)
+        linear_speed = float(np.linalg.norm(twist[:3]))
+        angular_speed = float(np.linalg.norm(twist[3:]))
+        was_active = self.active
+
+        if external_hold:
+            self.active = True
+            self.source = "TARGET_LOSS"
+            self.quiet_since = None
+        elif self.latch_on_twist_timeout and not bool(input_fresh):
+            self.active = True
+            self.source = "TWIST_TIMEOUT"
+            self.quiet_since = None
+        elif not self.settled_hold_enabled:
+            self.active = False
+            self.source = "NONE"
+            self.quiet_since = None
+        elif self.active and self.source == "SETTLED_TARGET":
+            if (linear_speed >= self.linear_release_mps or
+                    angular_speed >= self.angular_release_radps):
+                self.active = False
+                self.source = "NONE"
+                self.quiet_since = None
+        else:
+            # A target-loss/timeout hold must be recaptured through the same
+            # quiet dwell; it must never silently become a settled hold.
+            self.active = False
+            self.source = "NONE"
+            quiet = bool(
+                linear_speed <= self.linear_enter_mps and
+                angular_speed <= self.angular_enter_radps)
+            if quiet:
+                if self.quiet_since is None or now < self.quiet_since:
+                    self.quiet_since = now
+                if now - self.quiet_since >= self.settled_delay_s:
+                    self.active = True
+                    self.source = "SETTLED_TARGET"
+            else:
+                self.quiet_since = None
+
+        return EgmPositionHoldDecision(
+            active=self.active,
+            entered=self.active and not was_active,
+            released=was_active and not self.active,
+            source=self.source,
+            linear_speed=linear_speed,
+            angular_speed=angular_speed)
 
 
 class EgmPositionReferenceModel:
@@ -120,6 +257,20 @@ class EgmPositionReferenceModel:
         self.feedforward_velocity.fill(0.0)
         self.latest_command_time = None
         self.last_step_time = None
+
+    def hold_reference(self, positions: Sequence[float]) -> None:
+        """Stop feed-forward while preserving the already commanded target.
+
+        This is the settled-target behavior: unlike a target-loss safety latch,
+        it must not redefine a desired pose from a gravity-deflected feedback
+        sample at the instant the quiet dwell expires.
+        """
+
+        self.actual = _finite_vector(
+            "hold positions", positions, self.size).copy()
+        self.latest_velocity.fill(0.0)
+        self.feedforward_velocity.fill(0.0)
+        self.latest_command_time = None
 
     def update_velocity(self, velocity: Sequence[float], stamp_s: float) -> None:
         stamp = float(stamp_s)

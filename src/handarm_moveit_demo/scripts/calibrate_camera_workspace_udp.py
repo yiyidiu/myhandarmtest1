@@ -78,6 +78,30 @@ def directional_extents(values, quantile, minimum_samples, label):
     return negative, positive
 
 
+def perspective_decoupled_translation_delta(positions, neutral_position,
+                                             minimum_depth_m=0.12):
+    """Express image-plane motion on the C-zero depth plane.
+
+    Raw D455 metric coordinates obey X=(u-cx)Z/fx and Y=(v-cy)Z/fy.  Using
+    ``position-neutral`` therefore creates a false lateral displacement when
+    the hand only changes depth near an image edge.  Keep the legacy metric
+    delta for rollback, but also calibrate the control coordinates consumed by
+    ``camera_ground_axis_decoupled``.
+    """
+    samples = np.asarray(positions, dtype=np.float64).reshape(-1, 3)
+    zero = np.asarray(neutral_position, dtype=np.float64).reshape(3)
+    if (not np.all(np.isfinite(samples)) or not np.all(np.isfinite(zero)) or
+            zero[2] < minimum_depth_m or
+            np.any(samples[:, 2] < minimum_depth_m)):
+        raise ValueError("perspective decoupling requires valid positive depth")
+    zero_ray = zero[:2] / zero[2]
+    result = np.empty_like(samples)
+    result[:, :2] = zero[2] * (
+        samples[:, :2] / samples[:, 2:3] - zero_ray)
+    result[:, 2] = samples[:, 2] - zero[2]
+    return result
+
+
 def packet_pose(packet, minimum_confidence):
     if packet.get("schema") != "handarm_hamer_pose_v1" or not packet.get(
             "valid", False):
@@ -186,6 +210,8 @@ def main():
     neutral_position = np.median(np.asarray(neutral_positions), axis=0)
     neutral_rotation = mean_rotation(neutral_rotations)
     translation_delta = np.asarray(exploration_positions) - neutral_position
+    decoupled_translation_delta = perspective_decoupled_translation_delta(
+        exploration_positions, neutral_position)
     rotation_delta = np.asarray([
         so3_log(neutral_rotation.T @ rotation)
         for rotation in exploration_rotations
@@ -193,11 +219,21 @@ def main():
     negative_m, positive_m = directional_extents(
         translation_delta, args.quantile,
         args.minimum_direction_samples, "translation")
+    decoupled_negative_m, decoupled_positive_m = directional_extents(
+        decoupled_translation_delta, args.quantile,
+        args.minimum_direction_samples, "perspective-decoupled translation")
     if min(negative_m + positive_m) < args.minimum_translation_extent_m:
         raise SystemExit(
             "one or more camera directions were explored less than {:.3f} m: "
             "negative={}, positive={}".format(
                 args.minimum_translation_extent_m, negative_m, positive_m))
+    if min(decoupled_negative_m + decoupled_positive_m) < (
+            args.minimum_translation_extent_m):
+        raise SystemExit(
+            "one or more perspective-decoupled camera directions were "
+            "explored less than {:.3f} m: negative={}, positive={}".format(
+                args.minimum_translation_extent_m,
+                decoupled_negative_m, decoupled_positive_m))
     negative_rotation, positive_rotation = directional_extents(
         np.degrees(rotation_delta), args.quantile,
         args.minimum_direction_samples, "orientation")
@@ -216,8 +252,15 @@ def main():
         "frame_id": "camera_color_optical_frame",
         "units": "m",
         "human_workspace": {
+            # Kept for camera_ground_workspace rollback compatibility.
             "negative_extent_m": negative_m,
             "positive_extent_m": positive_m,
+            # Used by camera_ground_axis_decoupled.  X/Y are image rays
+            # expressed on the C-zero depth plane; Z is independent depth.
+            "perspective_decoupled_negative_extent_m": decoupled_negative_m,
+            "perspective_decoupled_positive_extent_m": decoupled_positive_m,
+            "perspective_decoupling_mode": (
+                "C_ZERO_REFERENCE_PLANE_PLUS_INDEPENDENT_DEPTH"),
             "neutral_position_m": neutral_position.tolist(),
             "sample_count": len(exploration_positions),
             "neutral_sample_count": len(neutral_positions),
@@ -237,6 +280,10 @@ def main():
     print("Calibration written: {}".format(destination), flush=True)
     print("negative_extent_m={}".format(negative_m), flush=True)
     print("positive_extent_m={}".format(positive_m), flush=True)
+    print("perspective_decoupled_negative_extent_m={}".format(
+        decoupled_negative_m), flush=True)
+    print("perspective_decoupled_positive_extent_m={}".format(
+        decoupled_positive_m), flush=True)
 
 
 if __name__ == "__main__":

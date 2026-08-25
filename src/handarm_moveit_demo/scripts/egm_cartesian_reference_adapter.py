@@ -15,7 +15,8 @@ from geometry_msgs.msg import TwistStamped
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool, Float64MultiArray, Int8, String
 
-from handarm_moveit_demo.egm_position_reference import EgmPositionReferenceModel
+from handarm_moveit_demo.egm_position_reference import (
+    EgmPositionHoldGate, EgmPositionReferenceModel)
 from handarm_moveit_demo.egm_singularity_recovery import (
     DirectionalSingularityRecovery, UrdfSerialChain)
 
@@ -38,6 +39,8 @@ class EgmCartesianReferenceAdapter:
             "~command_timeout_s", 0.10))
         self.latch_on_twist_timeout = bool(rospy.get_param(
             "~latch_on_twist_timeout", False))
+        self.synchronize_reference_on_start = bool(rospy.get_param(
+            "~synchronize_reference_on_start", True))
         if self.rate_hz <= 0.0 or self.command_timeout_s <= 0.0:
             raise ValueError("rate_hz and command_timeout_s must be positive")
 
@@ -100,6 +103,21 @@ class EgmCartesianReferenceAdapter:
                 "~maximum_following_error_rad",
                 [0.08, 0.08, 0.08, 0.12, 0.12, 0.16]),
         )
+        self.position_hold_gate = EgmPositionHoldGate(
+            latch_on_twist_timeout=self.latch_on_twist_timeout,
+            settled_hold_enabled=bool(rospy.get_param(
+                "~settled_position_hold_enabled", False)),
+            settled_delay_s=float(rospy.get_param(
+                "~settled_position_hold_delay_s", 0.25)),
+            linear_enter_mps=float(rospy.get_param(
+                "~settled_position_hold_linear_enter_mps", 0.008)),
+            angular_enter_radps=float(rospy.get_param(
+                "~settled_position_hold_angular_enter_radps", 0.06)),
+            linear_release_mps=float(rospy.get_param(
+                "~settled_position_hold_linear_release_mps", 0.025)),
+            angular_release_radps=float(rospy.get_param(
+                "~settled_position_hold_angular_release_radps", 0.18)),
+        )
 
         self.lock = threading.Lock()
         self.actual = None
@@ -160,7 +178,13 @@ class EgmCartesianReferenceAdapter:
         with self.lock:
             self.actual = actual
             if not self.reference_synchronized:
-                self.reference_model.synchronize_reference(actual)
+                if self.synchronize_reference_on_start:
+                    self.reference_model.synchronize_reference(actual)
+                else:
+                    # A clean Gazebo launch has an explicit joint target. Keep
+                    # that target instead of recording transient gravity sag
+                    # from the first feedback frame as the new reference.
+                    self.reference_model.update_actual(actual)
                 self.reference_synchronized = True
 
     def twist_callback(self, message):
@@ -200,12 +224,14 @@ class EgmCartesianReferenceAdapter:
                 self.latest_twist.copy() if input_fresh else
                 np.zeros(6, dtype=float))
             external_hold = self.external_position_hold
-            hold_requested = bool(
-                external_hold or
-                (self.latch_on_twist_timeout and not input_fresh))
-            if hold_requested:
-                if not self.position_hold_active:
-                    self.reference_model.synchronize_reference(actual)
+            hold_decision = self.position_hold_gate.update(
+                now, input_fresh, external_hold, requested_twist)
+            if hold_decision.active:
+                if hold_decision.entered:
+                    if hold_decision.source == "SETTLED_TARGET":
+                        self.reference_model.hold_reference(actual)
+                    else:
+                        self.reference_model.synchronize_reference(actual)
                     self.resolver.reset(actual)
                 else:
                     self.reference_model.update_actual(actual)
@@ -236,8 +262,7 @@ class EgmCartesianReferenceAdapter:
             if resolution is None:
                 rospy.loginfo(
                     "EGM joint reference latched for stiff position hold (%s)",
-                    "confirmed target loss" if external_hold else
-                    "Cartesian input timeout")
+                    hold_decision.source)
             elif resolution.recovery_active:
                 rospy.logwarn(
                     "EGM singularity recovery active: condition=%.1f; "
@@ -286,9 +311,9 @@ class EgmCartesianReferenceAdapter:
                 "recovery_active": bool(
                     resolution is not None and resolution.recovery_active),
                 "position_hold_active": resolution is None,
-                "position_hold_source": (
-                    "TARGET_LOSS" if external_hold else
-                    "TWIST_TIMEOUT" if resolution is None else "NONE"),
+                "position_hold_source": hold_decision.source,
+                "hold_gate_linear_speed_mps": hold_decision.linear_speed,
+                "hold_gate_angular_speed_radps": hold_decision.angular_speed,
                 "blocked_twist_component": (
                     0.0 if resolution is None else
                     resolution.blocked_twist_component),

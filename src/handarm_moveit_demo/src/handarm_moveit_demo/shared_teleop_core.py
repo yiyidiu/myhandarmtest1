@@ -198,6 +198,546 @@ def interpolate_pose_ray(
             project_to_so3(rotation_a @ so3_exp(value * relative_vector)))
 
 
+@dataclass(frozen=True)
+class PerspectiveDecoupledIntent:
+    """Hand translation expressed as screen-plane motion plus depth.
+
+    A metric D455 point obeys ``X = ray_x * Z`` and ``Y = ray_y * Z``.
+    Subtracting two metric XYZ points therefore makes a pure motion along a
+    fixed camera ray look like lateral motion whenever the hand is away from
+    the optical centre.  The control coordinates below keep image-plane
+    displacement at the C-zero depth independent from axial depth motion.
+    """
+
+    relative_position: np.ndarray
+    velocity: np.ndarray
+    zero_ray: np.ndarray
+    current_ray: np.ndarray
+
+
+class PerspectiveIntentDecoupler:
+    """Convert D455 XYZ motion into independent image-plane/depth intent."""
+
+    def __init__(self, minimum_depth_m: float = 0.12) -> None:
+        self.minimum_depth_m = float(minimum_depth_m)
+        if (not math.isfinite(self.minimum_depth_m) or
+                self.minimum_depth_m <= 0.0):
+            raise ValueError("minimum_depth_m must be finite and positive")
+
+    def transform(
+            self, relative_position: Sequence[float],
+            raw_velocity: Sequence[float],
+            zero_position: Sequence[float]) -> PerspectiveDecoupledIntent:
+        relative = _finite_vector(
+            relative_position, 3, "relative_position")
+        velocity = _finite_vector(raw_velocity, 6, "raw_velocity")
+        zero = _finite_vector(zero_position, 3, "zero_position")
+        current = zero + relative
+        if (zero[2] < self.minimum_depth_m or
+                current[2] < self.minimum_depth_m):
+            raise ValueError(
+                "perspective intent requires valid positive D455 depth")
+
+        zero_ray = zero[:2] / zero[2]
+        current_ray = current[:2] / current[2]
+        position = np.array([
+            zero[2] * (current_ray[0] - zero_ray[0]),
+            zero[2] * (current_ray[1] - zero_ray[1]),
+            current[2] - zero[2],
+        ], dtype=np.float64)
+
+        # d(X/Z)/dt = (Vx*Z - X*Vz)/Z^2.  Angular velocity remains in the
+        # original camera spatial frame and is intentionally not changed.
+        transformed_velocity = velocity.copy()
+        transformed_velocity[0] = zero[2] * (
+            velocity[0] * current[2] - current[0] * velocity[2]) / (
+                current[2] * current[2])
+        transformed_velocity[1] = zero[2] * (
+            velocity[1] * current[2] - current[1] * velocity[2]) / (
+                current[2] * current[2])
+        transformed_velocity[2] = velocity[2]
+        return PerspectiveDecoupledIntent(
+            position, transformed_velocity, zero_ray.copy(),
+            current_ray.copy())
+
+
+@dataclass(frozen=True)
+class IndependentReachabilityProjection:
+    position: np.ndarray
+    rotation: np.ndarray
+    translation_fraction: float
+    orientation_fraction: float
+    active: bool
+    cache_hit: bool
+    ik_calls: int
+
+
+class IndependentPoseReachabilityProjector:
+    """Project translation to an IK boundary without consuming wrist range.
+
+    The camera mapper intentionally keeps translation and orientation
+    independent.  A position-only Monte-Carlo envelope can nevertheless
+    overestimate the attainable position for a particular tool orientation.
+    This projector first keeps as much requested orientation as is feasible at
+    C-zero, then shortens only the translation ray.  Cached safe boundaries
+    prevent noisy hand samples from repeatedly crossing the same IK edge.
+    """
+
+    def __init__(self, bisection_iterations: int = 6,
+                 safety_factor: float = 0.96,
+                 cache_direction_cosine: float = 0.995,
+                 cache_orientation_tolerance_rad: float = math.radians(2.0),
+                 cache_size: int = 96) -> None:
+        self.bisection_iterations = int(bisection_iterations)
+        self.safety_factor = float(safety_factor)
+        self.cache_direction_cosine = float(cache_direction_cosine)
+        self.cache_orientation_tolerance_rad = float(
+            cache_orientation_tolerance_rad)
+        self.cache_size = int(cache_size)
+        if (self.bisection_iterations < 1 or
+                not 0.0 < self.safety_factor <= 1.0 or
+                not 0.0 < self.cache_direction_cosine <= 1.0 or
+                not math.isfinite(self.cache_orientation_tolerance_rad) or
+                self.cache_orientation_tolerance_rad < 0.0 or
+                self.cache_size < 1):
+            raise ValueError("invalid independent reachability settings")
+        self.cache: List[Dict[str, object]] = []
+
+    def reset(self) -> None:
+        self.cache = []
+
+    def _remember(self, axis: np.ndarray, rotation: np.ndarray,
+                  maximum_distance: float) -> None:
+        self.cache.append({
+            "axis": axis.copy(),
+            "rotation": rotation.copy(),
+            "maximum_distance": float(maximum_distance),
+        })
+        if len(self.cache) > self.cache_size:
+            self.cache.pop(0)
+
+    def _cached_boundary(self, axis: np.ndarray,
+                         rotation: np.ndarray) -> Optional[float]:
+        best = None
+        best_cosine = -1.0
+        for entry in self.cache:
+            cosine = float(np.dot(axis, entry["axis"]))
+            orientation_error = rotation_distance(
+                entry["rotation"], rotation)
+            if (cosine >= self.cache_direction_cosine and
+                    orientation_error <=
+                    self.cache_orientation_tolerance_rad and
+                    cosine > best_cosine):
+                best = float(entry["maximum_distance"])
+                best_cosine = cosine
+        return best
+
+    def project(
+            self, zero_position: Sequence[float],
+            zero_rotation: Sequence[Sequence[float]],
+            target_position: Sequence[float],
+            target_rotation: Sequence[Sequence[float]],
+            is_reachable: Callable[[np.ndarray, np.ndarray], bool]) \
+            -> IndependentReachabilityProjection:
+        zero_p = _finite_vector(zero_position, 3, "zero_position")
+        zero_r = project_to_so3(zero_rotation)
+        target_p = _finite_vector(target_position, 3, "target_position")
+        target_r = project_to_so3(target_rotation)
+        if not callable(is_reachable):
+            raise ValueError("is_reachable must be callable")
+
+        calls = 0
+
+        def query(position: np.ndarray, rotation: np.ndarray) -> bool:
+            nonlocal calls
+            calls += 1
+            return bool(is_reachable(position.copy(), rotation.copy()))
+
+        delta = target_p - zero_p
+        distance = float(np.linalg.norm(delta))
+        axis = None if distance < EPS else delta / distance
+
+        # At a previously verified outer boundary, test the cached safe point
+        # before spending one IK timeout on the known-unreachable raw target.
+        # The candidate is rechecked with this frame's exact orientation.
+        if axis is not None:
+            cached_distance = self._cached_boundary(axis, target_r)
+            if (cached_distance is not None and
+                    cached_distance < distance - EPS):
+                candidate_p = zero_p + cached_distance * axis
+                if query(candidate_p, target_r):
+                    return IndependentReachabilityProjection(
+                        candidate_p, target_r,
+                        cached_distance / distance, 1.0,
+                        True, True, calls)
+
+        # Normal interior motion takes one fast successful IK call and remains
+        # exactly equal to the hand-mapped target.
+        if query(target_p, target_r):
+            return IndependentReachabilityProjection(
+                target_p, target_r, 1.0, 1.0, False, False, calls)
+
+        # Preserve the requested wrist orientation whenever it is feasible at
+        # the known C-zero position.  Only if that orientation itself is
+        # impossible do we shorten its SO(3) ray independently.
+        orientation_fraction = 1.0
+        projected_r = target_r
+        if not query(zero_p, target_r):
+            if not query(zero_p, zero_r):
+                raise RuntimeError("C-zero pose is not IK reachable")
+            low = 0.0
+            high = 1.0
+            for _ in range(self.bisection_iterations):
+                middle = 0.5 * (low + high)
+                _, candidate_r = interpolate_pose_ray(
+                    zero_p, zero_r, zero_p, target_r, middle)
+                if query(zero_p, candidate_r):
+                    low = middle
+                else:
+                    high = middle
+            orientation_fraction = low * self.safety_factor
+            _, projected_r = interpolate_pose_ray(
+                zero_p, zero_r, zero_p, target_r,
+                orientation_fraction)
+
+        if distance < EPS:
+            return IndependentReachabilityProjection(
+                zero_p, projected_r, 1.0, orientation_fraction,
+                orientation_fraction < 1.0, False, calls)
+        assert axis is not None
+
+        # A nearby previously verified boundary is both faster and provides
+        # hysteresis against static hand noise at the edge.  Verify it once
+        # with the current orientation before reuse.
+        cached_distance = self._cached_boundary(axis, projected_r)
+        if cached_distance is not None:
+            candidate_distance = min(distance, cached_distance)
+            candidate_p = zero_p + candidate_distance * axis
+            if query(candidate_p, projected_r):
+                fraction = candidate_distance / distance
+                return IndependentReachabilityProjection(
+                    candidate_p, projected_r, fraction,
+                    orientation_fraction,
+                    fraction < 1.0 or orientation_fraction < 1.0,
+                    True, calls)
+
+        # Orientation projection may itself make the original translation
+        # feasible.  Avoid an unnecessary translation shrink in that case.
+        if orientation_fraction < 1.0 and query(target_p, projected_r):
+            return IndependentReachabilityProjection(
+                target_p, projected_r, 1.0, orientation_fraction,
+                True, False, calls)
+
+        # zero_p/projected_r is reachable by construction.  Find the last
+        # reachable point on the fixed-orientation translation ray.
+        low = 0.0
+        high = 1.0
+        for _ in range(self.bisection_iterations):
+            middle = 0.5 * (low + high)
+            candidate_p = zero_p + middle * delta
+            if query(candidate_p, projected_r):
+                low = middle
+            else:
+                high = middle
+        translation_fraction = low * self.safety_factor
+        projected_distance = distance * translation_fraction
+        projected_p = zero_p + translation_fraction * delta
+        self._remember(axis, projected_r, projected_distance)
+        return IndependentReachabilityProjection(
+            projected_p, projected_r, translation_fraction,
+            orientation_fraction, True, False, calls)
+
+
+@dataclass(frozen=True)
+class DirectionPreservingReachabilityProjection:
+    position: np.ndarray
+    rotation: np.ndarray
+    translation_fraction: float
+    orientation_fraction: float
+    active: bool
+    ik_calls: int
+
+
+class DirectionPreservingIncrementProjector:
+    """Clip an IK target along its requested increment without side-sliding.
+
+    The former projector shortened the complete C-zero-to-target ray.  Near a
+    lateral workspace edge, changing only depth could consequently change the
+    already established lateral coordinate.  This stateful projector instead
+    applies only the raw target increment requested since the preceding hand
+    frame, starting at the last accepted pose.  It may shorten or stop that
+    increment, but it cannot rotate it, consume an older clipped residual, or
+    create a Cartesian component that the mapper did not request.
+    """
+
+    def __init__(self, bisection_iterations: int = 6,
+                 safety_factor: float = 0.98) -> None:
+        self.bisection_iterations = int(bisection_iterations)
+        self.safety_factor = float(safety_factor)
+        if (self.bisection_iterations < 1 or
+                not 0.0 < self.safety_factor <= 1.0):
+            raise ValueError("invalid direction-preserving IK settings")
+        self.reset()
+
+    def reset(self) -> None:
+        self.zero_position: Optional[np.ndarray] = None
+        self.zero_rotation: Optional[np.ndarray] = None
+        self.output_position: Optional[np.ndarray] = None
+        self.output_rotation: Optional[np.ndarray] = None
+        self.requested_position: Optional[np.ndarray] = None
+        self.requested_rotation: Optional[np.ndarray] = None
+
+    def project(
+            self, zero_position: Sequence[float],
+            zero_rotation: Sequence[Sequence[float]],
+            target_position: Sequence[float],
+            target_rotation: Sequence[Sequence[float]],
+            is_reachable: Callable[[np.ndarray, np.ndarray], bool]) \
+            -> DirectionPreservingReachabilityProjection:
+        zero_p = _finite_vector(zero_position, 3, "zero_position")
+        zero_r = project_to_so3(zero_rotation)
+        target_p = _finite_vector(target_position, 3, "target_position")
+        target_r = project_to_so3(target_rotation)
+        if not callable(is_reachable):
+            raise ValueError("is_reachable must be callable")
+
+        if (self.zero_position is None or self.zero_rotation is None or
+                np.linalg.norm(zero_p - self.zero_position) > 1.0e-9 or
+                rotation_distance(zero_r, self.zero_rotation) > 1.0e-9):
+            self.zero_position = zero_p.copy()
+            self.zero_rotation = zero_r.copy()
+            self.output_position = zero_p.copy()
+            self.output_rotation = zero_r.copy()
+            self.requested_position = zero_p.copy()
+            self.requested_rotation = zero_r.copy()
+
+        previous_p = self.output_position.copy()
+        previous_r = self.output_rotation.copy()
+        previous_requested_p = self.requested_position.copy()
+        requested_translation_increment = target_p - previous_requested_p
+        candidate_p = previous_p + requested_translation_increment
+        # Never let an earlier clipped increment carry the command past the
+        # current absolute C-zero-relative target.  This is the final guard in
+        # case a caller other than AxisDecoupledWorkspaceMapper supplies the
+        # projector with a stateful/clipped target stream.
+        target_relative = target_p - zero_p
+        candidate_relative = candidate_p - zero_p
+        candidate_relative = np.minimum(
+            np.maximum(candidate_relative,
+                       np.minimum(np.zeros(3), target_relative)),
+            np.maximum(np.zeros(3), target_relative))
+        candidate_p = zero_p + candidate_relative
+        requested_translation_increment = candidate_p - previous_p
+
+        # Orientation is already an absolute pose relative to C-zero.  Using
+        # the absolute target avoids accumulating a blocked SO(3) residual and
+        # guarantees that a zero-snapped hand orientation requests exactly the
+        # captured robot orientation.
+        candidate_r = target_r.copy()
+        # Record the raw request even when this increment is clipped.  The
+        # next frame may only act on a newly requested component; it must not
+        # silently spend an old blocked lateral residual while depth changes.
+        self.requested_position = target_p.copy()
+        self.requested_rotation = target_r.copy()
+        calls = 0
+
+        def query(position: np.ndarray, rotation: np.ndarray) -> bool:
+            nonlocal calls
+            calls += 1
+            return bool(is_reachable(position.copy(), rotation.copy()))
+
+        # C-zero is an explicit absolute contract, not an accumulated
+        # increment.  Returning all six hand components to zero therefore
+        # restores the captured robot pose exactly whenever it is reachable.
+        returning_to_zero = bool(
+            np.linalg.norm(target_p - zero_p) <= 1.0e-9 and
+            rotation_distance(target_r, zero_r) <= 1.0e-9)
+        if returning_to_zero and query(zero_p, zero_r):
+            self.output_position = zero_p.copy()
+            self.output_rotation = zero_r.copy()
+            return DirectionPreservingReachabilityProjection(
+                zero_p, zero_r, 1.0, 1.0, False, calls)
+
+        if query(candidate_p, candidate_r):
+            self.output_position = candidate_p.copy()
+            self.output_rotation = candidate_r.copy()
+            return DirectionPreservingReachabilityProjection(
+                candidate_p, candidate_r, 1.0, 1.0, False, calls)
+
+        # Preserve the last Cartesian position while finding the reachable
+        # fraction of this frame's orientation increment.
+        orientation_fraction = 1.0
+        projected_r = candidate_r
+        if not query(previous_p, candidate_r):
+            if not query(previous_p, previous_r):
+                raise RuntimeError("last accepted IK pose is no longer reachable")
+            low = 0.0
+            high = 1.0
+            for _ in range(self.bisection_iterations):
+                middle = 0.5 * (low + high)
+                _, candidate_r = interpolate_pose_ray(
+                    previous_p, previous_r,
+                    previous_p, projected_r, middle)
+                if query(previous_p, candidate_r):
+                    low = middle
+                else:
+                    high = middle
+            orientation_fraction = low * self.safety_factor
+            _, projected_r = interpolate_pose_ray(
+                previous_p, previous_r,
+                previous_p, projected_r, orientation_fraction)
+
+        if query(candidate_p, projected_r):
+            self.output_position = candidate_p.copy()
+            self.output_rotation = projected_r.copy()
+            return DirectionPreservingReachabilityProjection(
+                candidate_p, projected_r, 1.0, orientation_fraction,
+                orientation_fraction < 1.0, calls)
+
+        delta = requested_translation_increment
+        distance = float(np.linalg.norm(delta))
+        if distance < EPS:
+            self.output_rotation = projected_r.copy()
+            return DirectionPreservingReachabilityProjection(
+                previous_p, projected_r, 1.0, orientation_fraction,
+                orientation_fraction < 1.0, calls)
+
+        # Bisection changes only one scalar multiplier of the requested
+        # increment.  A pure base-X request therefore always keeps Y/Z fixed.
+        low = 0.0
+        high = 1.0
+        for _ in range(self.bisection_iterations):
+            middle = 0.5 * (low + high)
+            candidate_p = previous_p + middle * delta
+            if query(candidate_p, projected_r):
+                low = middle
+            else:
+                high = middle
+        translation_fraction = low * self.safety_factor
+        projected_p = previous_p + translation_fraction * delta
+        self.output_position = projected_p.copy()
+        self.output_rotation = projected_r.copy()
+        return DirectionPreservingReachabilityProjection(
+            projected_p, projected_r, translation_fraction,
+            orientation_fraction, True, calls)
+
+
+@dataclass(frozen=True)
+class ReachabilityProjectionContinuity:
+    position: np.ndarray
+    rotation: np.ndarray
+    active: bool
+    reason: str
+    raw_step_m: float
+    candidate_step_m: float
+    candidate_progress_m: float
+    blocked_reverse_m: float
+
+
+class ReachabilityProjectionContinuityGuard:
+    """Stop an IK edge projection from reversing a continuous hand command.
+
+    Independent IK queries can return different feasible radii for adjacent
+    poses, especially near a singularity or after a service timeout.  A raw
+    target that advances continuously can therefore produce a projected
+    target that jumps backwards.  The guard compares both targets in the same
+    robot-base coordinates and holds the last accepted projected position when
+    the candidate moves against the current raw-target increment.
+
+    The guard is deliberately local and reversible: a genuine hand reversal
+    reverses ``raw_delta`` as well and is accepted immediately.  Orientation
+    is not filtered here; a material orientation change disables the position
+    guard for that sample so IK can retreat to a newly feasible position.
+    """
+
+    def __init__(
+            self, minimum_raw_step_m: float = 0.0005,
+            reverse_tolerance_m: float = 0.0002,
+            stationary_candidate_tolerance_m: float = 0.0015,
+            orientation_tolerance_rad: float = math.radians(2.0)) -> None:
+        self.minimum_raw_step_m = float(minimum_raw_step_m)
+        self.reverse_tolerance_m = float(reverse_tolerance_m)
+        self.stationary_candidate_tolerance_m = float(
+            stationary_candidate_tolerance_m)
+        self.orientation_tolerance_rad = float(orientation_tolerance_rad)
+        if (not math.isfinite(self.minimum_raw_step_m) or
+                self.minimum_raw_step_m < 0.0 or
+                not math.isfinite(self.reverse_tolerance_m) or
+                self.reverse_tolerance_m < 0.0 or
+                not math.isfinite(self.stationary_candidate_tolerance_m) or
+                self.stationary_candidate_tolerance_m < 0.0 or
+                not math.isfinite(self.orientation_tolerance_rad) or
+                self.orientation_tolerance_rad < 0.0):
+            raise ValueError("invalid reachability continuity settings")
+        self.reset()
+
+    def reset(self) -> None:
+        self.previous_raw_position: Optional[np.ndarray] = None
+        self.output_position: Optional[np.ndarray] = None
+        self.output_rotation: Optional[np.ndarray] = None
+
+    def apply(
+            self, raw_position: Sequence[float],
+            candidate_position: Sequence[float],
+            candidate_rotation: Sequence[Sequence[float]]) \
+            -> ReachabilityProjectionContinuity:
+        raw = _finite_vector(raw_position, 3, "raw_position")
+        candidate = _finite_vector(
+            candidate_position, 3, "candidate_position")
+        rotation = project_to_so3(candidate_rotation)
+
+        if (self.previous_raw_position is None or
+                self.output_position is None or
+                self.output_rotation is None):
+            self.previous_raw_position = raw.copy()
+            self.output_position = candidate.copy()
+            self.output_rotation = rotation.copy()
+            return ReachabilityProjectionContinuity(
+                candidate.copy(), rotation.copy(), False, "INITIALIZED",
+                0.0, 0.0, 0.0, 0.0)
+
+        raw_delta = raw - self.previous_raw_position
+        candidate_delta = candidate - self.output_position
+        raw_step = float(np.linalg.norm(raw_delta))
+        candidate_step = float(np.linalg.norm(candidate_delta))
+        orientation_step = rotation_distance(
+            self.output_rotation, rotation)
+        candidate_progress = 0.0
+        reason = "PASS"
+
+        # Translation intent has priority over per-frame MANO orientation
+        # noise.  Otherwise a >2 degree wrist fluctuation can bypass the
+        # monotonic check and recreate the very position reversal this guard
+        # exists to prevent.  When translation is stationary, a material
+        # orientation change remains free to select a different IK position.
+        if raw_step >= self.minimum_raw_step_m:
+            candidate_progress = float(np.dot(
+                candidate_delta, raw_delta / raw_step))
+            if candidate_progress < -self.reverse_tolerance_m:
+                reason = "BLOCK_REVERSE_PROJECTION"
+        elif (orientation_step <= self.orientation_tolerance_rad and
+              candidate_step > self.stationary_candidate_tolerance_m):
+            reason = "BLOCK_STATIONARY_IK_JUMP"
+
+        # Direction is always measured from the immediately preceding raw
+        # sample, including after a blocked candidate.  This prevents a later
+        # candidate from being forward relative to an old anchor but backward
+        # relative to the operator's current frame-to-frame motion.
+        self.previous_raw_position = raw.copy()
+
+        if reason.startswith("BLOCK_"):
+            return ReachabilityProjectionContinuity(
+                self.output_position.copy(), self.output_rotation.copy(),
+                True, reason, raw_step, candidate_step, candidate_progress,
+                max(0.0, -candidate_progress))
+
+        self.output_position = candidate.copy()
+        self.output_rotation = rotation.copy()
+        return ReachabilityProjectionContinuity(
+            candidate.copy(), rotation.copy(), False, reason, raw_step,
+            candidate_step, candidate_progress, 0.0)
+
+
 def rotation_between_vectors(source: Sequence[float], target: Sequence[float],
                              fallback_axis: Optional[Sequence[float]] = None) -> np.ndarray:
     a = normalize(source, "source")
@@ -562,12 +1102,12 @@ class CollisionRetreatGuard:
         angular_speed = float(np.linalg.norm(command[3:]))
         linear_allowed = bool(
             linear_speed <= 1e-12 or
-            position_norm <= self.translation_progress_m or
-            np.dot(position_error_from_zero, command[:3]) < 0.0)
+            (position_norm > self.translation_progress_m and
+             np.dot(position_error_from_zero, command[:3]) < 0.0))
         angular_allowed = bool(
             angular_speed <= 1e-12 or
-            rotation_norm <= self.rotation_progress_rad or
-            np.dot(rotation_error_to_zero, command[3:]) > 0.0)
+            (rotation_norm > self.rotation_progress_rad and
+             np.dot(rotation_error_to_zero, command[3:]) > 0.0))
         if not linear_allowed:
             command[:3] = 0.0
         if not angular_allowed:
@@ -1153,8 +1693,16 @@ class GroundSectorWorkspace:
 
     def limit_velocity(self, position: Sequence[float],
                        velocity: Sequence[float],
-                       soft_margin_m: float) -> Tuple[np.ndarray, List[str]]:
-        """Scale only motion heading out of the clipped ellipsoid."""
+                       soft_margin_m: float,
+                       direction_preserving: bool = False) \
+            -> Tuple[np.ndarray, List[str]]:
+        """Limit motion at the clipped ellipsoid boundary.
+
+        The legacy policy removes the outward normal and deliberately leaves a
+        tangential velocity.  ``direction_preserving`` is the teleoperation
+        policy: it only scales or stops the requested vector, so an input with
+        zero lateral component can never acquire one at the boundary.
+        """
 
         point = _finite_vector(position, 3, "workspace_position")
         command = _finite_vector(velocity, 3, "workspace_velocity")
@@ -1187,12 +1735,18 @@ class GroundSectorWorkspace:
         gradient = 2.0 * (point - self.center) / (self.radii * self.radii)
         outward = float(np.dot(gradient, command)) > 0.0
         if ellipsoid >= 1.0 and outward:
-            normal_square = float(np.dot(gradient, gradient))
-            if normal_square > EPS:
-                outward_component = (
-                    float(np.dot(command, gradient)) / normal_square) * gradient
-                command -= outward_component
-            reasons.append("WORKSPACE_HARD_ELLIPSOID")
+            if direction_preserving:
+                command[:] = 0.0
+                reasons.append(
+                    "WORKSPACE_HARD_ELLIPSOID_DIRECTION_HOLD")
+            else:
+                normal_square = float(np.dot(gradient, gradient))
+                if normal_square > EPS:
+                    outward_component = (
+                        float(np.dot(command, gradient)) /
+                        normal_square) * gradient
+                    command -= outward_component
+                reasons.append("WORKSPACE_HARD_ELLIPSOID")
         elif margin > 0.0 and outward and np.linalg.norm(command) > EPS:
             try:
                 distance = self.ray_distance(point, command)
@@ -1240,7 +1794,8 @@ class CameraRangeWorkspaceMapper(RelativePoseMapper):
                      Sequence[float]] = None,
                  robot_orientation_positive_extent_rad: Optional[
                      Sequence[float]] = None,
-                 combine_translation_rotation: bool = False) -> None:
+                 combine_translation_rotation: bool = False,
+                 orientation_zero_snap_rad: float = 0.0) -> None:
         super().__init__(
             translation_matrix, rotation_matrix,
             [1.0, 1.0, 1.0], rotation_gain,
@@ -1253,6 +1808,8 @@ class CameraRangeWorkspaceMapper(RelativePoseMapper):
         self.response_exponent = float(response_exponent)
         self.combine_translation_rotation = bool(
             combine_translation_rotation)
+        self.orientation_zero_snap_rad = float(
+            orientation_zero_snap_rad)
         orientation_arguments = (
             human_orientation_negative_extent_rad,
             human_orientation_positive_extent_rad,
@@ -1299,7 +1856,9 @@ class CameraRangeWorkspaceMapper(RelativePoseMapper):
         if (np.any(self.human_negative_extent <= 0.0) or
                 np.any(self.human_positive_extent <= 0.0) or
                 not math.isfinite(self.response_exponent) or
-                self.response_exponent <= 0.0):
+                self.response_exponent <= 0.0 or
+                not math.isfinite(self.orientation_zero_snap_rad) or
+                self.orientation_zero_snap_rad < 0.0):
             raise ValueError("camera workspace extents must be positive")
         self._last_mapping = {
             "mode": "CAMERA_RANGE_TO_GROUND_SECTOR",
@@ -1542,12 +2101,13 @@ class CameraRangeWorkspaceMapper(RelativePoseMapper):
         mapped_vector = (
             self.rotation_matrix @ hand_vector) * self.rotation_gain
         mapped_size = float(np.linalg.norm(mapped_vector))
-        if mapped_size < EPS:
+        if mapped_size <= max(EPS, self.orientation_zero_snap_rad):
             self._last_mapping.update({
                 "orientation_mapping": "INDEPENDENT_1_TO_1_DIRECTIONAL_CAP",
                 "human_rotation_fraction": 0.0,
                 "robot_rotation_boundary_deg": 0.0,
                 "target_rotation_deg": 0.0,
+                "orientation_zero_snapped": bool(mapped_size >= EPS),
                 "rotation_saturated": False,
             })
             return zero_rotation
@@ -1564,6 +2124,7 @@ class CameraRangeWorkspaceMapper(RelativePoseMapper):
             "robot_rotation_boundary_deg": float(math.degrees(
                 robot_boundary)),
             "target_rotation_deg": float(math.degrees(target_size)),
+            "orientation_zero_snapped": False,
             "rotation_saturated": bool(mapped_size >= robot_boundary),
         })
         return project_to_so3(zero_rotation @ so3_exp(target_vector))
@@ -1603,6 +2164,252 @@ class CameraRangeWorkspaceMapper(RelativePoseMapper):
         result = dict(self._last_mapping)
         result["robot_workspace"] = self.robot_workspace.as_dict()
         return result
+
+
+class AxisDecoupledWorkspaceMapper(CameraRangeWorkspaceMapper):
+    """Map three calibrated hand axes without radial cross-axis coupling.
+
+    Each signed camera intent component is normalized independently and maps
+    to the corresponding signed base-axis boundary.  Their unconstrained sum
+    may lie outside the front/ground ellipsoid; in that case only the new raw
+    target increment since the preceding hand frame is applied from the last
+    feasible target and shortened if needed.  The increment is never rotated
+    and an older clipped residual is never spent implicitly, so changing depth
+    cannot alter an established lateral target merely to slide around the shell.
+    """
+
+    def __init__(self, translation_matrix: Sequence[Sequence[float]],
+                 rotation_matrix: Sequence[Sequence[float]],
+                 rotation_gain: Sequence[float],
+                 maximum_relative_rotation_rad: float,
+                 human_negative_extent_m: Sequence[float],
+                 human_positive_extent_m: Sequence[float],
+                 robot_workspace: GroundSectorWorkspace,
+                 response_exponent: float = 1.0,
+                 human_orientation_negative_extent_rad: Optional[
+                     Sequence[float]] = None,
+                 human_orientation_positive_extent_rad: Optional[
+                     Sequence[float]] = None,
+                 robot_orientation_negative_extent_rad: Optional[
+                     Sequence[float]] = None,
+                 robot_orientation_positive_extent_rad: Optional[
+                     Sequence[float]] = None,
+                 workspace_projection_safety_factor: float = 0.995,
+                 translation_zero_snap_fraction: float = 0.02,
+                 orientation_zero_snap_rad: float = math.radians(2.0)) -> None:
+        super().__init__(
+            translation_matrix, rotation_matrix, rotation_gain,
+            maximum_relative_rotation_rad,
+            human_negative_extent_m, human_positive_extent_m,
+            robot_workspace, response_exponent,
+            human_orientation_negative_extent_rad,
+            human_orientation_positive_extent_rad,
+            robot_orientation_negative_extent_rad,
+            robot_orientation_positive_extent_rad,
+            combine_translation_rotation=False,
+            orientation_zero_snap_rad=orientation_zero_snap_rad)
+        self.workspace_projection_safety_factor = float(
+            workspace_projection_safety_factor)
+        self.translation_zero_snap_fraction = float(
+            translation_zero_snap_fraction)
+        if not 0.0 < self.workspace_projection_safety_factor <= 1.0:
+            raise ValueError(
+                "workspace_projection_safety_factor must be in (0, 1]")
+        if (not math.isfinite(self.translation_zero_snap_fraction) or
+                not 0.0 <= self.translation_zero_snap_fraction < 1.0):
+            raise ValueError(
+                "translation_zero_snap_fraction must be in [0, 1)")
+        gram = self.translation_matrix.T @ self.translation_matrix
+        if not np.allclose(gram, np.eye(3), atol=1.0e-9):
+            raise ValueError(
+                "axis-decoupled translation_matrix must be orthonormal")
+        self.reset()
+
+    def reset(self) -> None:
+        self._axis_zero_position: Optional[np.ndarray] = None
+        self._axis_target_position: Optional[np.ndarray] = None
+        self._axis_requested_position: Optional[np.ndarray] = None
+        self._positive_robot_boundaries = np.zeros(3)
+        self._negative_robot_boundaries = np.zeros(3)
+
+    def _prepare_axis_boundaries(self, zero_position: np.ndarray) -> None:
+        if (self._axis_zero_position is not None and
+                np.linalg.norm(
+                    zero_position - self._axis_zero_position) <= 1.0e-9):
+            return
+        positive = np.zeros(3)
+        negative = np.zeros(3)
+        for index in range(3):
+            camera_positive_axis = np.zeros(3)
+            camera_positive_axis[index] = 1.0
+            robot_positive_axis = normalize(
+                self.translation_matrix @ camera_positive_axis,
+                "mapped_positive_axis")
+            positive[index] = self.robot_workspace.ray_distance(
+                zero_position, robot_positive_axis)
+            negative[index] = self.robot_workspace.ray_distance(
+                zero_position, -robot_positive_axis)
+        self._axis_zero_position = zero_position.copy()
+        self._axis_target_position = zero_position.copy()
+        self._axis_requested_position = zero_position.copy()
+        self._positive_robot_boundaries = positive
+        self._negative_robot_boundaries = negative
+
+    def _raw_axis_target(
+            self, relative_hand_position: Sequence[float],
+            robot_zero_position: Sequence[float]) \
+            -> Tuple[np.ndarray, np.ndarray]:
+        hand = _finite_vector(
+            relative_hand_position, 3, "relative_hand_position")
+        zero = _finite_vector(
+            robot_zero_position, 3, "robot_zero_position")
+        self._prepare_axis_boundaries(zero)
+        extent = np.where(
+            hand >= 0.0,
+            self.human_positive_extent,
+            self.human_negative_extent)
+        normalized = np.clip(hand / extent, -1.0, 1.0)
+        shaped = np.sign(normalized) * (
+            np.abs(normalized) ** self.response_exponent)
+        target = zero.copy()
+        for index, value in enumerate(shaped):
+            if abs(float(value)) < EPS:
+                continue
+            camera_axis = np.zeros(3)
+            camera_axis[index] = math.copysign(1.0, float(value))
+            robot_axis = normalize(
+                self.translation_matrix @ camera_axis,
+                "mapped_signed_axis")
+            boundary = (
+                self._positive_robot_boundaries[index]
+                if value >= 0.0 else
+                self._negative_robot_boundaries[index])
+            target += abs(float(value)) * boundary * robot_axis
+        return target, normalized
+
+    def _translation_target(self, relative_hand_position: Sequence[float],
+                            robot_zero_position: Sequence[float],
+                            record: bool = True) -> np.ndarray:
+        hand = _finite_vector(
+            relative_hand_position, 3, "relative_hand_position")
+        zero = _finite_vector(
+            robot_zero_position, 3, "robot_zero_position")
+        raw_target, normalized = self._raw_axis_target(hand, zero)
+
+        zero_snapped = bool(
+            np.max(np.abs(normalized)) <= self.translation_zero_snap_fraction)
+        if zero_snapped:
+            # C-zero is an absolute target.  Clear the raw request as well as
+            # the output so a previously clipped workspace residual can never
+            # be released on the following frame.
+            raw_target = zero.copy()
+            target = zero.copy()
+            candidate = zero.copy()
+            raw_requested_step = zero - (
+                zero if self._axis_requested_position is None else
+                self._axis_requested_position)
+            requested_step = zero - (
+                zero if self._axis_target_position is None else
+                self._axis_target_position)
+            fraction = 1.0
+            limited = False
+        else:
+            previous = (
+                zero.copy() if self._axis_target_position is None else
+                self._axis_target_position.copy())
+            previous_requested = (
+                zero.copy() if self._axis_requested_position is None else
+                self._axis_requested_position.copy())
+            if not self.robot_workspace.contains(previous, tolerance=1.0e-7):
+                previous = zero.copy()
+            # Apply only the newly requested raw-target increment.  If a
+            # lateral component was clipped on an earlier frame, a later pure
+            # depth change cannot spend that old residual and move laterally.
+            raw_requested_step = raw_target - previous_requested
+            candidate = previous + raw_requested_step
+
+            # A clipped raw target can be farther from C-zero than the last
+            # feasible output.  Applying its full reverse delta later used to
+            # cross zero and throw the arm to the opposite workspace edge.
+            # Express the candidate in the three mapped camera axes and keep
+            # every component between C-zero and the current absolute request.
+            target_coordinates = self.translation_matrix.T @ (
+                raw_target - zero)
+            candidate_coordinates = self.translation_matrix.T @ (
+                candidate - zero)
+            candidate_coordinates = np.minimum(
+                np.maximum(candidate_coordinates,
+                           np.minimum(np.zeros(3), target_coordinates)),
+                np.maximum(np.zeros(3), target_coordinates))
+            candidate = zero + self.translation_matrix @ candidate_coordinates
+            requested_step = candidate - previous
+            step_length = float(np.linalg.norm(requested_step))
+            if step_length < EPS:
+                target = previous
+                fraction = 0.0
+            elif self.robot_workspace.contains(candidate):
+                target = candidate.copy()
+                fraction = 1.0
+            else:
+                available = self.robot_workspace.ray_distance(
+                    previous, requested_step / step_length)
+                if available < step_length:
+                    available *= self.workspace_projection_safety_factor
+                allowed = float(np.clip(available, 0.0, step_length))
+                fraction = allowed / step_length
+                target = previous + fraction * requested_step
+            limited = bool(
+                fraction < 1.0 - 1.0e-12 or
+                not self.robot_workspace.contains(raw_target))
+
+        self._axis_requested_position = raw_target.copy()
+        self._axis_target_position = target.copy()
+        if record:
+            self._last_mapping = {
+                "mode": "PERSPECTIVE_DECOUPLED_AXIS_PRESERVING_GROUND_SECTOR",
+                "human_axis_fraction": normalized.tolist(),
+                "human_translation_fraction": float(
+                    np.linalg.norm(normalized)),
+                "raw_axis_target_m": raw_target.tolist(),
+                "raw_requested_increment_m": raw_requested_step.tolist(),
+                "requested_increment_m": requested_step.tolist(),
+                "increment_candidate_m": candidate.tolist(),
+                "unspent_raw_residual_m": (
+                    raw_target - target).tolist(),
+                "workspace_projection_fraction": float(fraction),
+                "workspace_limited": bool(limited),
+                "translation_zero_snapped": zero_snapped,
+                "translation_saturated": bool(
+                    np.any(np.abs(normalized) >= 1.0 - 1.0e-12)),
+                "positive_robot_axis_boundaries_m": (
+                    self._positive_robot_boundaries.tolist()),
+                "negative_robot_axis_boundaries_m": (
+                    self._negative_robot_boundaries.tolist()),
+            }
+        return target
+
+    def map_target_velocity(
+            self, raw_hand_velocity: Sequence[float],
+            hand_zero_rotation: Sequence[Sequence[float]],
+            robot_zero_rotation: Sequence[Sequence[float]],
+            relative_hand_position: Optional[Sequence[float]] = None,
+            robot_zero_position: Optional[Sequence[float]] = None) -> np.ndarray:
+        raw = _finite_vector(raw_hand_velocity, 6, "raw_hand_velocity")
+        if relative_hand_position is None or robot_zero_position is None:
+            raise ValueError(
+                "axis-decoupled feed-forward requires hand and robot positions")
+        hand = _finite_vector(
+            relative_hand_position, 3, "relative_hand_position")
+        derivative_dt = 1.0e-3
+        current, _ = self._raw_axis_target(hand, robot_zero_position)
+        advanced, _ = self._raw_axis_target(
+            hand + raw[:3] * derivative_dt, robot_zero_position)
+        angular = RelativePoseMapper.map_target_velocity(
+            self, raw, hand_zero_rotation, robot_zero_rotation)
+        angular[:3] = (advanced - current) / derivative_dt
+        if self._last_mapping.get("rotation_saturated", False):
+            angular[3:] = 0.0
+        return angular
 
 
 class RelativePoseServoController:
@@ -1997,12 +2804,15 @@ def apply_workspace_boundary(position: Sequence[float], velocity: Sequence[float
 def apply_ground_sector_workspace_boundary(
         position: Sequence[float], velocity: Sequence[float],
         workspace: GroundSectorWorkspace,
-        soft_margin_m: float) -> Tuple[np.ndarray, List[str]]:
+        soft_margin_m: float,
+        direction_preserving: bool = False) \
+        -> Tuple[np.ndarray, List[str]]:
     """Apply the same ground-sector envelope used by camera-range targets."""
 
     if not isinstance(workspace, GroundSectorWorkspace):
         raise TypeError("workspace must be a GroundSectorWorkspace")
-    return workspace.limit_velocity(position, velocity, soft_margin_m)
+    return workspace.limit_velocity(
+        position, velocity, soft_margin_m, direction_preserving)
 
 
 def robot_output_allowed(simulation: bool, enable_robot: bool,
@@ -2021,7 +2831,10 @@ __all__ = [
     "REAL_ROBOT_AUTHORIZATION_TOKEN",
     "GestureIsolationGate", "LatestCommandShaper",
     "MinimumInterventionOrientationAssist", "OrientationCandidate", "PoseSample",
-    "CameraRangeWorkspaceMapper", "GroundSectorWorkspace",
+    "AxisDecoupledWorkspaceMapper", "CameraRangeWorkspaceMapper",
+    "DirectionPreservingIncrementProjector",
+    "DirectionPreservingReachabilityProjection", "GroundSectorWorkspace",
+    "PerspectiveDecoupledIntent", "PerspectiveIntentDecoupler",
     "RelativePoseMapper", "RelativePoseServoController",
     "SideAxisProjectionResult", "SymmetricSideGraspProjector",
     "StationaryFeedforwardGate", "StationaryFeedforwardResult",

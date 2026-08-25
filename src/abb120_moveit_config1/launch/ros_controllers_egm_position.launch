@@ -1,8 +1,14 @@
 <?xml version="1.0"?>
 <launch>
+  <arg name="spawn_hand_controller" default="true" />
   <rosparam file="$(find abb120_moveit_config1)/config/ros_controllers_egm_position.yaml"
             command="load" />
-  <node name="controller_spawner" pkg="controller_manager" type="spawner"
+  <node if="$(arg spawn_hand_controller)"
+        name="controller_spawner" pkg="controller_manager" type="spawner"
         respawn="false" output="screen"
         args="abbarm_egm_position_controller controller_gazebo_hand" />
+  <node unless="$(arg spawn_hand_controller)"
+        name="controller_spawner" pkg="controller_manager" type="spawner"
+        respawn="false" output="screen"
+        args="abbarm_egm_position_controller" />
 </launch>

@@ -12,7 +12,7 @@ result_json="$run_directory/c_gate_validation.json"
 
 roslaunch handarm_moveit_demo shared_teleop_safe_demo.launch \
   gazebo_gui:=false input_source:=udp enable_logger:=false \
-  enable_gesture_demo:=false response_first:=true >"$launch_log" 2>&1 &
+  enable_gesture_demo:=false >"$launch_log" 2>&1 &
 launch_pid=$!
 
 cleanup() {

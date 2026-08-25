@@ -5,10 +5,19 @@
   <arg name="gazebo_gui" default="true" />
   <arg name="with_ground_object" default="true" />
   <arg name="enable_logger" default="true" />
-  <arg name="legacy_moveit_servo_reference" default="false"
-       doc="true restores the first archived EGM qdot-integration experiment" />
+  <arg name="use_moveit_servo_safety" default="true"
+       doc="true is the safe hybrid Servo plus stiff position-reference profile; false is direct-IK rollback" />
+  <arg name="legacy_moveit_servo_reference"
+       default="$(arg use_moveit_servo_safety)"
+       doc="deprecated compatibility alias" />
   <arg name="stable_position_reference_profile" default="true"
        doc="false restores the previous aggressive EGM response" />
+  <arg name="settled_position_hold" default="true"
+       doc="false keeps continuous EGM tracking but disables quiet-command joint latching" />
+  <arg name="mapping_profile" default="camera_ground_axis_decoupled"
+       doc="camera_ground_workspace restores the previous radial ground mapping" />
+  <arg name="hand_stability_profile" default="physical_grasp"
+       doc="rigid_transport restores the previous nonphysical anti-jitter hand; original restores the legacy PID hand" />
   <arg name="log_directory" default="/tmp/handarm_ground_egm_teleop_logs" />
   <arg name="camera_workspace_calibration_file"
        default="$(find handarm_moveit_demo)/config/camera_workspace_calibration.yaml" />
@@ -20,6 +29,8 @@
        default="$(find handarm_sim_demo)/worlds/handarm_ground_grasp.world" />
   <arg name="world_name"
        default="$(eval arg('ground_object_world') if arg('with_ground_object') else arg('empty_ground_world'))" />
+  <arg name="planning_scene_scenario"
+       default="$(eval 'ground_objects' if arg('with_ground_object') else 'ground_only')" />
 
   <include file="$(find handarm_moveit_demo)/launch/shared_teleop_egm_position_demo.launch">
     <arg name="gazebo_gui" value="$(arg gazebo_gui)" />
@@ -27,7 +38,8 @@
     <arg name="enable_logger" value="$(arg enable_logger)" />
     <arg name="log_directory" value="$(arg log_directory)" />
     <arg name="world_name" value="$(arg world_name)" />
-    <arg name="mapping_profile" value="camera_ground_workspace" />
+    <arg name="mapping_profile" value="$(arg mapping_profile)" />
+    <arg name="require_scene_ready" value="true" />
     <arg name="camera_workspace_calibration_file"
          value="$(arg camera_workspace_calibration_file)" />
     <arg name="safe_initial_joint_positions"
@@ -36,5 +48,20 @@
          value="$(arg legacy_moveit_servo_reference)" />
     <arg name="stable_position_reference_profile"
          value="$(arg stable_position_reference_profile)" />
+    <arg name="settled_position_hold"
+         value="$(arg settled_position_hold)" />
+    <arg name="hand_stability_profile"
+         value="$(arg hand_stability_profile)" />
   </include>
+
+  <!-- Gazebo models are not automatically visible to MoveIt.  Mirror the
+       ground and active objects into PlanningScene before live acceptance. -->
+  <node name="teleop_scene_manager" pkg="handarm_sim_demo"
+        type="scene_manager.py" output="screen" required="true">
+    <param name="scene_config"
+           value="$(find handarm_sim_demo)/config/ground_grasp_scene.yaml" />
+    <param name="scenario" value="$(arg planning_scene_scenario)" />
+    <param name="startup_timeout" value="90.0" />
+    <param name="wait_for_startup_ready" value="false" />
+  </node>
 </launch>

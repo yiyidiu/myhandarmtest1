@@ -1,9 +1,31 @@
 <?xml version="1.0"?>
 <launch>
-  <!-- Load velocity-servo controller configuration. -->
-  <rosparam file="$(find abb120_moveit_config1)/config/ros_controllers_velocity.yaml" command="load"/>
+  <arg name="enable_full_robot_safety" default="false" />
+  <arg name="controller_start_gate"
+       default="/handarm_sim_demo/gazebo_initial_state_ready" />
+  <!-- The safe profile hides the physical hand controller behind a
+       collision-validating action proxy. -->
+  <rosparam unless="$(arg enable_full_robot_safety)"
+            file="$(find abb120_moveit_config1)/config/ros_controllers_velocity.yaml"
+            command="load"/>
+  <rosparam if="$(arg enable_full_robot_safety)"
+            file="$(find abb120_moveit_config1)/config/ros_controllers_velocity_safe.yaml"
+            command="load"/>
 
   <!-- Do not spawn controller_gazebo here; it is a position trajectory controller for the same arm joints. -->
-  <node name="controller_spawner" pkg="controller_manager" type="spawner" respawn="false"
-        output="screen" args="abbarm_velocity_controller controller_gazebo_hand"/>
+  <node unless="$(arg enable_full_robot_safety)"
+        name="controller_spawner" pkg="controller_manager" type="spawner"
+        respawn="false" output="screen"
+        args="--wait-for $(arg controller_start_gate) abbarm_velocity_controller controller_gazebo_hand"/>
+  <node if="$(arg enable_full_robot_safety)"
+        name="controller_spawner" pkg="controller_manager" type="spawner"
+        respawn="false" output="screen"
+        args="--wait-for $(arg controller_start_gate) abbarm_velocity_controller controller_gazebo_hand_internal"/>
+  <node if="$(arg enable_full_robot_safety)"
+        name="safe_hand_trajectory_proxy" pkg="handarm_sim_demo"
+        type="safe_hand_trajectory_proxy.py" required="true" output="screen">
+    <rosparam param="joint_names">[f1j1, f1j2, f2j1, f3j2]</rosparam>
+    <param name="maximum_collision_step_rad" value="0.02" />
+    <param name="state_timeout_s" value="0.25" />
+  </node>
 </launch>

@@ -13,7 +13,7 @@ negative_json="$run_directory/negative_x90.json"
 
 roslaunch handarm_moveit_demo shared_teleop_safe_demo.launch \
   gazebo_gui:=false input_source:=none enable_logger:=false \
-  enable_gesture_demo:=false response_first:=true >"$launch_log" 2>&1 &
+  enable_gesture_demo:=false >"$launch_log" 2>&1 &
 launch_pid=$!
 
 cleanup() {

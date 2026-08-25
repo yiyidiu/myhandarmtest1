@@ -19,7 +19,11 @@ from std_srvs.srv import Empty, Trigger, TriggerResponse
 from handarm_moveit_demo.msg import HamerHandPose, HandCommand
 from handarm_moveit_demo.shared_teleop_core import (
     AprilTagV3PoseContinuityFilter, CollisionRetreatGuard, PoseSample,
-    CameraRangeWorkspaceMapper, GroundSectorWorkspace,
+    AxisDecoupledWorkspaceMapper, CameraRangeWorkspaceMapper,
+    DirectionPreservingIncrementProjector, GroundSectorWorkspace,
+    IndependentPoseReachabilityProjector,
+    PerspectiveIntentDecoupler,
+    ReachabilityProjectionContinuityGuard,
     RelativePoseMapper, RelativePoseServoController,
     SixDofTrendEstimator, StationaryFeedforwardGate,
     SymmetricSideGraspProjector,
@@ -54,10 +58,19 @@ class SixDofTrendNode:
             "frame", frames.get("camera", "camera_color_optical_frame"))
         self.mapping_profile_name = str(rospy.get_param(
             "~mapping_profile", "current_linear"))
+        self.require_scene_ready = bool(rospy.get_param(
+            "~require_scene_ready", False))
+        self.scene_ready = not self.require_scene_ready
         self.camera_workspace_calibration_status = "NOT_USED"
         self.pose_reachability_enabled = False
+        self.pose_reachability_mode = "DISABLED"
+        self.independent_pose_projector = None
+        self.direction_preserving_pose_projector = None
+        self.perspective_intent_decoupler = None
+        self.reachability_continuity_guard = None
         self.pose_reachability_cache = []
         self.pose_reachability_last = {
+            "mode": "DISABLED", "active": False,
             "limit": 1.0, "cache_hit": False, "ik_calls": 0,
             "processing_ms": 0.0,
         }
@@ -127,10 +140,18 @@ class SixDofTrendNode:
                 raise ValueError(
                     "unknown mapping profile {}".format(
                         self.mapping_profile_name))
-            if profile.get("mode") != "CAMERA_RANGE_TO_GROUND_SECTOR":
+            profile_mode = str(profile.get("mode", "")).strip().upper()
+            valid_profile_modes = {
+                "CAMERA_RANGE_TO_GROUND_SECTOR",
+                "CAMERA_RANGE_TO_GROUND_SECTOR_AXIS_DECOUPLED",
+            }
+            if profile_mode not in valid_profile_modes:
                 raise ValueError(
                     "unsupported mapping profile mode {}".format(
                         profile.get("mode")))
+            axis_decoupled_profile = bool(
+                profile_mode ==
+                "CAMERA_RANGE_TO_GROUND_SECTOR_AXIS_DECOUPLED")
             calibration_path = str(rospy.get_param(
                 "~camera_workspace_calibration_file", ""))
             if not calibration_path:
@@ -159,6 +180,31 @@ class SixDofTrendNode:
                 "negative_extent_deg")
             human_orientation_positive = human_orientation.get(
                 "positive_extent_deg")
+            human_translation_negative = human_workspace.get(
+                "negative_extent_m")
+            human_translation_positive = human_workspace.get(
+                "positive_extent_m")
+            self.camera_workspace_translation_coordinates = "RAW_METRIC_XYZ"
+            if axis_decoupled_profile:
+                decoupled_negative = human_workspace.get(
+                    "perspective_decoupled_negative_extent_m")
+                decoupled_positive = human_workspace.get(
+                    "perspective_decoupled_positive_extent_m")
+                if (isinstance(decoupled_negative, list) and
+                        isinstance(decoupled_positive, list) and
+                        len(decoupled_negative) == 3 and
+                        len(decoupled_positive) == 3):
+                    human_translation_negative = decoupled_negative
+                    human_translation_positive = decoupled_positive
+                    self.camera_workspace_translation_coordinates = (
+                        "C_ZERO_REFERENCE_PLANE_PLUS_INDEPENDENT_DEPTH")
+                else:
+                    self.camera_workspace_translation_coordinates = (
+                        "LEGACY_EXTENT_FALLBACK_FOR_DECOUPLED_CONTROL")
+                    rospy.logwarn(
+                        "camera calibration has no perspective-decoupled "
+                        "extents; using legacy XYZ ranges as a provisional "
+                        "fallback: %s", calibration_path)
             if normalized_pose_enabled:
                 if (not isinstance(human_orientation_negative, list) or
                         not isinstance(human_orientation_positive, list) or
@@ -177,14 +223,14 @@ class SixDofTrendNode:
                 robot_workspace_config.get("utilization", 1.0),
                 robot_workspace_config.get("boundary_margin_m", 0.0),
             )
-            self.mapper = CameraRangeWorkspaceMapper(
+            mapper_arguments = (
                 profile.get("translation_matrix", np.eye(3)),
                 profile.get("rotation_matrix", np.eye(3)),
                 profile.get("rotation_gain", [1, 1, 1]),
                 math.radians(control.get(
                     "maximum_relative_rotation_deg", 90.0)),
-                human_workspace.get("negative_extent_m"),
-                human_workspace.get("positive_extent_m"),
+                human_translation_negative,
+                human_translation_positive,
                 robot_workspace,
                 profile.get("response_exponent", 1.0),
                 (None if not normalized_pose_enabled else np.radians(
@@ -197,17 +243,77 @@ class SixDofTrendNode:
                 (None if not normalized_pose_enabled else np.radians(
                     normalized_pose.get(
                         "robot_orientation_positive_extent_deg"))),
-                combine_translation_rotation,
             )
+            if axis_decoupled_profile:
+                if combine_translation_rotation:
+                    raise ValueError(
+                        "axis-decoupled mapping requires independent "
+                        "translation and rotation")
+                axis_mapping = profile.get("axis_workspace_mapping", {})
+                perspective = profile.get("perspective_decoupling", {})
+                if (not bool(axis_mapping.get("enabled", False)) or
+                        str(axis_mapping.get("target_projection", "")).upper()
+                        != "PREVIOUS_FEASIBLE_TARGET_LINE_CLIP" or
+                        not bool(perspective.get("enabled", False))):
+                    raise ValueError(
+                        "axis-decoupled profile is missing its control-space "
+                        "projection contract")
+                self.mapper = AxisDecoupledWorkspaceMapper(
+                    *mapper_arguments,
+                    workspace_projection_safety_factor=float(
+                        axis_mapping.get(
+                            "workspace_projection_safety_factor", 0.995)),
+                    translation_zero_snap_fraction=float(
+                        axis_mapping.get(
+                            "translation_zero_snap_fraction", 0.02)),
+                    orientation_zero_snap_rad=math.radians(float(
+                        axis_mapping.get(
+                            "orientation_zero_snap_deg", 2.0))))
+                self.perspective_intent_decoupler = (
+                    PerspectiveIntentDecoupler(float(
+                        perspective.get("minimum_depth_m", 0.12))))
+            else:
+                self.mapper = CameraRangeWorkspaceMapper(
+                    *mapper_arguments, combine_translation_rotation)
             projection = normalized_pose.get(
                 "reachability_projection", {})
+            self.pose_reachability_mode = str(projection.get(
+                "mode", "FULL_POSE_RAY")).strip().upper()
+            valid_projection_modes = {
+                "FULL_POSE_RAY",
+                "INDEPENDENT_TRANSLATION_FIXED_ORIENTATION",
+                "DIRECTION_PRESERVING_INCREMENT_FIXED_ORIENTATION",
+            }
+            if self.pose_reachability_mode not in valid_projection_modes:
+                raise ValueError(
+                    "unsupported normalized-pose reachability projection "
+                    "mode {}".format(self.pose_reachability_mode))
+            configured_projection_enabled = bool(
+                projection.get("enabled", False))
             self.pose_reachability_enabled = bool(
-                normalized_pose_enabled and projection.get("enabled", False))
+                normalized_pose_enabled and rospy.get_param(
+                    "~enable_pose_reachability_projection",
+                    configured_projection_enabled))
             if (self.pose_reachability_enabled and
+                    self.pose_reachability_mode == "FULL_POSE_RAY" and
                     not combine_translation_rotation):
                 raise ValueError(
                     "pose-ray reachability projection requires combined "
                     "translation/rotation mapping")
+            if (self.pose_reachability_enabled and
+                    self.pose_reachability_mode ==
+                    "INDEPENDENT_TRANSLATION_FIXED_ORIENTATION" and
+                    combine_translation_rotation):
+                raise ValueError(
+                    "independent translation reachability projection "
+                    "requires independent translation/rotation mapping")
+            if (self.pose_reachability_enabled and
+                    self.pose_reachability_mode ==
+                    "DIRECTION_PRESERVING_INCREMENT_FIXED_ORIENTATION" and
+                    not axis_decoupled_profile):
+                raise ValueError(
+                    "direction-preserving increment projection requires the "
+                    "axis-decoupled mapping profile")
             self.pose_reachability_ik_service_name = str(projection.get(
                 "ik_service", "/compute_ik"))
             self.pose_reachability_ik_group = str(projection.get(
@@ -220,16 +326,72 @@ class SixDofTrendNode:
                 "boundary_safety_factor", 0.96))
             self.pose_reachability_cache_cosine = float(projection.get(
                 "cache_direction_cosine", 0.99))
+            self.pose_reachability_cache_orientation_tolerance_rad = (
+                math.radians(float(projection.get(
+                    "cache_orientation_tolerance_deg", 2.0))))
             self.pose_reachability_cache_size = int(projection.get(
                 "cache_size", 96))
+            projection_continuity = projection.get(
+                "continuity_guard", {})
+            self.pose_reachability_continuity_enabled = bool(
+                projection_continuity.get("enabled", True))
+            self.pose_reachability_minimum_raw_step_m = float(
+                projection_continuity.get(
+                    "minimum_raw_step_m", 0.0005))
+            self.pose_reachability_reverse_tolerance_m = float(
+                projection_continuity.get(
+                    "reverse_tolerance_m", 0.0002))
+            self.pose_reachability_stationary_tolerance_m = float(
+                projection_continuity.get(
+                    "stationary_candidate_tolerance_m", 0.0015))
+            self.pose_reachability_continuity_orientation_rad = math.radians(
+                float(projection_continuity.get(
+                    "orientation_tolerance_deg", 2.0)))
             if self.pose_reachability_enabled and (
                     self.pose_reachability_ik_timeout <= 0.0 or
                     self.pose_reachability_bisection_iterations < 1 or
                     not 0.0 < self.pose_reachability_safety_factor <= 1.0 or
                     not 0.0 < self.pose_reachability_cache_cosine <= 1.0 or
-                    self.pose_reachability_cache_size < 1):
+                    self.pose_reachability_cache_orientation_tolerance_rad < 0.0 or
+                    self.pose_reachability_cache_size < 1 or
+                    self.pose_reachability_minimum_raw_step_m < 0.0 or
+                    self.pose_reachability_reverse_tolerance_m < 0.0 or
+                    self.pose_reachability_stationary_tolerance_m < 0.0 or
+                    self.pose_reachability_continuity_orientation_rad < 0.0):
                 raise ValueError(
                     "invalid normalized-pose reachability projection settings")
+            if (self.pose_reachability_enabled and
+                    self.pose_reachability_mode ==
+                    "INDEPENDENT_TRANSLATION_FIXED_ORIENTATION"):
+                self.independent_pose_projector = (
+                    IndependentPoseReachabilityProjector(
+                        bisection_iterations=(
+                            self.pose_reachability_bisection_iterations),
+                        safety_factor=self.pose_reachability_safety_factor,
+                        cache_direction_cosine=(
+                            self.pose_reachability_cache_cosine),
+                        cache_orientation_tolerance_rad=(
+                            self.pose_reachability_cache_orientation_tolerance_rad),
+                        cache_size=self.pose_reachability_cache_size))
+                if self.pose_reachability_continuity_enabled:
+                    self.reachability_continuity_guard = (
+                        ReachabilityProjectionContinuityGuard(
+                            minimum_raw_step_m=(
+                                self.pose_reachability_minimum_raw_step_m),
+                            reverse_tolerance_m=(
+                                self.pose_reachability_reverse_tolerance_m),
+                            stationary_candidate_tolerance_m=(
+                                self.pose_reachability_stationary_tolerance_m),
+                            orientation_tolerance_rad=(
+                                self.pose_reachability_continuity_orientation_rad)))
+            elif (self.pose_reachability_enabled and
+                  self.pose_reachability_mode ==
+                  "DIRECTION_PRESERVING_INCREMENT_FIXED_ORIENTATION"):
+                self.direction_preserving_pose_projector = (
+                    DirectionPreservingIncrementProjector(
+                        bisection_iterations=(
+                            self.pose_reachability_bisection_iterations),
+                        safety_factor=self.pose_reachability_safety_factor))
             self.camera_workspace_calibration_status = str(
                 calibration.get("status", "UNKNOWN"))
             if self.camera_workspace_calibration_status.startswith(
@@ -348,6 +510,12 @@ class SixDofTrendNode:
             if position_hold_topic else None)
         if self.position_hold_publisher is not None:
             self.position_hold_publisher.publish(Bool(data=False))
+        self.collision_retreat_authorization_publisher = rospy.Publisher(
+            rospy.get_param(
+                "~collision_retreat_authorization_topic",
+                "/shared_teleop/collision_retreat_authorized"),
+            Bool, queue_size=1, latch=True)
+        self.collision_retreat_authorization_publisher.publish(Bool(data=False))
         self.listener = tf.TransformListener()
         self.lock = threading.Lock()
         self.robot_zero_position = None
@@ -439,6 +607,11 @@ class SixDofTrendNode:
                 "servo_collision_scale",
                 "/servo_server/internal/collision_velocity_scale"),
             Float64, self.collision_scale_callback, queue_size=1)
+        if self.require_scene_ready:
+            rospy.Subscriber(
+                rospy.get_param(
+                    "~scene_ready_topic", "/handarm_sim_demo/scene_ready"),
+                Bool, self.scene_ready_callback, queue_size=1)
         rospy.Service("/shared_teleop/reset_hand_zero", Trigger, self.reset)
         rospy.Service("/shared_teleop/confirm_hand_reference", Trigger, self.reset)
         rospy.Service("/shared_teleop/clear_hand_reference", Trigger,
@@ -607,6 +780,100 @@ class SixDofTrendNode:
         }
         return target_position, target_rotation
 
+    def project_independent_camera_pose(
+            self, robot_zero_position, robot_zero_rotation,
+            target_position, target_rotation):
+        """Keep the requested wrist pose and shorten only translation by IK."""
+
+        if self.independent_pose_projector is None:
+            raise RuntimeError(
+                "independent pose reachability projector is not configured")
+        began = time.perf_counter()
+        result = self.independent_pose_projector.project(
+            robot_zero_position, robot_zero_rotation,
+            target_position, target_rotation,
+            lambda position, rotation: self.query_pose_ik(
+                position, rotation, self.pose_reachability_ik,
+                self.pose_reachability_ik_group,
+                self.pose_reachability_ik_timeout, False))
+        continuity = None
+        projected_position = result.position
+        projected_rotation = result.rotation
+        if self.reachability_continuity_guard is not None:
+            continuity = self.reachability_continuity_guard.apply(
+                target_position, result.position, result.rotation)
+            projected_position = continuity.position
+            projected_rotation = continuity.rotation
+        self.pose_reachability_last = {
+            "mode": self.pose_reachability_mode,
+            "active": bool(result.active),
+            "translation_fraction": float(result.translation_fraction),
+            "orientation_fraction": float(result.orientation_fraction),
+            "cache_hit": bool(result.cache_hit),
+            "ik_calls": int(result.ik_calls),
+            "processing_ms": (time.perf_counter() - began) * 1000.0,
+        }
+        if continuity is not None:
+            self.pose_reachability_last.update({
+                "continuity_guard_active": bool(continuity.active),
+                "continuity_reason": continuity.reason,
+                "raw_step_m": float(continuity.raw_step_m),
+                "candidate_step_m": float(continuity.candidate_step_m),
+                "candidate_progress_m": float(
+                    continuity.candidate_progress_m),
+                "blocked_reverse_m": float(continuity.blocked_reverse_m),
+            })
+            if continuity.active:
+                rospy.logwarn_throttle(
+                    1.0,
+                    "blocked discontinuous IK projection target: %s "
+                    "raw_step=%.4f m candidate_step=%.4f m reverse=%.4f m",
+                    continuity.reason, continuity.raw_step_m,
+                    continuity.candidate_step_m,
+                    continuity.blocked_reverse_m)
+        if result.active:
+            rospy.logwarn_throttle(
+                1.0,
+                "mapped hand pose projected to IRB120 IK boundary: "
+                "translation %.3f, orientation %.3f, cache=%s",
+                result.translation_fraction, result.orientation_fraction,
+                result.cache_hit)
+        return projected_position, projected_rotation
+
+    def project_direction_preserving_camera_pose(
+            self, robot_zero_position, robot_zero_rotation,
+            target_position, target_rotation):
+        """Shorten only the latest requested increment at an IK boundary."""
+
+        if self.direction_preserving_pose_projector is None:
+            raise RuntimeError(
+                "direction-preserving pose projector is not configured")
+        began = time.perf_counter()
+        result = self.direction_preserving_pose_projector.project(
+            robot_zero_position, robot_zero_rotation,
+            target_position, target_rotation,
+            lambda position, rotation: self.query_pose_ik(
+                position, rotation, self.pose_reachability_ik,
+                self.pose_reachability_ik_group,
+                self.pose_reachability_ik_timeout, False))
+        self.pose_reachability_last = {
+            "mode": self.pose_reachability_mode,
+            "active": bool(result.active),
+            "translation_fraction": float(result.translation_fraction),
+            "orientation_fraction": float(result.orientation_fraction),
+            "cache_hit": False,
+            "ik_calls": int(result.ik_calls),
+            "processing_ms": (time.perf_counter() - began) * 1000.0,
+            "direction_preserved": True,
+        }
+        if result.active:
+            rospy.logwarn_throttle(
+                1.0,
+                "axis-decoupled target shortened without side-sliding: "
+                "translation %.3f orientation %.3f",
+                result.translation_fraction, result.orientation_fraction)
+        return result.position, result.rotation
+
     def clear_reference_locked(self, armed=False, token=None):
         self.reference_revision += 1
         self.pose_continuity.reset()
@@ -620,8 +887,19 @@ class SixDofTrendNode:
         self.target_hold_reason = None
         self.collision_retreat_guard.reset()
         self.pose_reachability_cache = []
+        if self.independent_pose_projector is not None:
+            self.independent_pose_projector.reset()
+        if self.direction_preserving_pose_projector is not None:
+            self.direction_preserving_pose_projector.reset()
+        if hasattr(self.mapper, "reset"):
+            self.mapper.reset()
+        if self.reachability_continuity_guard is not None:
+            self.reachability_continuity_guard.reset()
         self.pose_reachability_last = {
-            "limit": 1.0, "cache_hit": False, "ik_calls": 0,
+            "mode": (self.pose_reachability_mode
+                     if self.pose_reachability_enabled else "DISABLED"),
+            "active": False, "limit": 1.0,
+            "cache_hit": False, "ik_calls": 0,
             "processing_ms": 0.0,
         }
         self.active_reference_token = token
@@ -754,6 +1032,22 @@ class SixDofTrendNode:
                 self.collision_velocity_scale <= self.collision_disarm_scale):
             self.engage_servo_interlock(3)
 
+    def scene_ready_callback(self, message):
+        ready = bool(message.data)
+        with self.lock:
+            was_ready = self.scene_ready
+            self.scene_ready = ready
+            active = bool(
+                self.reference_armed or self.reference_ready or
+                self.latest_tracking is not None)
+            if not ready and active:
+                self.clear_reference_locked(armed=False, token=None)
+        if ready and not was_ready:
+            rospy.loginfo(
+                "MoveIt PlanningScene is synchronized; live reference may be captured")
+        elif not ready and active:
+            self.publish_hold_now("PLANNING_SCENE_NOT_READY")
+
     def maybe_reset_recoverable_servo_halt(
             self, target_age_s, velocity, collision_retreat):
         """Reset a latched Servo halt only for a fresh, safe recovery command.
@@ -795,6 +1089,7 @@ class SixDofTrendNode:
         return True, True, "RESET_REQUESTED"
 
     def publish_hold_now(self, reason):
+        self.collision_retreat_authorization_publisher.publish(Bool(data=False))
         command = HandCommand()
         command.header.stamp = rospy.Time.now()
         command.header.frame_id = self.base_frame
@@ -816,6 +1111,8 @@ class SixDofTrendNode:
             "mapping_profile": self.mapping_profile_name,
             "camera_workspace_calibration_status": (
                 self.camera_workspace_calibration_status),
+            "camera_workspace_translation_coordinates": getattr(
+                self, "camera_workspace_translation_coordinates", "NOT_USED"),
             "reference_ready": self.reference_ready,
             "active_reference_token": self.active_reference_token,
             "servo_interlock_status": self.servo_interlock_status,
@@ -868,6 +1165,7 @@ class SixDofTrendNode:
             defaults, separators=(",", ":"))))
 
     def publish_waiting(self, message, reason):
+        self.collision_retreat_authorization_publisher.publish(Bool(data=False))
         with self.lock:
             self.latest_tracking = None
             self.target_hold_reason = None
@@ -893,6 +1191,11 @@ class SixDofTrendNode:
             rospy.logwarn_throttle(
                 1.0, "HaMeR reference frame changed: expected %s, got %s",
                 self.reference_frame, message.header.frame_id)
+            return
+        if self.require_scene_ready and not self.scene_ready:
+            self.publish_waiting(message, "WAITING_FOR_PLANNING_SCENE")
+            rospy.logwarn_throttle(
+                2.0, "Gazebo control locked until MoveIt PlanningScene is synchronized")
             return
         if not self.prepare_operator_reference(message):
             return
@@ -938,6 +1241,9 @@ class SixDofTrendNode:
             with self.lock:
                 result = self.estimator.update(sample)
                 needs_robot_zero = self.robot_zero_position is None
+                hand_zero_position = (
+                    None if self.estimator.zero_position is None else
+                    self.estimator.zero_position.copy())
                 hand_zero_rotation = (
                     None if self.estimator.zero_rotation is None else
                     self.estimator.zero_rotation.copy())
@@ -979,15 +1285,51 @@ class SixDofTrendNode:
             with self.lock:
                 robot_zero_position = self.robot_zero_position.copy()
                 robot_zero_rotation = self.robot_zero_rotation.copy()
+            mapping_relative_position = result.relative_position.copy()
+            mapping_raw_velocity = result.raw_velocity.copy()
+            perspective_diagnostics = None
+            if self.perspective_intent_decoupler is not None:
+                if hand_zero_position is None:
+                    raise RuntimeError(
+                        "perspective intent has no confirmed hand zero")
+                decoupled = self.perspective_intent_decoupler.transform(
+                    result.relative_position, result.raw_velocity,
+                    hand_zero_position)
+                mapping_relative_position = (
+                    decoupled.relative_position.copy())
+                mapping_raw_velocity = decoupled.velocity.copy()
+                perspective_diagnostics = {
+                    "mode": (
+                        "C_ZERO_REFERENCE_PLANE_PLUS_INDEPENDENT_DEPTH"),
+                    "zero_ray_xy": decoupled.zero_ray.tolist(),
+                    "current_ray_xy": decoupled.current_ray.tolist(),
+                    "raw_metric_relative_position_m": (
+                        result.relative_position.tolist()),
+                    "control_relative_position_m": (
+                        mapping_relative_position.tolist()),
+                }
             side_projection = self.side_grasp_projector.project(
                 result.relative_rotation)
             target_position, target_rotation = self.mapper.map(
-                result.relative_position, side_projection.rotation,
+                mapping_relative_position, side_projection.rotation,
                 robot_zero_position, robot_zero_rotation)
             if self.pose_reachability_enabled:
-                target_position, target_rotation = (
-                    self.project_normalized_camera_pose(
-                        robot_zero_position, robot_zero_rotation))
+                if (self.pose_reachability_mode ==
+                        "DIRECTION_PRESERVING_INCREMENT_FIXED_ORIENTATION"):
+                    target_position, target_rotation = (
+                        self.project_direction_preserving_camera_pose(
+                            robot_zero_position, robot_zero_rotation,
+                            target_position, target_rotation))
+                elif (self.pose_reachability_mode ==
+                        "INDEPENDENT_TRANSLATION_FIXED_ORIENTATION"):
+                    target_position, target_rotation = (
+                        self.project_independent_camera_pose(
+                            robot_zero_position, robot_zero_rotation,
+                            target_position, target_rotation))
+                else:
+                    target_position, target_rotation = (
+                        self.project_normalized_camera_pose(
+                            robot_zero_position, robot_zero_rotation))
                 with self.lock:
                     previous_tracking = self.latest_tracking
                 target_velocity = np.zeros(6)
@@ -1005,11 +1347,14 @@ class SixDofTrendNode:
                             previous_tracking["target_rotation"].T) / target_dt
             else:
                 target_velocity = self.mapper.map_target_velocity(
-                    result.raw_velocity, hand_zero_rotation,
+                    mapping_raw_velocity, hand_zero_rotation,
                     robot_zero_rotation,
-                    relative_hand_position=result.relative_position,
+                    relative_hand_position=mapping_relative_position,
                     robot_zero_position=robot_zero_position)
             mapping_diagnostics = self.mapper.mapping_diagnostics()
+            if perspective_diagnostics is not None:
+                mapping_diagnostics["perspective_decoupling"] = (
+                    perspective_diagnostics)
             if self.pose_reachability_enabled:
                 mapping_diagnostics["reachability_projection"] = dict(
                     self.pose_reachability_last)
@@ -1045,6 +1390,8 @@ class SixDofTrendNode:
                 "robot_zero_position": robot_zero_position,
                 "robot_zero_rotation": robot_zero_rotation,
                 "relative_position": result.relative_position.copy(),
+                "control_relative_position": (
+                    mapping_relative_position.copy()),
                 "relative_rotation": result.relative_rotation.copy(),
                 "projected_relative_rotation": side_projection.rotation.copy(),
                 "raw_relative_rotation_vector": (
@@ -1063,6 +1410,7 @@ class SixDofTrendNode:
                     self.pose_continuity.last_rotation_alpha),
                 "pose_continuity_reason": pose_continuity_reason,
                 "raw_velocity": result.raw_velocity.copy(),
+                "control_raw_velocity": mapping_raw_velocity.copy(),
                 "camera_confidence": result.confidence.copy(),
                 "confidence": mapped_confidence,
                 "gesture": result.gesture,
@@ -1208,6 +1556,12 @@ class SixDofTrendNode:
         command.gesture = state["gesture"]
         command.gesture_confidence = state["gesture_confidence"]
         values = velocity if valid else np.zeros(6)
+        retreat_authorized = bool(
+            valid and collision_retreat is not None and
+            collision_retreat.active and
+            np.linalg.norm(values) > self.servo_reset_min_command_norm)
+        self.collision_retreat_authorization_publisher.publish(
+            Bool(data=retreat_authorized))
         (command.twist.linear.x, command.twist.linear.y,
          command.twist.linear.z, command.twist.angular.x,
          command.twist.angular.y, command.twist.angular.z) = values
@@ -1230,6 +1584,7 @@ class SixDofTrendNode:
             "collision_retreat_reason": (
                 "NONE" if collision_retreat is None else
                 collision_retreat.reason),
+            "collision_retreat_authorized": retreat_authorized,
             "linear_retreat_allowed": bool(
                 collision_retreat is None or
                 collision_retreat.linear_retreat_allowed),
@@ -1237,6 +1592,8 @@ class SixDofTrendNode:
                 collision_retreat is None or
                 collision_retreat.angular_retreat_allowed),
             "raw_velocity": state["raw_velocity"].tolist(),
+            "control_raw_velocity": (
+                state["control_raw_velocity"].tolist()),
             "mapped_velocity": values.tolist(),
             "target_feedforward_velocity": (
                 np.zeros(6) if holding_last_target else
@@ -1251,6 +1608,8 @@ class SixDofTrendNode:
                 state["pose_rotation_filter_alpha"]),
             "pose_continuity_reason": state["pose_continuity_reason"],
             "relative_position": state["relative_position"].tolist(),
+            "control_relative_position": (
+                state["control_relative_position"].tolist()),
             "relative_quaternion_xyzw": matrix_to_quaternion_xyzw(
                 state["relative_rotation"]).tolist(),
             "raw_relative_rotation_vector_deg": np.degrees(

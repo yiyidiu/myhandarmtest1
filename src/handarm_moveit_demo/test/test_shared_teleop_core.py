@@ -13,19 +13,29 @@ import yaml
 
 PACKAGE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE / "src"))
+sys.path.insert(0, str(PACKAGE / "scripts"))
+
+from calibrate_camera_workspace_udp import (  # noqa: E402
+    perspective_decoupled_translation_delta,
+)
 
 from handarm_moveit_demo.shared_teleop_core import (  # noqa: E402
     AprilTagV3PoseContinuityFilter,
+    AxisDecoupledWorkspaceMapper,
     CollisionRetreatGuard,
     CoordinateVelocityMapper,
     CameraRangeWorkspaceMapper,
+    DirectionPreservingIncrementProjector,
     GESTURE_CLOSE,
     GESTURE_NONE,
     GestureIsolationGate,
     GroundSectorWorkspace,
+    IndependentPoseReachabilityProjector,
+    ReachabilityProjectionContinuityGuard,
     LatestCommandShaper,
     MinimumInterventionOrientationAssist,
     PoseSample,
+    PerspectiveIntentDecoupler,
     RelativePoseMapper,
     RelativePoseServoController,
     SixDofTrendEstimator,
@@ -249,6 +259,20 @@ class CollisionRetreatGuardTest(unittest.TestCase):
         self.assertTrue(result.active)
         self.assertEqual(
             result.reason, "SERVO_STATUS_5_RETURN_TOWARD_C_ZERO")
+
+    def test_guard_does_not_authorize_motion_when_already_at_c_zero(self):
+        guard = CollisionRetreatGuard(
+            enter_scale=0.20, release_scale=0.80,
+            translation_progress_m=0.001,
+            rotation_progress_rad=math.radians(1.0))
+        result = guard.apply(
+            0.10, [0.0002, 0.0, 0.0], np.eye(3),
+            np.zeros(3), np.eye(3),
+            [-0.10, 0.0, 0.0, 0.0, 0.0, 0.10])
+        self.assertTrue(result.active)
+        self.assertFalse(result.linear_retreat_allowed)
+        self.assertFalse(result.angular_retreat_allowed)
+        np.testing.assert_allclose(result.velocity, np.zeros(6))
 
 
 class SymmetricSideGraspProjectorTest(unittest.TestCase):
@@ -692,6 +716,124 @@ class SixDofCommandTest(unittest.TestCase):
             so3_log(start_rotation.T @ middle_rotation), [0.4, 0.0, 0.0],
             atol=1.0e-9)
 
+    def test_independent_ik_projection_preserves_orientation_and_clamps_position(self):
+        projector = IndependentPoseReachabilityProjector(
+            bisection_iterations=8, safety_factor=0.95,
+            cache_direction_cosine=0.999,
+            cache_orientation_tolerance_rad=math.radians(1.0))
+        zero_position = np.zeros(3)
+        zero_rotation = np.eye(3)
+        target_position = np.array([1.0, 0.0, 0.0])
+        target_rotation = so3_exp([0.0, 0.6, 0.0])
+
+        def reachable(position, _rotation):
+            return np.linalg.norm(position) <= 0.60 + 1.0e-12
+
+        projected = projector.project(
+            zero_position, zero_rotation, target_position, target_rotation,
+            reachable)
+        self.assertTrue(projected.active)
+        self.assertAlmostEqual(projected.orientation_fraction, 1.0)
+        self.assertGreater(projected.translation_fraction, 0.55)
+        self.assertLess(projected.translation_fraction, 0.58)
+        np.testing.assert_allclose(projected.rotation, target_rotation)
+        np.testing.assert_allclose(
+            projected.position,
+            projected.translation_fraction * target_position)
+
+        cached = projector.project(
+            zero_position, zero_rotation, target_position, target_rotation,
+            reachable)
+        self.assertTrue(cached.cache_hit)
+        self.assertLess(cached.ik_calls, projected.ik_calls)
+        np.testing.assert_allclose(cached.position, projected.position)
+        np.testing.assert_allclose(cached.rotation, target_rotation)
+
+        interior_position = np.array([0.4, 0.0, 0.0])
+        interior = projector.project(
+            zero_position, zero_rotation, interior_position, target_rotation,
+            reachable)
+        self.assertFalse(interior.active)
+        self.assertEqual(interior.ik_calls, 1)
+        np.testing.assert_allclose(interior.position, interior_position)
+        np.testing.assert_allclose(interior.rotation, target_rotation)
+
+    def test_independent_ik_projection_reduces_orientation_only_if_zero_requires_it(self):
+        projector = IndependentPoseReachabilityProjector(
+            bisection_iterations=9, safety_factor=0.96)
+        zero_position = np.zeros(3)
+        zero_rotation = np.eye(3)
+        target_position = np.array([0.4, 0.0, 0.0])
+        target_rotation = so3_exp([0.0, 1.0, 0.0])
+
+        def reachable(position, rotation):
+            return (np.linalg.norm(position) <= 0.8 and
+                    rotation_distance(zero_rotation, rotation) <=
+                    0.5 + 1.0e-12)
+
+        projected = projector.project(
+            zero_position, zero_rotation, target_position, target_rotation,
+            reachable)
+        self.assertTrue(projected.active)
+        self.assertAlmostEqual(projected.translation_fraction, 1.0)
+        self.assertGreater(projected.orientation_fraction, 0.47)
+        self.assertLess(projected.orientation_fraction, 0.49)
+        np.testing.assert_allclose(projected.position, target_position)
+        self.assertLessEqual(
+            rotation_distance(zero_rotation, projected.rotation), 0.5)
+
+    def test_reachability_projection_guard_blocks_reverse_but_allows_return(self):
+        guard = ReachabilityProjectionContinuityGuard(
+            minimum_raw_step_m=0.0005,
+            reverse_tolerance_m=0.0002,
+            stationary_candidate_tolerance_m=0.0015,
+            orientation_tolerance_rad=math.radians(2.0))
+        rotation = np.eye(3)
+        initialized = guard.apply(
+            [0.10, 0.0, 0.0], [0.08, 0.0, 0.0], rotation)
+        self.assertFalse(initialized.active)
+
+        # The raw mapped target advances, but a new IK result jumps backward.
+        # A simultaneous MANO orientation fluctuation must not bypass the
+        # translation direction guarantee.
+        blocked = guard.apply(
+            [0.12, 0.0, 0.0], [0.06, 0.0, 0.0],
+            so3_exp([0.0, math.radians(5.0), 0.0]))
+        self.assertTrue(blocked.active)
+        self.assertEqual(blocked.reason, "BLOCK_REVERSE_PROJECTION")
+        self.assertAlmostEqual(blocked.blocked_reverse_m, 0.02)
+        np.testing.assert_allclose(blocked.position, [0.08, 0.0, 0.0])
+        np.testing.assert_allclose(blocked.rotation, rotation)
+
+        # A real hand reversal changes the raw direction too, so returning to
+        # C-zero is accepted rather than latched by the guard.
+        returned = guard.apply(
+            [0.09, 0.0, 0.0], [0.07, 0.0, 0.0], rotation)
+        self.assertFalse(returned.active)
+        np.testing.assert_allclose(returned.position, [0.07, 0.0, 0.0])
+
+    def test_reachability_projection_guard_holds_static_ik_jump(self):
+        guard = ReachabilityProjectionContinuityGuard(
+            minimum_raw_step_m=0.0005,
+            reverse_tolerance_m=0.0002,
+            stationary_candidate_tolerance_m=0.0015,
+            orientation_tolerance_rad=math.radians(2.0))
+        rotation = np.eye(3)
+        guard.apply([0.10, 0.0, 0.0], [0.08, 0.0, 0.0], rotation)
+        held = guard.apply(
+            [0.1001, 0.0, 0.0], [0.09, 0.0, 0.0], rotation)
+        self.assertTrue(held.active)
+        self.assertEqual(held.reason, "BLOCK_STATIONARY_IK_JUMP")
+        np.testing.assert_allclose(held.position, [0.08, 0.0, 0.0])
+
+        # A material wrist-orientation change may legitimately change the
+        # reachable position, so the position guard yields to IK in that case.
+        changed = guard.apply(
+            [0.1001, 0.0, 0.0], [0.05, 0.0, 0.0],
+            so3_exp([0.0, math.radians(5.0), 0.0]))
+        self.assertFalse(changed.active)
+        np.testing.assert_allclose(changed.position, [0.05, 0.0, 0.0])
+
     def test_ground_sector_limiter_blocks_outward_but_allows_retreat(self):
         workspace = GroundSectorWorkspace(
             [0.0, 0.0, 0.5], [1.0, 1.0, 1.0], 0.0, 0.0)
@@ -703,6 +845,215 @@ class SixDofCommandTest(unittest.TestCase):
             [0.25, 0.0, 0.0], [0.0, 0.0, 0.2], workspace, 0.05)
         np.testing.assert_allclose(retreat, [0.0, 0.0, 0.2])
         self.assertNotIn("WORKSPACE_HARD_GROUND", retreat_reasons)
+
+    def test_perspective_intent_decouples_fixed_ray_depth_motion(self):
+        decoupler = PerspectiveIntentDecoupler(0.12)
+        zero = np.array([0.12, -0.06, 0.60])
+        # The wrist stays on the same image ray while moving 0.30 m away.
+        relative = np.array([0.06, -0.03, 0.30])
+        ray_velocity = np.array([0.04, -0.02, 0.20, 0.3, 0.0, -0.1])
+        result = decoupler.transform(relative, ray_velocity, zero)
+        np.testing.assert_allclose(
+            result.relative_position, [0.0, 0.0, 0.30], atol=1.0e-12)
+        np.testing.assert_allclose(
+            result.velocity, [0.0, 0.0, 0.20, 0.3, 0.0, -0.1],
+            atol=1.0e-12)
+
+        # A real image-plane displacement at unchanged depth remains lateral.
+        lateral = decoupler.transform(
+            [0.03, 0.0, 0.0], np.zeros(6), zero)
+        np.testing.assert_allclose(
+            lateral.relative_position, [0.03, 0.0, 0.0], atol=1.0e-12)
+
+    def test_calibrator_emits_same_decoupled_fixed_ray_coordinates(self):
+        zero = np.array([0.12, -0.06, 0.60])
+        positions = np.array([
+            zero,
+            [0.18, -0.09, 0.90],  # same image ray, depth only
+            [0.15, -0.06, 0.60],  # real image-plane X motion
+        ])
+        result = perspective_decoupled_translation_delta(positions, zero)
+        np.testing.assert_allclose(result[0], np.zeros(3), atol=1.0e-12)
+        np.testing.assert_allclose(
+            result[1], [0.0, 0.0, 0.30], atol=1.0e-12)
+        np.testing.assert_allclose(
+            result[2], [0.03, 0.0, 0.0], atol=1.0e-12)
+
+    def test_axis_decoupled_mapper_keeps_lateral_target_during_depth_motion(self):
+        workspace = GroundSectorWorkspace(
+            [0.0, 0.0, 0.5], [1.0, 1.0, 1.0],
+            minimum_forward_x_m=0.0, minimum_tool_z_m=0.0)
+        mapper = AxisDecoupledWorkspaceMapper(
+            [[0, 0, -1], [-1, 0, 0], [0, -1, 0]],
+            np.eye(3), np.ones(3), math.radians(179.0),
+            [0.30, 0.20, 0.30], [0.30, 0.20, 0.30], workspace,
+            human_orientation_negative_extent_rad=np.radians([90.0] * 3),
+            human_orientation_positive_extent_rad=np.radians([90.0] * 3),
+            robot_orientation_negative_extent_rad=np.radians([90.0] * 3),
+            robot_orientation_positive_extent_rad=np.radians([90.0] * 3))
+        zero = np.array([0.25, 0.0, 0.5])
+
+        lateral, _ = mapper.map(
+            [0.24, 0.0, 0.0], np.eye(3), zero, np.eye(3))
+        depth_1, _ = mapper.map(
+            [0.24, 0.0, -0.15], np.eye(3), zero, np.eye(3))
+        depth_2, _ = mapper.map(
+            [0.24, 0.0, -0.30], np.eye(3), zero, np.eye(3))
+        self.assertGreater(depth_1[0], lateral[0])
+        self.assertGreaterEqual(depth_2[0], depth_1[0])
+        np.testing.assert_allclose(
+            [depth_1[1], depth_2[1]], [lateral[1], lateral[1]],
+            atol=1.0e-12)
+        returned, _ = mapper.map(
+            np.zeros(3), np.eye(3), zero, np.eye(3))
+        np.testing.assert_allclose(returned, zero, atol=1.0e-12)
+
+    def test_axis_mapper_does_not_spend_blocked_lateral_residual_on_depth(self):
+        workspace = GroundSectorWorkspace(
+            [0.0, 0.0, 0.0], [1.0, 1.0, 1.0],
+            minimum_forward_x_m=-1.0, minimum_tool_z_m=-1.0)
+        mapper = AxisDecoupledWorkspaceMapper(
+            np.eye(3), np.eye(3), np.ones(3), math.radians(179.0),
+            [1.0] * 3, [1.0] * 3, workspace,
+            workspace_projection_safety_factor=0.98)
+        zero = np.zeros(3)
+        first, _ = mapper.map(
+            [1.0, 0.8, 0.0], np.eye(3), zero, np.eye(3))
+        self.assertLess(np.linalg.norm(first), 1.0)
+        depth_only, _ = mapper.map(
+            [1.0, 0.8, 0.2], np.eye(3), zero, np.eye(3))
+        np.testing.assert_allclose(
+            depth_only[:2], first[:2], atol=1.0e-12)
+        held, _ = mapper.map(
+            [1.0, 0.8, 0.2], np.eye(3), zero, np.eye(3))
+        np.testing.assert_allclose(held, depth_only, atol=1.0e-12)
+
+    def test_axis_mapper_clipped_return_never_crosses_c_zero(self):
+        workspace = GroundSectorWorkspace(
+            [0.0, 0.0, 0.0], [1.0, 1.0, 1.0],
+            minimum_forward_x_m=-1.0, minimum_tool_z_m=-1.0)
+        mapper = AxisDecoupledWorkspaceMapper(
+            np.eye(3), np.eye(3), np.ones(3), math.radians(179.0),
+            [1.0] * 3, [1.0] * 3, workspace,
+            workspace_projection_safety_factor=0.98,
+            translation_zero_snap_fraction=0.02)
+        zero = np.zeros(3)
+        pushed, _ = mapper.map(
+            [1.0, 0.8, 0.0], np.eye(3), zero, np.eye(3))
+        self.assertLess(np.linalg.norm(pushed), 1.0)
+
+        previous_norm = float(np.linalg.norm(pushed))
+        for hand in ([0.8, 0.64, 0.0], [0.6, 0.48, 0.0],
+                     [0.4, 0.32, 0.0], [0.2, 0.16, 0.0],
+                     [0.01, 0.008, 0.0]):
+            returned, _ = mapper.map(
+                hand, np.eye(3), zero, np.eye(3))
+            # A still-positive hand request can approach zero, but a clipped
+            # residual may never send either robot axis to the opposite side.
+            self.assertGreaterEqual(returned[0], -1.0e-12)
+            self.assertGreaterEqual(returned[1], -1.0e-12)
+            self.assertLessEqual(
+                np.linalg.norm(returned), previous_norm + 1.0e-12)
+            previous_norm = float(np.linalg.norm(returned))
+        np.testing.assert_allclose(returned, zero, atol=1.0e-12)
+
+        crossed, _ = mapper.map(
+            [-0.10, -0.08, 0.0], np.eye(3), zero, np.eye(3))
+        self.assertLess(crossed[0], 0.0)
+        self.assertLess(crossed[1], 0.0)
+        self.assertLessEqual(np.linalg.norm(crossed), math.hypot(0.10, 0.08))
+
+    def test_axis_mapper_snaps_small_wrist_error_to_c_orientation(self):
+        workspace = GroundSectorWorkspace(
+            [0.0, 0.0, 0.0], [1.0, 1.0, 1.0],
+            minimum_forward_x_m=-1.0, minimum_tool_z_m=-1.0)
+        mapper = AxisDecoupledWorkspaceMapper(
+            np.eye(3), np.eye(3), np.ones(3), math.radians(179.0),
+            [1.0] * 3, [1.0] * 3, workspace,
+            human_orientation_negative_extent_rad=np.radians([90.0] * 3),
+            human_orientation_positive_extent_rad=np.radians([90.0] * 3),
+            robot_orientation_negative_extent_rad=np.radians([90.0] * 3),
+            robot_orientation_positive_extent_rad=np.radians([90.0] * 3),
+            orientation_zero_snap_rad=math.radians(2.0))
+        _, rotation = mapper.map(
+            np.zeros(3), so3_exp([math.radians(1.5), 0.0, 0.0]),
+            np.zeros(3), np.eye(3))
+        np.testing.assert_allclose(rotation, np.eye(3), atol=1.0e-12)
+
+    def test_direction_preserving_boundary_stops_instead_of_side_sliding(self):
+        workspace = GroundSectorWorkspace(
+            [0.0, 0.0, 0.5], [1.0, 1.0, 1.0],
+            minimum_forward_x_m=-1.0, minimum_tool_z_m=-0.5)
+        root = math.sqrt(0.5)
+        point = [root, root, 0.5]
+        legacy, _ = apply_ground_sector_workspace_boundary(
+            point, [0.2, 0.0, 0.0], workspace, 0.0)
+        self.assertLess(legacy[1], -0.05)
+        protected, reasons = apply_ground_sector_workspace_boundary(
+            point, [0.2, 0.0, 0.0], workspace, 0.0,
+            direction_preserving=True)
+        np.testing.assert_allclose(protected, np.zeros(3), atol=1.0e-12)
+        self.assertIn(
+            "WORKSPACE_HARD_ELLIPSOID_DIRECTION_HOLD", reasons)
+
+    def test_direction_preserving_ik_projection_never_creates_lateral_step(self):
+        projector = DirectionPreservingIncrementProjector(
+            bisection_iterations=12, safety_factor=0.98)
+
+        def reachable(position, _rotation):
+            return bool(position[0] ** 2 + position[1] ** 2 <= 1.0)
+
+        zero = np.zeros(3)
+        rotation = np.eye(3)
+        side = projector.project(
+            zero, rotation, [0.0, 0.8, 0.0], rotation, reachable)
+        np.testing.assert_allclose(side.position, [0.0, 0.8, 0.0])
+        forward = projector.project(
+            zero, rotation, [1.0, 0.8, 0.0], rotation, reachable)
+        self.assertTrue(forward.active)
+        self.assertGreater(forward.position[0], 0.55)
+        self.assertLess(forward.position[0], 0.61)
+        self.assertAlmostEqual(forward.position[1], 0.8, places=12)
+        # The blocked X residual must not be consumed when only Z changes.
+        depth_only = projector.project(
+            zero, rotation, [1.0, 0.8, 0.2], rotation, reachable)
+        np.testing.assert_allclose(
+            depth_only.position[:2], forward.position[:2], atol=1.0e-12)
+        held = projector.project(
+            zero, rotation, [1.0, 0.8, 0.2], rotation, reachable)
+        np.testing.assert_allclose(
+            held.position, depth_only.position, atol=1.0e-12)
+        returned = projector.project(
+            zero, rotation, zero, rotation, reachable)
+        np.testing.assert_allclose(returned.position, zero, atol=1.0e-12)
+
+    def test_direction_preserving_projector_cannot_release_residual_past_zero(self):
+        projector = DirectionPreservingIncrementProjector(
+            bisection_iterations=12, safety_factor=0.98)
+
+        def reachable(position, rotation):
+            return bool(
+                np.linalg.norm(position) <= 1.0 and
+                np.linalg.norm(so3_log(rotation)) <= 0.50)
+
+        zero = np.zeros(3)
+        identity = np.eye(3)
+        pushed = projector.project(
+            zero, identity, [1.0, 0.8, 0.0], so3_exp([0.8, 0.0, 0.0]),
+            reachable)
+        self.assertTrue(pushed.active)
+        previous_norm = float(np.linalg.norm(pushed.position))
+        for fraction in (0.8, 0.6, 0.4, 0.2, 0.0):
+            result = projector.project(
+                zero, identity, [fraction, 0.8 * fraction, 0.0],
+                so3_exp([0.4 * fraction, 0.0, 0.0]), reachable)
+            self.assertGreaterEqual(result.position[0], -1.0e-12)
+            self.assertGreaterEqual(result.position[1], -1.0e-12)
+            self.assertLessEqual(
+                np.linalg.norm(result.position), previous_norm + 1.0e-12)
+            previous_norm = float(np.linalg.norm(result.position))
+        np.testing.assert_allclose(result.position, zero, atol=1.0e-12)
+        np.testing.assert_allclose(result.rotation, identity, atol=1.0e-12)
 
     def test_apriltag_v3_feedforward_and_feedback_speed_relation(self):
         controller = RelativePoseServoController(
@@ -867,7 +1218,7 @@ class SafetyConfigurationTest(unittest.TestCase):
         self.assertAlmostEqual(np.linalg.det(translation), -1.0)
         self.assertAlmostEqual(np.linalg.det(rotation), 1.0)
 
-    def test_live_mapping_uses_v3_pose_with_response_first_limits(self):
+    def test_live_mapping_uses_v3_pose_with_low_latency_limits(self):
         config = yaml.safe_load((PACKAGE / "config/shared_teleop.yaml").read_text(
             encoding="utf-8"))
         mapping = config["mapping"]
@@ -977,6 +1328,24 @@ class SafetyConfigurationTest(unittest.TestCase):
             profile["normalized_pose_mapping"][
                 "reachability_projection"]["enabled"])
 
+        decoupled = config["mapping_profiles"][
+            "camera_ground_axis_decoupled"]
+        self.assertEqual(
+            decoupled["mode"],
+            "CAMERA_RANGE_TO_GROUND_SECTOR_AXIS_DECOUPLED")
+        self.assertTrue(
+            decoupled["perspective_decoupling"]["enabled"])
+        self.assertEqual(
+            decoupled["axis_workspace_mapping"]["target_projection"],
+            "PREVIOUS_FEASIBLE_TARGET_LINE_CLIP")
+        self.assertEqual(
+            decoupled["robot_workspace"]["boundary_policy"],
+            "DIRECTION_PRESERVING_STOP")
+        self.assertEqual(
+            decoupled["normalized_pose_mapping"]
+            ["reachability_projection"]["mode"],
+            "DIRECTION_PRESERVING_INCREMENT_FIXED_ORIENTATION")
+
         calibration = yaml.safe_load((
             PACKAGE / "config/camera_workspace_calibration.yaml").read_text(
                 encoding="utf-8"))
@@ -989,6 +1358,17 @@ class SafetyConfigurationTest(unittest.TestCase):
         self.assertTrue(all(
             value > 0.0 for value in
             calibration["human_workspace"]["positive_extent_m"]))
+        self.assertTrue(all(
+            value > 0.0 for value in
+            calibration["human_workspace"]
+            ["perspective_decoupled_negative_extent_m"]))
+        self.assertTrue(all(
+            value > 0.0 for value in
+            calibration["human_workspace"]
+            ["perspective_decoupled_positive_extent_m"]))
+        self.assertEqual(
+            calibration["human_workspace"]["perspective_decoupling_mode"],
+            "C_ZERO_REFERENCE_PLANE_PLUS_INDEPENDENT_DEPTH")
 
     def test_new_launch_files_default_real_robot_output_off(self):
         launches = [PACKAGE / "launch/shared_teleop_core.launch",
@@ -1015,7 +1395,7 @@ class SafetyConfigurationTest(unittest.TestCase):
             [0.0, 0.0, 0.0, 0.0, np.pi / 2.0, 0.0],
             atol=1.0e-12)
 
-    def test_live_human_launch_forces_udp_safe_simulation_entry(self):
+    def test_live_human_launch_defaults_to_collision_checked_non_egm_entry(self):
         launch = PACKAGE / "launch/live_human_gazebo_teleop.launch"
         root = ET.parse(str(launch)).getroot()
         includes = root.findall("include")
@@ -1026,11 +1406,16 @@ class SafetyConfigurationTest(unittest.TestCase):
             for entry in includes[0].findall("arg")
         }
         self.assertEqual(forwarded.get("input_source"), "udp")
-        self.assertEqual(forwarded.get("response_first"), "true")
+        arguments = {
+            entry.attrib["name"]: entry.attrib.get("default")
+            for entry in root.findall("arg")
+        }
+        self.assertNotIn("response_first", arguments)
+        self.assertNotIn("response_first", forwarded)
         text = launch.read_text(encoding="utf-8")
         self.assertNotIn("enable_robot", text)
 
-    def test_ground_live_launch_selects_new_profile_without_changing_legacy(self):
+    def test_ground_live_launch_keeps_axis_mapping_and_safe_servo_default(self):
         launch = PACKAGE / "launch/live_human_ground_gazebo_teleop.launch"
         root = ET.parse(str(launch)).getroot()
         include = root.find("include")
@@ -1039,7 +1424,7 @@ class SafetyConfigurationTest(unittest.TestCase):
             for entry in include.findall("arg")
         }
         self.assertEqual(
-            forwarded["mapping_profile"], "camera_ground_workspace")
+            forwarded["mapping_profile"], "$(arg mapping_profile)")
         self.assertIn("world_name", forwarded)
         self.assertEqual(
             forwarded["safe_initial_joint_positions"],
@@ -1049,6 +1434,10 @@ class SafetyConfigurationTest(unittest.TestCase):
             entry.attrib["name"]: entry.attrib.get("default")
             for entry in root.findall("arg")
         }
+        self.assertEqual(
+            arguments["mapping_profile"], "camera_ground_axis_decoupled")
+        self.assertNotIn("response_first", arguments)
+        self.assertNotIn("response_first", forwarded)
         tokens = arguments["safe_initial_joint_positions"].split()
         positions = {
             tokens[index + 1]: float(tokens[index + 2])
@@ -1068,14 +1457,209 @@ class SafetyConfigurationTest(unittest.TestCase):
         }
         self.assertEqual(arguments["mapping_profile"], "current_linear")
 
+    def test_public_teleop_launch_cannot_select_collision_disabled_servo(self):
+        public_launches = [
+            PACKAGE / "launch/shared_teleop_safe_demo.launch",
+            PACKAGE / "launch/live_human_gazebo_teleop.launch",
+            PACKAGE / "launch/live_human_ground_gazebo_teleop.launch",
+        ]
+        for launch in public_launches:
+            text = launch.read_text(encoding="utf-8")
+            self.assertNotIn("response_first", text, str(launch))
+            self.assertNotIn(
+                "abbarm_servo_velocity_realtime_gazebo.launch", text,
+                str(launch))
+
+        safe_root = ET.parse(str(public_launches[0])).getroot()
+        servo_includes = [
+            include.attrib["file"]
+            for include in safe_root.findall("include")
+            if "abbarm_servo" in include.attrib.get("file", "")
+        ]
+        self.assertEqual(servo_includes, [
+            "$(find abb120_moveit_config1)/launch/"
+            "abbarm_servo_velocity_safe.launch"
+        ])
+        guard = next(
+            node for node in safe_root.findall("node")
+            if node.attrib.get("type") ==
+            "teleop_safety_contract_guard.py")
+        self.assertEqual(guard.attrib.get("required"), "true")
+        strict_guard = next(
+            node for node in safe_root.findall("node")
+            if node.attrib.get("type") ==
+            "full_robot_self_collision_guard")
+        self.assertEqual(strict_guard.attrib.get("required"), "true")
+        gazebo_include = next(
+            include for include in safe_root.findall("include")
+            if "gazebo_velocity.launch" in include.attrib.get("file", ""))
+        forwarded = {
+            item.attrib["name"]: item.attrib.get("value")
+            for item in gazebo_include.findall("arg")
+        }
+        self.assertEqual(forwarded["enable_full_robot_safety"], "true")
+
     def test_safe_servo_checks_known_model_collisions(self):
         path = PACKAGE.parent / "abb120_moveit_config1/config/servo_abbarm_velocity_safe.yaml"
         config = yaml.safe_load(path.read_text(encoding="utf-8"))
         self.assertTrue(config["check_collisions"])
         self.assertLessEqual(config["incoming_command_timeout"], 0.10)
         self.assertEqual(config["ee_frame_name"], "tool0")
+        self.assertEqual(
+            config["command_out_topic"],
+            "/full_robot_self_collision_guard/raw_arm_velocity")
         self.assertGreaterEqual(config["self_collision_proximity_threshold"], 0.01)
         self.assertGreaterEqual(config["collision_check_rate"], 60.0)
+
+        strict_source = (
+            PACKAGE / "src/full_robot_self_collision_guard.cpp"
+        ).read_text(encoding="utf-8")
+        self.assertIn("predictedVelocityIsSafe", strict_source)
+        self.assertIn("PREDICTED_SELF_COLLISION", strict_source)
+        self.assertIn("maximum_prediction_step_rad_", strict_source)
+        self.assertIn("setHandMotionActive", strict_source)
+
+        contract_source = (
+            PACKAGE / "scripts/teleop_safety_contract_guard.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "if rospy.is_shutdown():\n                return\n"
+            "            missing, unsafe = self.audit()",
+            contract_source)
+
+    def test_dynamic_self_collision_acceptance_is_repeatable_and_ground_isolated(self):
+        launch = ET.parse(str(
+            PACKAGE / "launch/full_robot_self_collision_acceptance.launch"
+        )).getroot()
+        world_pose = next(
+            argument for argument in launch.findall("arg")
+            if argument.attrib.get("name") == "world_pose")
+        self.assertIn("-z 1.0", world_pose.attrib.get("default", ""))
+
+        validator = (
+            PACKAGE / "scripts/validate_dynamic_self_collision_stop.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("fresh_collision_status", validator)
+        self.assertIn("predicted_collision_block", validator)
+        self.assertIn("DYNAMIC_SELF_COLLISION_RECOVERY", validator)
+
+    def test_srdf_has_only_audited_adjacency_and_proximity_pairs(self):
+        path = PACKAGE.parent / "abb120_moveit_config1/config/handarm.srdf"
+        root = ET.parse(str(path)).getroot()
+        entries = root.findall("disable_collisions")
+        self.assertEqual(len(entries), 19)
+        self.assertEqual(
+            sum(entry.attrib.get("reason") == "Adjacent" for entry in entries),
+            15)
+        structural = {
+            frozenset((entry.attrib["link1"], entry.attrib["link2"]))
+            for entry in entries
+            if entry.attrib.get("reason") == "StructuralAdjacent"
+        }
+        expected_structural = {
+            frozenset(pair) for pair in (
+                ("link_5", "handbase_link"),
+                ("handbase_link", "f1link2"),
+                ("handbase_link", "f2link2"),
+                ("handbase_link", "f3link2"),
+            )
+        }
+        self.assertEqual(structural, expected_structural)
+        self.assertTrue(all(entry.attrib.get("reason") in (
+            "Adjacent", "StructuralAdjacent") for entry in entries))
+        disabled_pairs = {frozenset((
+            entry.attrib["link1"], entry.attrib["link2"]))
+            for entry in entries}
+        critical_pairs = [
+            ("base_link", "link_4"),
+            ("base_link", "link_5"),
+            ("base_link", "handbase_link"),
+            ("link_1", "link_4"),
+            ("link_2", "handbase_link"),
+            ("link_4", "link_6"),
+            ("link_4", "handbase_link"),
+            ("f1link1", "f2link1"),
+            ("f1link2", "f3link2"),
+        ]
+        for pair in critical_pairs:
+            self.assertNotIn(frozenset(pair), disabled_pairs, pair)
+
+        strict_source = (PACKAGE / "src/full_robot_self_collision_guard.cpp").read_text(
+            encoding="utf-8")
+        self.assertIn("getDisabledCollisionPairs", strict_source)
+        self.assertIn('pair.reason_ == "Adjacent"', strict_source)
+        self.assertIn('pair.reason_ == "StructuralAdjacent"', strict_source)
+        self.assertIn("areAdjacentCollisionBodies", strict_source)
+        self.assertIn("unsafe SRDF collision exemption is forbidden", strict_source)
+        self.assertIn("strict_acm_->setEntry", strict_source)
+
+    def test_handbase_uses_validated_cutout_collision_mesh(self):
+        urdf_paths = [
+            PACKAGE.parent /
+            "abb120_moveit_config1/config/gazebo_handarm_velocity.urdf",
+            PACKAGE.parent / "abb120_moveit_config1/config/gazebo_handarm.urdf",
+            PACKAGE.parent / "handarmtest1/urdf/arm.urdf",
+        ]
+        expected = (
+            "package://handarmtest1/meshes/myhand/"
+            "handbase_link_collision_8mm.STL")
+        for path in urdf_paths:
+            root = ET.parse(str(path)).getroot()
+            handbase = next(link for link in root.findall("link")
+                            if link.attrib["name"] == "handbase_link")
+            collision_meshes = [
+                mesh.attrib["filename"]
+                for collision in handbase.findall("collision")
+                for mesh in collision.findall("geometry/mesh")
+            ]
+            self.assertEqual(collision_meshes, [expected], str(path))
+            expected_self_collide = {
+                "base_link", "link_1", "link_2", "link_3", "link_4",
+                "link_5", "link_6", "handbase_link", "f1link1",
+                "f1link2", "f1link3", "f2link1", "f2link2",
+                "f3link1", "f3link2", "f3link3",
+            }
+            self_collide = {
+                gazebo.attrib.get("reference")
+                for gazebo in root.findall("gazebo")
+                if gazebo.findtext("selfCollide", "").strip().lower()
+                in ("true", "1")
+            }
+            self.assertTrue(
+                expected_self_collide.issubset(self_collide), str(path))
+        mesh_path = (PACKAGE.parent /
+                     "handarmtest1/meshes/myhand/"
+                     "handbase_link_collision_8mm.STL")
+        self.assertTrue(mesh_path.is_file())
+        self.assertLess(mesh_path.stat().st_size, 500000)
+
+    def test_safe_hand_controller_cannot_bypass_collision_proxy(self):
+        root = PACKAGE.parent
+        config = yaml.safe_load((
+            root / "abb120_moveit_config1/config/ros_controllers_velocity_safe.yaml"
+        ).read_text(encoding="utf-8"))
+        self.assertIn("controller_gazebo_hand_internal", config)
+        self.assertNotIn("controller_gazebo_hand", config)
+        launch = ET.parse(str(
+            root / "abb120_moveit_config1/launch/ros_controllers_velocity.launch"
+        )).getroot()
+        proxy = next(node for node in launch.findall("node")
+                     if node.attrib.get("type") ==
+                     "safe_hand_trajectory_proxy.py")
+        self.assertEqual(proxy.attrib.get("required"), "true")
+        self.assertEqual(
+            proxy.find("param[@name='maximum_collision_step_rad']").attrib["value"],
+            "0.02")
+
+    def test_hybrid_position_servo_keeps_all_moveit_safety_checks(self):
+        path = (PACKAGE.parent /
+                "abb120_moveit_config1/config/servo_abbarm_egm_position_gazebo.yaml")
+        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+        self.assertTrue(config["check_collisions"])
+        self.assertGreaterEqual(config["collision_check_rate"], 60.0)
+        self.assertLessEqual(config["lower_singularity_threshold"], 17.0)
+        self.assertLessEqual(config["hard_stop_singularity_threshold"], 30.0)
+        self.assertGreaterEqual(config["joint_limit_margin"], 0.08)
 
     def test_realtime_gazebo_servo_is_unfiltered_and_collision_unscaled(self):
         path = (PACKAGE.parent /

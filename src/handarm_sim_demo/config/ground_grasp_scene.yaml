@@ -7,14 +7,16 @@ objects:
   # Logical support surface used by grasp-clearance calculations. Gazebo owns
   # the standard ground_plane model; this entry is not synchronized as a box.
   ground:
-    name: ground_plane
+    name: teleop_ground_safety
     type: box
-    pose: {position: [0.0, 0.0, -0.01], orientation_rpy: [0.0, 0.0, 0.0]}
-    size: [4.0, 4.0, 0.02]
+    # Keep a 3 mm numerical gap below z=0 so the fixed base is not born in
+    # collision while every moving arm/hand link is still protected.
+    pose: {position: [0.0, 0.0, -0.011], orientation_rpy: [0.0, 0.0, 0.0]}
+    size: [4.0, 4.0, 0.016]
     mass: 0.0
     static: true
     collision_enabled: true
-    planning_scene_enabled: false
+    planning_scene_enabled: true
     scene_manager_enabled: false
   target:
     name: target_object
@@ -46,6 +48,7 @@ objects:
     planning_scene_enabled: true
 
 scenario_object_sets:
-  no_obstacle: [target, left_object, right_object]
-  target_only: [target]
-  ground_objects: [target, left_object, right_object]
+  no_obstacle: [ground, target, left_object, right_object]
+  target_only: [ground, target]
+  ground_only: [ground]
+  ground_objects: [ground, target, left_object, right_object]

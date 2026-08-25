@@ -19,12 +19,15 @@ FIELDS = [
     "timestamp_ros", "raw_hand_stamp", "raw_hand_source_stamp", "raw_hand_frame", "raw_hand_valid",
     "raw_hand_x", "raw_hand_y", "raw_hand_z", "raw_hand_qx", "raw_hand_qy",
     "raw_hand_qz", "raw_hand_qw", "relative_hand_x", "relative_hand_y",
-    "relative_hand_z", "relative_hand_quaternion_xyzw", "raw_vx", "raw_vy",
+    "relative_hand_z", "control_relative_hand_x",
+    "control_relative_hand_y", "control_relative_hand_z",
+    "relative_hand_quaternion_xyzw", "raw_vx", "raw_vy",
     "raw_vz", "raw_wx", "raw_wy", "raw_wz", "processed_vx", "processed_vy",
     "processed_vz", "processed_wx", "processed_wy", "processed_wz", "confidence_x",
     "confidence_y", "confidence_z", "confidence_roll", "confidence_pitch",
     "confidence_yaw", "assist_strength", "assist_candidates_json",
     "selected_correction", "selected_correction_quaternion_xyzw", "actual_ee_pose",
+    "target_position", "workspace_mapping_json",
     "input_output_latency_s", "control_loop_hz", "trend_processing_ms",
     "assist_processing_ms", "output_processing_ms", "gesture", "gesture_confidence",
     "gesture_status", "timeout_reason", "limit_reasons", "jump_reason",
@@ -144,6 +147,16 @@ class TeleopCsvLogger:
         relative = trend.get("relative_position", [None]*3)
         for field, value in zip(("relative_hand_x", "relative_hand_y", "relative_hand_z"), relative):
             row[field] = value
+        control_relative = trend.get(
+            "control_relative_position", relative)
+        for field, value in zip((
+                "control_relative_hand_x", "control_relative_hand_y",
+                "control_relative_hand_z"), control_relative):
+            row[field] = value
+        row["target_position"] = self.json_value(
+            trend.get("target_position"))
+        row["workspace_mapping_json"] = self.json_value(
+            trend.get("workspace_mapping", {}))
         raw_velocity = trend.get("raw_velocity", [None]*6)
         for field, value in zip(("raw_vx","raw_vy","raw_vz","raw_wx","raw_wy","raw_wz"), raw_velocity):
             row[field] = value

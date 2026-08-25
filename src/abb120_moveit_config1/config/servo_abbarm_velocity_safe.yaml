@@ -6,7 +6,10 @@ robot_link_command_frame: base_link
 command_in_type: speed_units
 cartesian_command_in_topic: /servo_server/delta_twist_cmds
 joint_command_in_topic: /servo_server/delta_joint_cmds
-command_out_topic: /abbarm_velocity_controller/command
+# Servo never writes the hardware/simulation controller directly.  The strict
+# full-robot guard projects each velocity command through MoveIt's complete
+# arm+hand model and is the sole publisher allowed onto the controller topic.
+command_out_topic: /full_robot_self_collision_guard/raw_arm_velocity
 command_out_type: std_msgs/Float64MultiArray
 publish_joint_positions: false
 publish_joint_velocities: true

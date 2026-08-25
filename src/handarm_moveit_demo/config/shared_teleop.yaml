@@ -81,18 +81,30 @@ mapping_profiles:
       robot_orientation_negative_extent_deg: [94.7, 76.2, 179.0]
       robot_orientation_positive_extent_deg: [94.7, 30.8, 179.0]
       reachability_projection:
-        # The former full-pose ray projection scaled position and orientation
-        # by the same IK fraction (0.195 in the observed failure), preventing
-        # both side objects from being reached.  Servo/URDF joint bounds remain
-        # active; this switch restores the old behavior immediately if needed.
+        # The optional EGM stable profile keeps the independently mapped MANO
+        # wrist orientation and shortens only the C-zero->target translation
+        # ray when that particular 6-D pose has no IK solution.  The global
+        # default stays off so the established velocity profile is untouched.
         enabled: false
+        mode: INDEPENDENT_TRANSLATION_FIXED_ORIENTATION
         ik_service: /compute_ik
         ik_group: abbarm
         ik_timeout_s: 0.012
         bisection_iterations: 6
         boundary_safety_factor: 0.96
-        cache_direction_cosine: 0.99
+        cache_direction_cosine: 0.995
+        cache_orientation_tolerance_deg: 2.0
         cache_size: 96
+        # Adjacent IK queries near the workspace edge can return unrelated
+        # feasible radii.  Never let that numerical discontinuity reverse a
+        # continuous raw hand command.  A real hand reversal remains allowed
+        # because the raw mapped target reverses at the same time.
+        continuity_guard:
+          enabled: true
+          minimum_raw_step_m: 0.0005
+          reverse_tolerance_m: 0.0002
+          stationary_candidate_tolerance_m: 0.0015
+          orientation_tolerance_deg: 2.0
     robot_workspace:
       model: FRONT_GROUND_CLIPPED_ELLIPSOID
       reference_link: tool0
@@ -114,6 +126,66 @@ mapping_profiles:
       utilization: 0.95
       boundary_margin_m: 0.010
       soft_margin_m: 0.050
+
+  # New reversible profile for live EGM teleoperation.  D455 metric XYZ is
+  # retained as the measured pose, but translation intent is represented as
+  # C-zero image-plane motion plus independent depth.  Each intent axis maps
+  # independently; workspace and IK gates may shorten/stop a request but may
+  # never rotate it into an unrequested Cartesian direction.
+  camera_ground_axis_decoupled:
+    mode: CAMERA_RANGE_TO_GROUND_SECTOR_AXIS_DECOUPLED
+    status: SIMULATION_AXIS_DECOUPLED_REQUIRES_LIVE_ACCEPTANCE
+    translation_matrix: [[0.0, 0.0, -1.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]]
+    rotation_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    rotation_gain: [1.0, 1.0, 1.0]
+    response_exponent: 1.0
+    perspective_decoupling:
+      enabled: true
+      mode: C_ZERO_REFERENCE_PLANE_PLUS_INDEPENDENT_DEPTH
+      minimum_depth_m: 0.12
+    axis_workspace_mapping:
+      enabled: true
+      target_projection: PREVIOUS_FEASIBLE_TARGET_LINE_CLIP
+      workspace_projection_safety_factor: 0.995
+      # Returning close to the captured C pose is an absolute command.  These
+      # small capture bands remove sensor noise without filtering deliberate
+      # motion and, critically, clear any clipped boundary residual.
+      translation_zero_snap_fraction: 0.02
+      orientation_zero_snap_deg: 2.0
+      boundary_policy: DIRECTION_PRESERVING_STOP
+    normalized_pose_mapping:
+      enabled: true
+      combine_translation_rotation: false
+      robot_orientation_negative_extent_deg: [94.7, 76.2, 179.0]
+      robot_orientation_positive_extent_deg: [94.7, 30.8, 179.0]
+      reachability_projection:
+        enabled: false
+        mode: DIRECTION_PRESERVING_INCREMENT_FIXED_ORIENTATION
+        ik_service: /compute_ik
+        ik_group: abbarm
+        ik_timeout_s: 0.012
+        bisection_iterations: 6
+        boundary_safety_factor: 0.98
+        cache_direction_cosine: 0.995
+        cache_orientation_tolerance_deg: 2.0
+        cache_size: 96
+        continuity_guard:
+          enabled: false
+          minimum_raw_step_m: 0.0005
+          reverse_tolerance_m: 0.0002
+          stationary_candidate_tolerance_m: 0.0015
+          orientation_tolerance_deg: 2.0
+    robot_workspace:
+      model: FRONT_GROUND_CLIPPED_ELLIPSOID
+      reference_link: tool0
+      center_base_m: [0.00001, 0.00033, 0.37982]
+      radii_m: [0.81900, 0.81940, 0.73123]
+      minimum_forward_x_m: 0.10
+      minimum_tool_z_m: 0.100
+      utilization: 0.95
+      boundary_margin_m: 0.010
+      soft_margin_m: 0.050
+      boundary_policy: DIRECTION_PRESERVING_STOP
 
 # A visually pure wrist roll from monocular MANO often carries substantial
 # pitch/yaw components.  Near a side grasp those coupled components drive the
@@ -279,9 +351,9 @@ control:
   maximum_relative_rotation_deg: 179.0
   # A full-pose IK query is not a valid per-frame gate for local Cartesian
   # Servo tracking: real HaMeR orientation noise made it reject every target
-  # as unreachable and forced a permanent zero command.  The live response
-  # profile also bypasses collision/singularity proximity scaling; the safe
-  # regression profile can still be selected with response_first:=false.
+  # as unreachable and forced a permanent zero command.  Collision,
+  # singularity and joint-limit protection remain mandatory inside MoveIt
+  # Servo for every public teleoperation launch.
   require_collision_free_target_ik: false
   target_ik_service: /compute_ik
   target_ik_group: abbarm

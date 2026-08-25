@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<launch>
+  <!--
+    Isolated diagnostic plant for dynamic self-collision acceptance.
+
+    This launch deliberately omits the human teleoperation adapter and the
+    public single-writer contract so that the validator below can be the sole
+    JointJog writer.  It still uses the exact public collision-checked Servo
+    profile, strict full-robot guard, safe hand proxy and Gazebo self-collision
+    physics.  It is not a second teleoperation entry point.
+  -->
+  <arg name="gazebo_gui" default="false" />
+  <arg name="paused" default="false" />
+  <arg name="world_name" default="worlds/empty.world" />
+  <!-- Keep this isolated self-collision test above the world floor.  The
+       production robot pose is unchanged; this only prevents an unrelated
+       ground contact from invalidating the internal-collision acceptance. -->
+  <arg name="world_pose" default="-x 0 -y 0 -z 1.0 -R 0 -P 0 -Y 0" />
+  <arg name="initial_joint_positions"
+       default=" -J f1j1 0.18 -J f3j1 0.18 -J f1j2 0.20 -J f1j3 0.20 -J f2j1 0.20 -J f2j2 0.20 -J f3j2 0.20 -J f3j3 0.20 -J joint_1 0.0 -J joint_2 0.0 -J joint_3 0.0 -J joint_4 0.0 -J joint_5 1.5707963267948966 -J joint_6 0.0" />
+
+  <include file="$(find abb120_moveit_config1)/launch/gazebo_velocity.launch">
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)" />
+    <arg name="paused" value="$(arg paused)" />
+    <arg name="world_name" value="$(arg world_name)" />
+    <arg name="world_pose" value="$(arg world_pose)" />
+    <arg name="initial_joint_positions" value="$(arg initial_joint_positions)" />
+    <arg name="enable_full_robot_safety" value="true" />
+  </include>
+  <include file="$(find abb120_moveit_config1)/launch/demo.launch">
+    <arg name="load_robot_description" value="false" />
+    <arg name="moveit_controller_manager" value="ros_control" />
+    <arg name="use_rviz" value="false" />
+  </include>
+  <include file="$(find abb120_moveit_config1)/launch/abbarm_servo_velocity_safe.launch" />
+
+  <node name="full_robot_self_collision_guard"
+        pkg="handarm_moveit_demo"
+        type="full_robot_self_collision_guard"
+        output="screen"
+        required="true">
+    <param name="state_timeout_s" value="0.25" />
+    <param name="status_rate_hz" value="50.0" />
+    <rosparam param="required_joint_names">[joint_1, joint_2, joint_3, joint_4, joint_5, joint_6, f1j1, f1j2, f2j1, f3j2]</rosparam>
+  </node>
+</launch>
