@@ -85,6 +85,8 @@ export REALSENSE_SITE_PACKAGES=/path/to/site-packages
 
 GitHub 新手的日常命令、安全规则和首次上传步骤见 [GitHub 新手手册](docs/GITHUB_BEGINNER_GUIDE_ZH.md)。
 
+历史冻结包已经整理为同一仓库中的版本标签和 Release。版本对应关系、重建口径以及把旧版展开为独立工作目录的方法见 [冻结检查点版本历史](docs/VERSION_HISTORY_ZH.md)。
+
 ## 许可证
 
 本项目自有代码按各 ROS 包声明的许可证使用。`abb_resources` 和 `roboticsgroup_upatras_gazebo_plugins` 是第三方组件，以各自目录中的许可证和版权声明为准；HaMeR 相关第三方说明见 `perception_hamer/THIRD_PARTY_NOTICES.md`。
