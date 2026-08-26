@@ -152,6 +152,17 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
+def _write_json_marker(path: Path, payload: Dict[str, Any]) -> None:
+    """Atomically publish a small persistent inter-process event marker."""
+
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(
+        json.dumps(_json_safe(payload), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(str(temporary), str(path))
+
+
 def _hand_preflight_timeout_diagnostics(
     last_reason: str,
     attempts: int,
@@ -478,6 +489,7 @@ class AsyncMediaPipeDetection:
         hand_presence_timeout_s: float = 0.25,
         confirmation_frames: int = 2,
         negative_grace_frames: int = 1,
+        negative_grace_s: float = 0.08,
     ) -> None:
         self._sidecar = sidecar
         self._condition = threading.Condition()
@@ -494,7 +506,7 @@ class AsyncMediaPipeDetection:
             minimum_iou=0.25,
             timeout_s=self._presence_timeout_s,
             negative_grace_frames=int(negative_grace_frames),
-            negative_grace_s=min(0.08, 0.5 * self._presence_timeout_s),
+            negative_grace_s=float(negative_grace_s),
         )
         self._active_hand_selector = AutomaticActiveHandSelector(
             switch_frames=3
@@ -1010,7 +1022,10 @@ def _display_worker(
         ignored_non_active_hand_count = 0
         if async_detector is not None:
             presence = async_detector.presence_snapshot()
-            hand_presence_valid = bool(presence["valid"])
+            hand_presence_valid = bool(
+                presence["valid"]
+                and int(presence.get("consecutive_negative_results", 0)) == 0
+            )
             active_hand_is_right = presence.get("active_hand_is_right")
             active_hand_generation = int(
                 presence.get("active_hand_generation", 0)
@@ -1089,16 +1104,18 @@ def _display_worker(
             and hand_presence_valid
             and roi_matches_detected_hand
         )
-        if not pose_matches_visible_hand:
-            teleop_control_gate.invalidate(
-                "HAND_TRACKING_INVALID_REQUIRES_NEW_C"
-            )
-        else:
+        if pose_matches_visible_hand:
             teleop_control_gate.observe_identity(
                 int(overlay_presence_generation),
                 int(active_hand_generation),
                 bool(result.is_right),
             )
+        # Display freshness is not a control measurement.  The main inference
+        # loop independently validates MediaPipe presence, ROI alignment,
+        # identity and orientation before every UDP packet.  Invalidating the
+        # shared C gate here used to create a race: a harmless stale display
+        # overlay could disarm a valid control packet between inference and
+        # serialization.  Keep this thread read-only except for an explicit C.
         if display.pop_confirm_request():
             # C is the only live-teleoperation enable/re-zero action. Lock
             # first so an invalid visible pose cannot leave an older robot
@@ -1180,10 +1197,19 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--hand-miss-grace-frames",
         type=int,
-        default=1,
+        default=8,
         help=(
-            "isolated MediaPipe misses tolerated during fast motion; default "
-            "1, the next miss hides MANO"
+            "maximum consecutive MediaPipe misses treated as a suspended "
+            "same-hand interval; robot output is zero during the suspension"
+        ),
+    )
+    parser.add_argument(
+        "--hand-miss-grace-s",
+        type=float,
+        default=0.35,
+        help=(
+            "maximum same-hand suspension duration before presence identity "
+            "is lost and a new C is required"
         ),
     )
     parser.add_argument(
@@ -1313,6 +1339,22 @@ def _parse_args() -> argparse.Namespace:
                         help="0 means run until q/ESC outside experiment mode")
     parser.add_argument("--countdown-s", type=float, default=1.0)
     parser.add_argument("--experiment", choices=EXPERIMENTS)
+    parser.add_argument(
+        "--experiment-jsonl-only",
+        action="store_true",
+        help=(
+            "record exact MANO/pose/timing JSONL without synchronous RGB, "
+            "depth PNG, or overlay-video writes"
+        ),
+    )
+    parser.add_argument(
+        "--record-after-control-enabled",
+        action="store_true",
+        help=(
+            "with --experiment, begin evidence rows only on the first valid "
+            "camera C reference and continue through temporary tracking loss"
+        ),
+    )
     parser.add_argument("--output-root", default=str(
         REPOSITORY_ROOT / "datasets/development_usb2/hamer_palm_stability"))
     parser.add_argument("--checkpoint", default=str(
@@ -1366,8 +1408,10 @@ def main() -> int:
         )
     if not 1.0 <= args.forearm_rate_hz <= 15.0:
         raise SystemExit("--forearm-rate-hz must be in [1, 15]")
-    if not 0 <= args.hand_miss_grace_frames <= 2:
-        raise SystemExit("--hand-miss-grace-frames must be 0, 1, or 2")
+    if not 0 <= args.hand_miss_grace_frames <= 30:
+        raise SystemExit("--hand-miss-grace-frames must be in [0, 30]")
+    if not 0.0 <= args.hand_miss_grace_s <= 1.0:
+        raise SystemExit("--hand-miss-grace-s must be in [0, 1]")
     if args.teleop_udp_host and args.no_display:
         raise SystemExit(
             "live teleoperation requires the camera window because C is the "
@@ -1382,6 +1426,14 @@ def main() -> int:
         sys.path.append(str(sdk_path))
     if args.experiment and args.duration_s <= 0.0:
         args.duration_s = 25.0
+    if args.experiment_jsonl_only and not args.experiment:
+        raise SystemExit("--experiment-jsonl-only requires --experiment")
+    if args.record_after_control_enabled and (
+        not args.experiment or not args.teleop_udp_host
+    ):
+        raise SystemExit(
+            "--record-after-control-enabled requires --experiment and live UDP"
+        )
     is_right = not args.left_hand
     runner = HamerCropInference(
         args.checkpoint,
@@ -1402,6 +1454,13 @@ def main() -> int:
     output_dir: Optional[Path] = None
     records_file = None
     video = None
+    full_experiment_recording = False
+    experiment_recording_active = not args.record_after_control_enabled
+    experiment_recording_started_wall_ns: Optional[int] = None
+    experiment_reference_token = ""
+    latest_reference_token = ""
+    pre_c_finger_samples = []
+    measurement_ready_announced = False
     stop = threading.Event()
     worker: Optional[threading.Thread] = None
     display_worker: Optional[threading.Thread] = None
@@ -1533,6 +1592,7 @@ def main() -> int:
                 hand_presence_timeout_s=args.hand_presence_timeout_s,
                 confirmation_frames=2,
                 negative_grace_frames=args.hand_miss_grace_frames,
+                negative_grace_s=args.hand_miss_grace_s,
             )
             preflight_gate = ConsecutiveHandDetectionGate(
                 required_frames=max(2, int(args.hand_confirm_frames)),
@@ -1715,18 +1775,20 @@ def main() -> int:
             suffix = time.strftime("%Y%m%dT%H%M%S")
             output_dir = output_root / f"{args.experiment}_{suffix}"
             output_dir.mkdir(parents=True, exist_ok=False)
-            (output_dir / "rgb").mkdir()
-            (output_dir / "aligned_depth").mkdir()
             records_file = (output_dir / "frames.jsonl").open("x", encoding="utf-8")
-            video = cv2.VideoWriter(
-                str(output_dir / "axes_overlay.mp4"),
-                cv2.VideoWriter_fourcc(*"mp4v"),
-                20.0,
-                (1280, 480) if args.mesh_renderer == "teleoperation-core"
-                else (640, 480),
-            )
-            if not video.isOpened():
-                raise RuntimeError("failed to open OpenCV overlay video")
+            full_experiment_recording = not args.experiment_jsonl_only
+            if full_experiment_recording:
+                (output_dir / "rgb").mkdir()
+                (output_dir / "aligned_depth").mkdir()
+                video = cv2.VideoWriter(
+                    str(output_dir / "axes_overlay.mp4"),
+                    cv2.VideoWriter_fourcc(*"mp4v"),
+                    20.0,
+                    (1280, 480) if args.mesh_renderer == "teleoperation-core"
+                    else (640, 480),
+                )
+                if not video.isOpened():
+                    raise RuntimeError("failed to open OpenCV overlay video")
 
         last_version = 0
         presence_state: Dict[str, Any] = {
@@ -1814,6 +1876,12 @@ def main() -> int:
                     "confirmed_detection": None,
                 }
             presence_valid = bool(presence_state["valid"])
+            presence_measurement_current = bool(
+                presence_valid
+                and int(
+                    presence_state.get("consecutive_negative_results", 0)
+                ) == 0
+            )
             presence_generation = int(presence_state["generation"])
             active_hand_generation = int(
                 presence_state.get("active_hand_generation", 0)
@@ -1843,6 +1911,14 @@ def main() -> int:
                 # survive independent evidence that the real hand disappeared.
                 if last_presence_valid or not packet.roi.lost:
                     pending.request_reset()
+            elif not presence_measurement_current:
+                # A short MediaPipe miss suspends motion without destroying
+                # the operator's C reference.  No stale KLT/MANO measurement
+                # is published while detector evidence is uncertain.
+                failure_reason = (
+                    "hand_presence_temporarily_unconfirmed:"
+                    + str(presence_state["reason"])
+                )
             elif presence_interval_changed:
                 # Never resume from the old background/hand track.  A new
                 # continuous presence interval always starts from MediaPipe's
@@ -1926,12 +2002,24 @@ def main() -> int:
                         if async_detector is None
                         else async_detector.presence_snapshot()
                     )
+                    post_measurement_current = bool(
+                        post_presence is None
+                        or (
+                            post_presence["valid"]
+                            and int(
+                                post_presence.get(
+                                    "consecutive_negative_results", 0
+                                )
+                            ) == 0
+                        )
+                    )
                     if (
                         post_presence is not None
                         and (
                             not post_presence["valid"]
                             or int(post_presence["generation"])
                             != presence_generation
+                            or not post_measurement_current
                         )
                     ):
                         # HaMeR is slower than MediaPipe.  A disappearance can
@@ -1940,22 +2028,36 @@ def main() -> int:
                         # UDP rather than leaking one final ghost-hand packet.
                         presence_state = post_presence
                         presence_valid = bool(post_presence["valid"])
-                        presence_generation = int(post_presence["generation"])
+                        post_presence_generation = int(
+                            post_presence["generation"]
+                        )
+                        post_generation_changed = bool(
+                            post_presence_generation != presence_generation
+                        )
+                        presence_generation = post_presence_generation
                         active_hand_generation = int(
                             post_presence.get("active_hand_generation", 0)
                         )
-                        presence_interval_changed = True
-                        forearm_context_generation += 1
-                        previous_control_depth_m = None
-                        previous_control_depth_monotonic = None
-                        previous_quality_bbox = None
+                        presence_interval_changed = bool(
+                            presence_interval_changed
+                            or post_generation_changed
+                        )
                         confirmed_detection = post_presence.get(
                             "confirmed_detection"
                         )
                         if not presence_valid:
+                            forearm_context_generation += 1
+                            previous_control_depth_m = None
+                            previous_control_depth_monotonic = None
+                            previous_quality_bbox = None
                             pending.request_reset()
                             failure_reason = "no_real_hand:" + str(
                                 post_presence["reason"]
+                            )
+                        elif not post_measurement_current:
+                            failure_reason = (
+                                "hand_presence_temporarily_unconfirmed:"
+                                + str(post_presence["reason"])
                             )
                         elif confirmed_detection is not None:
                             detected_is_right = bool(
@@ -2180,7 +2282,7 @@ def main() -> int:
                 except Exception as exc:
                     failure_reason = f"{type(exc).__name__}:{exc}"
             if (
-                output_dir is not None
+                full_experiment_recording
                 and args.mesh_renderer == "teleoperation-core"
                 and result is not None
                 and mano_faces is not None
@@ -2329,6 +2431,70 @@ def main() -> int:
                     pose_delta = pose_display.update_from_packet(
                         pose_packet_payload, presence_generation
                     )
+                    if (
+                        not teleop_control_gate.enabled
+                        and not measurement_ready_announced
+                    ):
+                        fingers = pose_packet_payload.get(
+                            "finger_observation", {}
+                        )
+                        flexion = np.asarray(
+                            fingers.get("flexion", []), dtype=np.float64
+                        )
+                        open_finger_sample = bool(
+                            fingers.get("valid") is True
+                            and flexion.shape == (5,)
+                            and np.all(np.isfinite(flexion))
+                            and np.all(flexion <= 0.40)
+                            and float(fingers.get("confidence", 0.0)) >= 0.55
+                        )
+                        if open_finger_sample:
+                            pre_c_finger_samples.append(flexion.copy())
+                            pre_c_finger_samples = pre_c_finger_samples[-4:]
+                        else:
+                            pre_c_finger_samples = []
+                        if (
+                            len(pre_c_finger_samples) == 4
+                            and float(
+                                np.max(
+                                    np.ptp(
+                                        np.asarray(pre_c_finger_samples),
+                                        axis=0,
+                                    )
+                                )
+                            ) <= 0.08
+                        ):
+                            measurement_ready_announced = True
+                            readiness = {
+                                "event": "LIVE_MEASUREMENT_READY_FOR_C",
+                                "wall_time_ns": time.time_ns(),
+                                "source_timestamp": timestamp_s,
+                                "capture_sequence": packet.capture_sequence,
+                                "presence_generation": presence_generation,
+                                "active_hand_generation": active_hand_generation,
+                                "hand_is_right": bool(result.is_right),
+                                "finger_flexion_median": np.median(
+                                    np.asarray(pre_c_finger_samples), axis=0
+                                ).tolist(),
+                                "finger_flexion_peak_to_peak": np.ptp(
+                                    np.asarray(pre_c_finger_samples), axis=0
+                                ).tolist(),
+                                "finger_tracking_confidence": float(
+                                    fingers.get("confidence", 0.0)
+                                ),
+                            }
+                            if output_dir is not None:
+                                _write_json_marker(
+                                    output_dir / "measurement_ready.json",
+                                    readiness,
+                                )
+                            print(
+                                "LIVE_MEASUREMENT_READY_FOR_C "
+                                + json.dumps(
+                                    readiness, separators=(",", ":")
+                                ),
+                                flush=True,
+                            )
                 except Exception as exc:
                     pose_failure_reason = "metric_6d_pose:{}:{}".format(
                         type(exc).__name__, exc
@@ -2346,7 +2512,7 @@ def main() -> int:
             elapsed = max(1e-9, time.monotonic() - started_monotonic)
             hamer_fps = valid_count / elapsed
             overlay = None
-            if output_dir is not None:
+            if full_experiment_recording:
                 # The teleoperation-core pair has already been rendered once
                 # on the exact inference frame; this only adds the HUD/video.
                 overlay = make_overlay(
@@ -2525,6 +2691,56 @@ def main() -> int:
                             teleop_packet.get("invalid_reason", "")
                         ),
                     }
+                    current_reference_token = str(
+                        teleop_packet.get("control_reference_token", "")
+                    )
+                    reference_is_accepted = bool(
+                        teleop_packet.get("valid", False)
+                        and teleop_packet.get("control_enabled", False)
+                        and current_reference_token
+                    )
+                    if (
+                        output_dir is not None
+                        and reference_is_accepted
+                        and current_reference_token != latest_reference_token
+                    ):
+                        reference_wall_ns = time.time_ns()
+                        reference_event = {
+                            "event": "CAMERA_C_REFERENCE_ACCEPTED",
+                            "wall_time_ns": reference_wall_ns,
+                            "source_timestamp": timestamp_s,
+                            "capture_sequence": packet.capture_sequence,
+                            "control_reference_epoch": int(
+                                teleop_packet.get("control_reference_epoch", 0)
+                            ),
+                            "presence_generation": presence_generation,
+                            "active_hand_generation": active_hand_generation,
+                            "hand_is_right": identity_hand_is_right,
+                            "control_reference_token": current_reference_token,
+                        }
+                        latest_reference_token = current_reference_token
+                        _write_json_marker(
+                            output_dir / "latest_control_reference.json",
+                            reference_event,
+                        )
+                        with (output_dir / "control_reference_events.jsonl").open(
+                            "a", encoding="utf-8"
+                        ) as reference_events_file:
+                            reference_events_file.write(
+                                json.dumps(
+                                    _json_safe(reference_event),
+                                    separators=(",", ":"),
+                                )
+                                + "\n"
+                            )
+                        if not experiment_recording_active:
+                            experiment_recording_active = True
+                            experiment_recording_started_wall_ns = reference_wall_ns
+                            experiment_reference_token = current_reference_token
+                            _write_json_marker(
+                                output_dir / "recording_started.json",
+                                reference_event,
+                            )
                 except Exception as exc:
                     teleop_skipped_since_report += 1
                     warning_now = time.monotonic()
@@ -2538,21 +2754,25 @@ def main() -> int:
                         )
                         teleop_skipped_since_report = 0
                         teleop_last_warning_at = warning_now
-            if output_dir is not None:
-                rgb_name = f"rgb/{processed - 1:06d}.png"
-                depth_name = f"aligned_depth/{processed - 1:06d}.png"
-                if not cv2.imwrite(str(output_dir / rgb_name), cv2.cvtColor(
-                    packet.frame.rgb, cv2.COLOR_RGB2BGR)):
-                    raise RuntimeError("failed to write RGB frame")
-                if not cv2.imwrite(str(output_dir / depth_name), packet.frame.aligned_depth_raw):
-                    raise RuntimeError("failed to write aligned depth frame")
-                record["rgb_path"] = rgb_name
-                record["aligned_depth_path"] = depth_name
+            if output_dir is not None and experiment_recording_active:
+                if full_experiment_recording:
+                    rgb_name = f"rgb/{processed - 1:06d}.png"
+                    depth_name = f"aligned_depth/{processed - 1:06d}.png"
+                    if not cv2.imwrite(str(output_dir / rgb_name), cv2.cvtColor(
+                        packet.frame.rgb, cv2.COLOR_RGB2BGR)):
+                        raise RuntimeError("failed to write RGB frame")
+                    if not cv2.imwrite(
+                        str(output_dir / depth_name), packet.frame.aligned_depth_raw
+                    ):
+                        raise RuntimeError("failed to write aligned depth frame")
+                    record["rgb_path"] = rgb_name
+                    record["aligned_depth_path"] = depth_name
                 records_file.write(json.dumps(_json_safe(record), separators=(",", ":")) + "\n")
                 records_file.flush()
-                if overlay is None:
-                    raise RuntimeError("experiment overlay was not rendered")
-                video.write(overlay)
+                if full_experiment_recording:
+                    if overlay is None:
+                        raise RuntimeError("experiment overlay was not rendered")
+                    video.write(overlay)
                 session_records.append(record)
             session_timing_records.append({
                 **dict(record["timing"]),
@@ -2564,6 +2784,22 @@ def main() -> int:
             if (display is not None and display.pop_reinitialize_request()
                     and last_packet is not None):
                 pending.set(_select_bbox(last_packet.frame.rgb), is_right)
+        if output_dir is not None and experiment_recording_active:
+            _write_json_marker(
+                output_dir / "recording_stopped.json",
+                {
+                    "event": (
+                        "CAMERA_Q_OR_ESCAPE"
+                        if display is not None and display.stop_requested
+                        else "CAMERA_LOOP_STOPPED"
+                    ),
+                    "wall_time_ns": time.time_ns(),
+                    "processed_frames": processed,
+                    "recorded_frames": len(session_records),
+                    "first_control_reference_token": experiment_reference_token,
+                    "latest_control_reference_token": latest_reference_token,
+                },
+            )
         elapsed = max(1e-9, time.monotonic() - started_monotonic)
         inference_times = [
             1000.0 * item["model_inference_s"]
@@ -2638,10 +2874,26 @@ def main() -> int:
                 else forearm_estimator.statistics
             ),
             "live_mesh_render_execution": (
-                "display_worker_off_control_path"
-                if output_dir is None
-                else "synchronous_exact_frame_experiment_recording"
+                "synchronous_exact_frame_experiment_recording"
+                if full_experiment_recording
+                else "display_worker_off_control_path"
             ),
+            "experiment_jsonl_only": bool(args.experiment_jsonl_only),
+            "record_after_control_enabled": bool(
+                args.record_after_control_enabled
+            ),
+            "experiment_recording_started": bool(
+                experiment_recording_started_wall_ns is not None
+                or (
+                    output_dir is not None
+                    and not args.record_after_control_enabled
+                )
+            ),
+            "experiment_recording_started_wall_ns": (
+                experiment_recording_started_wall_ns
+            ),
+            "experiment_reference_token": experiment_reference_token,
+            "experiment_recorded_frames": len(session_records),
             "orientation_filter_large_angle_mode": (
                 args.orientation_filter_large_angle_mode
             ),

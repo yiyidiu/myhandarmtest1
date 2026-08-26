@@ -85,6 +85,62 @@ class HandDetectionGateTest(unittest.TestCase):
         self.assertIsNone(second_miss["confirmed_detection"])
         self.assertGreater(second_miss["generation"], visible["generation"])
 
+    def test_bounded_miss_run_suspends_measurement_without_losing_identity(self):
+        gate = ContinuousHandPresenceGate(
+            required_frames=2,
+            timeout_s=0.50,
+            negative_grace_frames=4,
+            negative_grace_s=0.20,
+        )
+        hand = {
+            "valid": True,
+            "bbox": [10, 10, 100, 100],
+            "is_right": True,
+        }
+        gate.observe(hand, 1.00)
+        visible = gate.observe(hand, 1.02)
+        visible_generation = visible["generation"]
+
+        first = gate.observe(
+            {"valid": False, "reason": "no_hand_detected"}, 1.05
+        )
+        second = gate.observe(
+            {"valid": False, "reason": "no_hand_detected"}, 1.10
+        )
+        self.assertTrue(first["valid"])
+        self.assertTrue(second["valid"])
+        self.assertTrue(second["transient_miss"])
+        self.assertEqual(second["generation"], visible_generation)
+        self.assertIsNotNone(second["confirmed_detection"])
+
+        recovered = gate.observe(hand, 1.12)
+        self.assertTrue(recovered["valid"])
+        self.assertFalse(recovered["transient_miss"])
+        self.assertEqual(recovered["generation"], visible_generation)
+
+    def test_miss_time_bound_fails_closed_even_with_frame_budget_remaining(self):
+        gate = ContinuousHandPresenceGate(
+            required_frames=2,
+            timeout_s=0.50,
+            negative_grace_frames=10,
+            negative_grace_s=0.10,
+        )
+        hand = {
+            "valid": True,
+            "bbox": [10, 10, 100, 100],
+            "is_right": False,
+        }
+        gate.observe(hand, 2.00)
+        visible = gate.observe(hand, 2.02)
+        gate.observe({"valid": False, "reason": "no_hand_detected"}, 2.04)
+        lost = gate.observe(
+            {"valid": False, "reason": "no_hand_detected"}, 2.15
+        )
+        self.assertFalse(lost["valid"])
+        self.assertFalse(lost["transient_miss"])
+        self.assertGreater(lost["generation"], visible["generation"])
+        self.assertIsNone(lost["confirmed_detection"])
+
     def test_continuous_presence_needs_two_frames_to_reappear(self):
         gate = ContinuousHandPresenceGate(required_frames=2, timeout_s=0.25)
         hand = {

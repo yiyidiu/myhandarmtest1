@@ -71,6 +71,23 @@ class TeleopControlGate:
             "R" if is_right else "L",
         )
 
+    @staticmethod
+    def _invalidate_dependent_observations(
+        output: Dict[str, Any], reason: str
+    ) -> None:
+        """Keep nested observations consistent when the outer pose is locked."""
+
+        fingers = output.get("finger_observation")
+        if isinstance(fingers, Mapping):
+            fingers = dict(fingers)
+            fingers["valid"] = False
+            fingers["flexion"] = [0.0] * 5
+            fingers["confidence"] = 0.0
+            fingers["invalid_reason"] = str(
+                reason or "CONTROL_GATE_LOCKED"
+            )
+            output["finger_observation"] = fingers
+
     def disable(self, reason: str = "WAITING_FOR_OPERATOR_C_REFERENCE") -> None:
         """Lock output without changing the most recent reference epoch."""
 
@@ -153,6 +170,10 @@ class TeleopControlGate:
             output["invalid_reason"] = str(
                 lock_reason or output.get("invalid_reason", "")
                 or "WAITING_FOR_OPERATOR_C_REFERENCE"
+            )
+        if output.get("valid") is not True:
+            self._invalidate_dependent_observations(
+                output, str(output.get("invalid_reason", ""))
             )
         output["control_enabled"] = bool(enabled)
         output["control_reference_epoch"] = int(epoch)

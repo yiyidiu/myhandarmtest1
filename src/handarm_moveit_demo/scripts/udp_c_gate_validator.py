@@ -86,7 +86,7 @@ class UdpCGateValidator:
             time.sleep(0.05)
         raise RuntimeError("base_link -> tool0 TF was not ready")
 
-    def send(self, position, enabled, epoch):
+    def send(self, position, enabled, epoch, valid=True):
         self.sequence += 1
         token = (
             identity_reference_token(self.session, epoch, 1, 1, True)
@@ -101,7 +101,7 @@ class UdpCGateValidator:
             "wrist_position_m": np.asarray(position, dtype=float).tolist(),
             "palm_rotation_row_major": np.eye(3).reshape(-1).tolist(),
             "confidence": [1.0]*6,
-            "valid": True,
+            "valid": bool(valid),
             "gesture": 0,
             "gesture_confidence": 0.0,
             "finger_observation": {
@@ -109,12 +109,12 @@ class UdpCGateValidator:
                 "feature_definition": (
                     "mano_openpose_chain_total_bend_over_pi_v1"
                 ),
-                "valid": True,
-                "flexion": [0.10] * 5,
-                "confidence": 1.0,
-                "invalid_reason": "",
+                "valid": bool(valid),
+                "flexion": [0.10] * 5 if valid else [0.0] * 5,
+                "confidence": 1.0 if valid else 0.0,
+                "invalid_reason": "" if valid else "SYNTHETIC_TRANSIENT_MISS",
             },
-            "invalid_reason": "",
+            "invalid_reason": "" if valid else "SYNTHETIC_TRANSIENT_MISS",
             "hand_identity_present": True,
             "hand_is_right": True,
             "presence_generation": 1,
@@ -134,23 +134,23 @@ class UdpCGateValidator:
                 "dropped_capture_frames": 0,
                 "capture_to_loop_start_s": 0.001,
                 "capture_to_publish_s": 0.002,
-                "inference_executed": True,
-                "inference_call_s": 0.005,
-                "model_inference_s": 0.004,
-                "postprocess_s": 0.001,
+                "inference_executed": bool(valid),
+                "inference_call_s": 0.005 if valid else 0.0,
+                "model_inference_s": 0.004 if valid else 0.0,
+                "postprocess_s": 0.001 if valid else 0.0,
             },
         }
         self.socket.sendto(
             json.dumps(packet, separators=(",", ":")).encode("utf-8"),
             (self.host, self.port))
 
-    def stage(self, duration_s, position_fn, enabled, epoch):
+    def stage(self, duration_s, position_fn, enabled, epoch, valid=True):
         samples = []
         started = time.monotonic()
         while (time.monotonic()-started < duration_s and
                not rospy.is_shutdown()):
             elapsed = time.monotonic()-started
-            self.send(position_fn(elapsed), enabled, epoch)
+            self.send(position_fn(elapsed), enabled, epoch, valid=valid)
             try:
                 samples.append(self.tool_position())
             except Exception:
@@ -199,6 +199,42 @@ class UdpCGateValidator:
         reference_ready = bool(
             self.latest_diagnostic.get("reference_ready", False))
         accepted_token = self.latest_diagnostic.get("active_reference_token")
+
+        # A bounded detector miss publishes explicit INVALID heartbeats while
+        # retaining the same camera C token.  Output must hold during the
+        # suspension and resume from the same reference when current evidence
+        # returns; asking the operator to press C for this short gap is a bug.
+        transient_origin = self.tool_position()
+        transient_samples = self.stage(
+            0.25,
+            lambda _elapsed: hand_zero,
+            enabled=True,
+            epoch=2,
+            valid=False,
+        )
+        transient_hold_motion = max(
+            [float(np.linalg.norm(value-transient_origin))
+             for value in transient_samples]
+            or [float("inf")]
+        )
+        resumed_samples = self.stage(
+            2.0,
+            lambda elapsed: hand_zero + np.array([
+                0.025 * min(1.0, elapsed/1.0), 0.0, 0.0]),
+            enabled=True,
+            epoch=2,
+        )
+        resumed_position = (
+            resumed_samples[-1] if resumed_samples else self.tool_position())
+        same_c_resume_base_y_motion = float(
+            resumed_position[1]-transient_origin[1])
+        resumed_token = self.latest_diagnostic.get("active_reference_token")
+        self.stage(
+            2.0,
+            lambda _elapsed: hand_zero,
+            enabled=True,
+            epoch=2,
+        )
 
         # Start a reachable target, then deliberately stop all UDP packets.
         # The adapter must clear the active reference after 0.40 s and latch
@@ -270,6 +306,9 @@ class UdpCGateValidator:
             and reference_ready
             and accepted_token == identity_reference_token(
                 self.session, 2, 1, 1, True)
+            and transient_hold_motion <= 0.003
+            and same_c_resume_base_y_motion <= -0.010
+            and resumed_token == accepted_token
             # Ported AprilTag V3 wrist relation: image-right is base -Y and
             # 25 mm of hand motion targets 15 mm of tool motion.
             and first_right_base_y_motion <= -0.010
@@ -290,6 +329,12 @@ class UdpCGateValidator:
             "waiting_for_new_c_after_startup_diagnostic_seen": waiting_seen,
             "reference_ready_after_c": reference_ready,
             "accepted_reference_token": accepted_token,
+            "transient_invalid_same_c_hold_max_tool_motion_m": (
+                transient_hold_motion),
+            "transient_invalid_same_c_resume_base_y_motion_m": (
+                same_c_resume_base_y_motion),
+            "transient_invalid_same_c_reference_token_preserved": (
+                resumed_token == accepted_token),
             "image_right_base_negative_y_motion_before_timeout_m": (
                 first_right_base_y_motion),
             "udp_timeout_requires_new_c_seen": timeout_lock_seen,

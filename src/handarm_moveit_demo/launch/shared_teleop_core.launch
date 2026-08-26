@@ -13,6 +13,10 @@
   <arg name="log_directory" default="/tmp/handarm_shared_teleop_logs" />
   <arg name="mapping_profile" default="current_linear" />
   <arg name="require_scene_ready" default="false" />
+  <arg name="hamer_input_timeout_s" default="0.40"
+       doc="UDP accepted-packet watchdog; live diagnostic overrides must remain simulation-only" />
+  <arg name="hamer_maximum_pipeline_latency_s" default="0.20"
+       doc="maximum producer-measured capture-to-publish age" />
   <!-- Opt-in response shaping for the EGM position-reference plant.  The
        established velocity profile deliberately keeps the YAML values. -->
   <arg name="stable_position_reference_profile" default="false" />
@@ -36,8 +40,9 @@
     <!-- Match shared_teleop.yaml safety.input_timeout_s. The adapter uses
          wall-monotonic time and repeatedly publishes fail-closed status for
          the full duration of a UDP gap. -->
-    <param name="input_timeout_s" value="0.40" />
-    <param name="maximum_pipeline_latency_s" value="0.20" />
+    <param name="input_timeout_s" value="$(arg hamer_input_timeout_s)" />
+    <param name="maximum_pipeline_latency_s"
+           value="$(arg hamer_maximum_pipeline_latency_s)" />
     <param name="require_timing_contract" value="true" />
     <param name="require_finger_contract" value="true" />
   </node>

@@ -69,11 +69,12 @@ class ContinuousHandPresenceGate:
     """Treat detector evidence, never an optical-flow ROI, as hand presence.
 
     By default one negative detector result fails closed immediately.  Live
-    callers may explicitly allow one short negative-result grace frame to
-    suppress fast-motion flicker; the next miss still fails closed.  Returning
-    to the invalid state requires no optical-flow evidence.  A missing detector
-    result also fails closed after ``timeout_s`` so a dead sidecar cannot leave
-    the last MANO mesh or teleoperation packet alive forever.
+    callers may explicitly allow a bounded negative-result grace interval.
+    During that interval identity continuity is retained, while the caller is
+    expected to suspend motion and reject stale pose measurements.  Exceeding
+    either the frame or time bound fails closed.  A missing detector result
+    also fails closed after ``timeout_s`` so a dead sidecar cannot leave the
+    last MANO mesh or teleoperation packet alive forever.
 
     ``generation`` changes on every valid/invalid transition.  Display code
     can use it to prevent a mesh inferred before a disappearance from being
@@ -136,9 +137,9 @@ class ContinuousHandPresenceGate:
                 <= self.negative_grace_frames
                 and negative_age <= self.negative_grace_s
             ):
-                # One isolated MediaPipe miss is common during fast motion.
-                # Keep the independently confirmed hand for at most one
-                # detector frame; a second miss still hides the mesh quickly.
+                # Short MediaPipe miss runs are common during fast motion.
+                # Retain identity only; the live caller explicitly suppresses
+                # pose output until a current positive result returns.
                 self.reason = "hand_detector_transient_miss_{}/{}".format(
                     self.consecutive_negative_results,
                     self.negative_grace_frames,
@@ -202,6 +203,10 @@ class ContinuousHandPresenceGate:
                 self.consecutive_negative_results
             ),
             "negative_grace_frames": int(self.negative_grace_frames),
+            "negative_grace_s": float(self.negative_grace_s),
+            "transient_miss": bool(
+                self.valid and self.consecutive_negative_results > 0
+            ),
         }
 
 

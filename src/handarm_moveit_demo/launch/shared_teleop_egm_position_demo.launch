@@ -12,6 +12,8 @@
   <arg name="world_name" default="worlds/empty.world" />
   <arg name="mapping_profile" default="current_linear" />
   <arg name="require_scene_ready" default="false" />
+  <arg name="hamer_input_timeout_s" default="0.40" />
+  <arg name="hamer_maximum_pipeline_latency_s" default="0.20" />
   <!-- Default: MoveIt Servo performs velocity, collision, singularity and
        joint-limit safety; the adapter adds a bounded position reference.
        Direct Cartesian IK remains an explicit simulation-only rollback. -->
@@ -148,6 +150,9 @@
     <arg name="log_directory" value="$(arg log_directory)" />
     <arg name="mapping_profile" value="$(arg mapping_profile)" />
     <arg name="require_scene_ready" value="$(arg require_scene_ready)" />
+    <arg name="hamer_input_timeout_s" value="$(arg hamer_input_timeout_s)" />
+    <arg name="hamer_maximum_pipeline_latency_s"
+         value="$(arg hamer_maximum_pipeline_latency_s)" />
     <arg name="stable_position_reference_profile"
          value="$(arg stable_position_reference_profile)" />
     <arg name="camera_workspace_calibration_file"

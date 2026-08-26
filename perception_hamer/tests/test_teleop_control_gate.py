@@ -18,10 +18,17 @@ class TeleopControlGateTest(unittest.TestCase):
             {
                 "session_id": "live-a",
                 "sequence": 1,
+                "valid": True,
                 "hand_identity_present": True,
                 "presence_generation": 3,
                 "active_hand_generation": 1,
                 "hand_is_right": True,
+                "finger_observation": {
+                    "valid": True,
+                    "flexion": [0.1] * 5,
+                    "confidence": 0.9,
+                    "invalid_reason": "",
+                },
             },
             "live-a",
         )
@@ -32,6 +39,13 @@ class TeleopControlGateTest(unittest.TestCase):
         )
         self.assertEqual(packet["control_reference_epoch"], 0)
         self.assertEqual(packet["control_reference_token"], "")
+        self.assertFalse(packet["finger_observation"]["valid"])
+        self.assertEqual(packet["finger_observation"]["flexion"], [0.0] * 5)
+        self.assertEqual(packet["finger_observation"]["confidence"], 0.0)
+        self.assertEqual(
+            packet["finger_observation"]["invalid_reason"],
+            "WAITING_FOR_OPERATOR_C_REFERENCE",
+        )
 
     def test_each_c_confirmation_creates_a_new_reference_token(self):
         gate = TeleopControlGate()
