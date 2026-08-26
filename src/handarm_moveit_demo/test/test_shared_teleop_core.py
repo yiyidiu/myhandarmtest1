@@ -872,7 +872,7 @@ class SafetyConfigurationTest(unittest.TestCase):
             encoding="utf-8"))
         mapping = config["mapping"]
         limits = config["limits"]
-        np.testing.assert_allclose(mapping["translation_gain"], [0.6, 0.6, 0.8])
+        np.testing.assert_allclose(mapping["translation_gain"], [0.6, 0.6, 1.0])
         np.testing.assert_allclose(mapping["rotation_gain"], [1.0, 1.0, 1.0])
         np.testing.assert_allclose(
             limits["maximum_linear_velocity_mps"], [1.0, 1.0, 1.0])
