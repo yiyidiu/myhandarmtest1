@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from perception_hamer.src.teleop_pose_packet import (  # noqa: E402
-    build_live_teleop_packet, foreground_depth_component,
+    build_invalid_teleop_packet, build_live_teleop_packet, foreground_depth_component,
     metric_wrist_from_arrays, metric_wrist_ring_from_arrays,
 )
 
@@ -31,6 +31,18 @@ class TeleopPosePacketTest(unittest.TestCase):
         vertices[:16, 0] = 0.05*np.cos(angles)
         vertices[:16, 1] = 0.04*np.sin(angles)
         return vertices
+
+    def test_invalid_heartbeat_contains_identity_but_no_pose_geometry(self):
+        packet = build_invalid_teleop_packet(
+            "test", 9, 12.5, "no_real_hand", 4, 3, hand_is_right=False
+        )
+        self.assertFalse(packet["valid"])
+        self.assertTrue(packet["hand_identity_present"])
+        self.assertFalse(packet["hand_is_right"])
+        self.assertEqual(packet["presence_generation"], 4)
+        self.assertEqual(packet["active_hand_generation"], 3)
+        self.assertNotIn("wrist_position_m", packet)
+        self.assertNotIn("palm_rotation_row_major", packet)
 
     def test_16_point_wrist_ring_center_uses_projected_depth_hull(self):
         depth = np.zeros((480, 640), dtype=np.uint16)
@@ -150,6 +162,7 @@ class TeleopPosePacketTest(unittest.TestCase):
         depth = np.zeros((480, 640), dtype=np.uint16)
         depth[125:132, 125:132] = 750
         result = SimpleNamespace(
+            is_right=True,
             pred_keypoints_2d_crop_normalized=normalized,
             quality={"affine_original_to_crop": [[1,0,0],[0,1,0]],
                      "bbox_visible_fraction": 0.8},
@@ -164,7 +177,7 @@ class TeleopPosePacketTest(unittest.TestCase):
             "valid": True, "rotation": np.eye(3).tolist()}}
         packet = build_live_teleop_packet(
             result, estimates, frame, SimpleNamespace(confidence=0.9),
-            "test", 3)
+            "test", 3, 2, 1)
         np.testing.assert_allclose(packet["wrist_position_m"], [0.21, 0.21, 0.75])
         self.assertEqual(packet["position_source"],
                          "HAMER_WRIST_RAY_PLUS_D455_ADAPTIVE_ALIGNED_DEPTH")
@@ -175,6 +188,7 @@ class TeleopPosePacketTest(unittest.TestCase):
         depth = np.zeros((480, 640), dtype=np.uint16)
         depth[125:132, 125:132] = 1000
         result = SimpleNamespace(
+            is_right=False,
             pred_keypoints_2d_crop_normalized=normalized,
             quality={"affine_original_to_crop": [[1,0,0],[0,1,0]],
                      "bbox_visible_fraction": 0.8},
@@ -196,7 +210,7 @@ class TeleopPosePacketTest(unittest.TestCase):
         }
         packet = build_live_teleop_packet(
             result, estimates, frame, SimpleNamespace(confidence=0.9),
-            "test", 4,
+            "test", 4, 2, 1,
         )
         np.testing.assert_allclose(packet["confidence"][:3], [0.36] * 3)
         np.testing.assert_allclose(packet["confidence"][3:], [0.30] * 3)
@@ -208,6 +222,7 @@ class TeleopPosePacketTest(unittest.TestCase):
         depth = np.zeros((480, 640), dtype=np.uint16)
         depth[125:132, 125:132] = 1000
         result = SimpleNamespace(
+            is_right=True,
             pred_keypoints_2d_crop_normalized=normalized,
             quality={"affine_original_to_crop": [[1, 0, 0], [0, 1, 0]],
                      "bbox_visible_fraction": 0.8},
@@ -231,7 +246,7 @@ class TeleopPosePacketTest(unittest.TestCase):
         }
         packet = build_live_teleop_packet(
             result, estimates, frame, SimpleNamespace(confidence=0.9),
-            "test", 5,
+            "test", 5, 4, 3,
         )
         self.assertTrue(packet["valid"])
         self.assertFalse(packet["orientation_channel_valid"])
@@ -246,6 +261,7 @@ class TeleopPosePacketTest(unittest.TestCase):
         depth = np.zeros((480, 640), dtype=np.uint16)
         depth[116:141, 113:144] = 900
         result = SimpleNamespace(
+            is_right=True,
             pred_vertices_mano_right_canonical=self._ring_vertices(),
             hamer_crop_projection_translation=np.array([0.0, 0.0, 1.0]),
             hamer_nominal_crop_focal_length=np.array([256.0, 256.0]),
@@ -276,7 +292,7 @@ class TeleopPosePacketTest(unittest.TestCase):
         }
         packet = build_live_teleop_packet(
             result, estimates, frame, SimpleNamespace(confidence=1.0),
-            "ring-test", 8,
+            "ring-test", 8, 6, 2,
         )
         self.assertEqual(packet["control_reference"], "MANO_WRIST_RING_16")
         self.assertEqual(

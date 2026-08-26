@@ -176,7 +176,7 @@ conda run --no-capture-output -n hamer_rtx2060 \
   --mesh-renderer teleoperation-core \
   --control-reference mano-wrist-ring \
   --roi-smoothing-alpha 1.0 \
-  --orientation-filter-large-angle-mode follow \
+  --orientation-filter-large-angle-mode reject \
   --orientation-filter-max-gain 1.0 \
   --disable-forearm-fusion \
   --hand-presence-timeout-s 0.25 \
@@ -207,13 +207,15 @@ MANO 三角面的网格。默认不再用 KLT 将旧网格缩放到最新相机�
 选择活动手并启动 HaMeR，不需要按 `C` 选择手；但必须随后按 `C` 建立 Gazebo
 控制零位。MediaPipe 可以同时看到左右手，但只有
 一个自动活动手进入单个 HaMeR/MANO；另一只手同时出现时会被忽略。活动手消失且
-另一只手连续稳定出现后，系统自动清除旧跟踪并判定换手。
+另一只手连续稳定出现后，系统可以更新视觉选择，但会立即锁定旧 C 会话；操作者
+必须在新手保持稳定后重新按 `c`，新手绝不继承旧手零位。
 裁剪框使用 `1.0` 新帧权重；发送给遥操作链的手掌姿态使用质量/运动自适应
 SO(3) 滤波：静止时抑制 MANO 抖动，明确运动时增益升到最多 `0.95`。裁剪靠近
-边缘或突然跳动仍会降低对应置信度。跟踪失效后
-局部趋势窗口会重建，但不会改写已确认的人手零位和机器人零位；有效输入恢复后，会重新按当前相对手位姿闭环追踪，而不是补发失效期间的速度。
-单帧姿态创新达到 `70°` 会保持最后可信旋转；正常连续的大幅人手转动会进入高增益
-而不会被低通拖慢。姿态通道无效时 D455 公制腕位置仍可继续发送。
+边缘或突然跳动仍会降低对应置信度。跟踪失效、presence generation 变化或左右手
+变化都会销毁已确认的人手/机器人零位；恢复后必须重新按 `c`，不会在旧参考下
+自动续跑，也不会补发失效期间的速度。
+单帧姿态创新达到 `45°` 会锁定旧 C 会话并要求重新确认，避免 MANO 跳变被解释为
+人的连续旋转。低于硬门限的连续转动仍使用运动自适应增益。
 同一时刻只能运行一个 `run_d455_hamer_crop.py`；程序有单实例锁，重复启动会在
 加载模型前报告现有 PID，避免 RTX 2060 同时加载两份 HaMeR 后显存溢出。必须在
 D455 画面中保持完整手掌；只有显式加入 `--require-hand-confirmation` 时才需要在
@@ -222,17 +224,28 @@ D455 画面中保持完整手掌；只有显式加入 `--require-hand-confirmati
 确认后 MediaPipe 仍逐帧独立检查真实手是否存在，KLT 只负责检测帧之间的快速
 裁剪框插值。首次 `no_hand_detected` 或 0.25 秒无检测结果时，窗口应立即显示
 `REAL HAND presence=NO`、`ROI ... valid=False`、`MANO mesh=OFF`；程序同时清空
-KLT，并停止新的 HaMeR 结果和 UDP 输出。Gazebo 控制链此时按 V3 语义继续闭环保持
-最后一个有效目标，不会把目标清零或因输入 watchdog 反复刹车。重新伸手后需要连续两帧检测一致才重建
-裁剪框，确认前的旧 MANO 网格不会重新出现。
+KLT，并持续发送不含伪造姿态的 INVALID 心跳。ROS 适配器立即清除旧 C token；若
+相机进程完全断流，0.40 秒 watchdog 也会发布锁定消息。重新伸手后需要连续两帧
+检测一致才重建裁剪框，并且必须重新按 `c`；确认前的旧 MANO 网格和旧机器人参考
+都不会重新启用。
 
-UDP v1 必填：`schema/session_id/sequence/stamp/frame_id/wrist_position_m`、旋转矩阵或 `xyzw` 四元数、六维置信度、valid、手势以及
-`control_enabled/control_reference_epoch/control_reference_token`。缺少有效 C 参考令牌的
-旧发送器会被默认视为锁定；接收器同时拒绝乱序和旧版协议。
+UDP v1 有效姿态必填：`schema/session_id/sequence/stamp/frame_id`、公制腕位置、旋转
+矩阵或 `xyzw` 四元数、六维置信度和 `valid`。全部状态包还必须携带
+`hand_identity_present/hand_is_right/presence_generation/active_hand_generation` 与 C
+控制字段。启用 token 绑定 session、epoch、presence generation、active-hand
+generation 和左右手；身份不匹配、乱序或旧 epoch-only token 均会触发显式锁定。
+INVALID 心跳不携带姿态几何，接收器不会为它构造可控制姿态。
 
-`HamerHandPose.header.stamp` 是 ROS 时钟域的适配器接收时间；`source_timestamp` 保留 D455/HaMeR 原始时钟，供多帧趋势估计和 CSV 追溯。两者分离可避免 Gazebo `/clock` 与 D455 global-time 混算。在仿真中，已确认 C 零位后会像 V3 `publish_repeated` 一样以 50 Hz 刷新最后目标的 ROS 时间戳；实体输出仍保留 0.40 s 输入 watchdog 和 0.65 s 强制归零，不会把仿真的无限 HOLD 策略带到真机。
+`HamerHandPose.header.stamp` 是 ROS 时钟域的适配器接收时间；`source_timestamp` 保留
+D455/HaMeR 原始时钟，供多帧趋势估计和 CSV 追溯。两者分离可避免 Gazebo
+`/clock` 与 D455 global-time 混算。仿真只允许最多 0.40 秒的最后目标保持，随后
+停止刷新命令时间戳，由输出 watchdog 制动并让 EGM 进入位置保持；不再存在无限
+HOLD。
 
-2026-08-21 真人运行中正常帧间隔约 0.19--0.30 s，且手腕环偶发无效会让发送端短时没有 UDP。仿真链现采用 V3 目标保持：感知帧只更新目标，控制器始终以 50 Hz 向最后有效目标闭环收敛；恢复后从最后滤波位姿继续，不补发丢帧期间的虚构速度。自动验收中故意断流 1.2 秒，下游输入年龄最大仅 0.04 秒且没有超时刹车。USB3 和最终真人感知质量仍需操作者现场验收。
+2026-08-26 正式真人录像测得 HaMeR 平均仅 4.54 Hz，且存在超过 1 秒的间隔，证明
+原无限目标保持会掩盖真实断流。修复后每个相机循环都会发送有效姿态或 INVALID
+状态；完全断流则由独立 watchdog 处理。USB3、最终真人感知频率和从失效到制动的
+端到端时间仍需现场验收。
 
 ### 记录与回放
 

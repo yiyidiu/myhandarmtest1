@@ -29,6 +29,7 @@ class AutomaticActiveHandSelectorTest(unittest.TestCase):
         first = selector.select(payload(right))
         both = selector.select(payload(right, left))
         self.assertTrue(first["active_hand_is_right"])
+        self.assertEqual(first["active_hand_generation"], 1)
         self.assertTrue(both["is_right"])
         self.assertEqual(both["bbox"], right["bbox"])
         self.assertEqual(both["ignored_non_active_hand_count"], 1)
@@ -45,6 +46,7 @@ class AutomaticActiveHandSelectorTest(unittest.TestCase):
         self.assertTrue(switched["valid"])
         self.assertFalse(switched["active_hand_is_right"])
         self.assertTrue(switched["automatic_hand_switch"])
+        self.assertEqual(switched["active_hand_generation"], 2)
 
     def test_no_hand_does_not_silently_switch_identity(self):
         selector = AutomaticActiveHandSelector(switch_frames=2)
@@ -52,6 +54,7 @@ class AutomaticActiveHandSelectorTest(unittest.TestCase):
         missing = selector.select(payload())
         self.assertFalse(missing["valid"])
         self.assertFalse(missing["active_hand_is_right"])
+        self.assertEqual(missing["active_hand_generation"], 1)
 
 if __name__ == "__main__":
     unittest.main()

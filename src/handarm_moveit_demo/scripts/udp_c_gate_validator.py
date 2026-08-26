@@ -11,6 +11,8 @@ import rospy
 import tf
 from std_msgs.msg import Int8, String
 
+from handarm_moveit_demo.hamer_input_contract import identity_reference_token
+
 
 class UdpCGateValidator:
     def __init__(self, host, port):
@@ -76,7 +78,10 @@ class UdpCGateValidator:
 
     def send(self, position, enabled, epoch):
         self.sequence += 1
-        token = "{}:{}".format(self.session, epoch) if enabled else ""
+        token = (
+            identity_reference_token(self.session, epoch, 1, 1, True)
+            if enabled else ""
+        )
         packet = {
             "schema": "handarm_hamer_pose_v1",
             "session_id": self.session,
@@ -90,9 +95,17 @@ class UdpCGateValidator:
             "gesture": 0,
             "gesture_confidence": 0.0,
             "invalid_reason": "",
+            "hand_identity_present": True,
+            "hand_is_right": True,
+            "presence_generation": 1,
+            "active_hand_generation": 1,
             "control_enabled": bool(enabled),
             "control_reference_epoch": int(epoch),
             "control_reference_token": token,
+            "control_identity_present": bool(enabled),
+            "control_presence_generation": 1 if enabled else 0,
+            "control_active_hand_generation": 1 if enabled else 0,
+            "control_hand_is_right": bool(enabled),
         }
         self.socket.sendto(
             json.dumps(packet, separators=(",", ":")).encode("utf-8"),

@@ -85,4 +85,5 @@ install(DIRECTORY config launch
 if(CATKIN_ENABLE_TESTING)
   catkin_add_nosetests(test/test_shared_teleop_core.py)
   catkin_add_nosetests(test/test_egm_position_reference.py)
+  catkin_add_nosetests(test/test_hamer_input_contract.py)
 endif()

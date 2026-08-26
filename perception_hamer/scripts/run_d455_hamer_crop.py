@@ -31,6 +31,18 @@ REPOSITORY_ROOT = PACKAGE_DIR.parent
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
+MEDIAPIPE_ENV_PREFIX = Path(os.environ.get(
+    "MEDIAPIPE_ENV_PREFIX",
+    Path.home() / "anaconda3/envs/mediapipe_env",
+))
+DEFAULT_MEDIAPIPE_PYTHON = os.environ.get(
+    "MEDIAPIPE_PYTHON", str(MEDIAPIPE_ENV_PREFIX / "bin/python")
+)
+DEFAULT_REALSENSE_SITE_PACKAGES = os.environ.get(
+    "REALSENSE_SITE_PACKAGES",
+    str(MEDIAPIPE_ENV_PREFIX / "lib/python3.10/site-packages"),
+)
+
 from perception_hamer.src.d455_capture import D455Capture
 from perception_hamer.src.active_hand_selector import AutomaticActiveHandSelector
 from perception_hamer.src.causal_wrist_so3_filter import (
@@ -69,7 +81,10 @@ from perception_hamer.src.realtime_hamer_pipeline import (
     remap_points_between_bboxes,
 )
 from perception_hamer.src.roi_provider import KLTTrackerROIProvider
-from perception_hamer.src.teleop_pose_packet import build_live_teleop_packet
+from perception_hamer.src.teleop_pose_packet import (
+    build_invalid_teleop_packet,
+    build_live_teleop_packet,
+)
 from perception_hamer.src.teleop_control_gate import TeleopControlGate
 from perception_hamer.src.teleoperation_core_mano_renderer import (
     TeleoperationCoreRenderFrame,
@@ -336,10 +351,9 @@ def _capture_worker(
 
 
 def _select_bbox(rgb: np.ndarray) -> np.ndarray:
-    executable = "/home/diu/anaconda3/envs/mediapipe_env/bin/python"
     helper = SCRIPT_DIR / "manual_select_roi_once.py"
     completed = subprocess.run(
-        [executable, str(helper), "--width", str(rgb.shape[1]),
+        [DEFAULT_MEDIAPIPE_PYTHON, str(helper), "--width", str(rgb.shape[1]),
          "--height", str(rgb.shape[0])],
         input=rgb.tobytes(), capture_output=True, timeout=120.0,
     )
@@ -355,10 +369,9 @@ def _select_bbox(rgb: np.ndarray) -> np.ndarray:
 def _detect_bbox_with_mediapipe_sidecar(
     rgb: np.ndarray, minimum_detection_confidence: float = 0.45
 ) -> Dict[str, Any]:
-    executable = "/home/diu/anaconda3/envs/mediapipe_env/bin/python"
     helper = SCRIPT_DIR / "mediapipe_detect_roi_once.py"
     completed = subprocess.run(
-        [executable, str(helper), "--width", str(rgb.shape[1]),
+        [DEFAULT_MEDIAPIPE_PYTHON, str(helper), "--width", str(rgb.shape[1]),
          "--height", str(rgb.shape[0]), "--min-detection-confidence",
          str(float(minimum_detection_confidence))],
         input=rgb.tobytes(), capture_output=True, timeout=15.0,
@@ -379,13 +392,12 @@ class MediaPipeDetectionSidecar:
     """Persistent 2-D detector; avoids reloading MediaPipe for every frame."""
 
     def __init__(self, width: int, height: int, minimum_confidence: float) -> None:
-        executable = "/home/diu/anaconda3/envs/mediapipe_env/bin/python"
         helper = SCRIPT_DIR / "mediapipe_detect_roi_once.py"
         self.width = int(width)
         self.height = int(height)
         self._process = subprocess.Popen(
             [
-                executable, "-u", str(helper), "--width", str(self.width),
+                DEFAULT_MEDIAPIPE_PYTHON, "-u", str(helper), "--width", str(self.width),
                 "--height", str(self.height), "--min-detection-confidence",
                 str(float(minimum_confidence)), "--stream",
             ],
@@ -496,6 +508,9 @@ class AsyncMediaPipeDetection:
             state["detector_result_monotonic"] = self._result_monotonic
             state["active_hand_is_right"] = (
                 self._active_hand_selector.active_is_right
+            )
+            state["active_hand_generation"] = int(
+                self._active_hand_selector.active_hand_generation
             )
             return state
 
@@ -960,11 +975,15 @@ def _display_worker(
         hand_presence_valid = True
         roi_matches_detected_hand = True
         active_hand_is_right = None
+        active_hand_generation = 0
         ignored_non_active_hand_count = 0
         if async_detector is not None:
             presence = async_detector.presence_snapshot()
             hand_presence_valid = bool(presence["valid"])
             active_hand_is_right = presence.get("active_hand_is_right")
+            active_hand_generation = int(
+                presence.get("active_hand_generation", 0)
+            )
             confirmed_for_status = presence.get("confirmed_detection") or {}
             ignored_non_active_hand_count = int(
                 confirmed_for_status.get("ignored_non_active_hand_count", 0)
@@ -1012,11 +1031,21 @@ def _display_worker(
             and hand_presence_valid
             and roi_matches_detected_hand
         )
+        if not pose_matches_visible_hand:
+            teleop_control_gate.invalidate(
+                "HAND_TRACKING_INVALID_REQUIRES_NEW_C"
+            )
+        else:
+            teleop_control_gate.observe_identity(
+                int(overlay_presence_generation),
+                int(active_hand_generation),
+                bool(result.is_right),
+            )
         if display.pop_confirm_request():
             # C is the only live-teleoperation enable/re-zero action. Lock
             # first so an invalid visible pose cannot leave an older robot
             # reference active.
-            teleop_control_gate.disable()
+            teleop_control_gate.disable("OPERATOR_REQUESTED_NEW_C_REFERENCE")
             pose_display.clear_zero("operator_reference_requested")
             zero_set = bool(
                 pose_matches_visible_hand
@@ -1025,7 +1054,12 @@ def _display_worker(
                 )
             )
             reference_epoch = (
-                teleop_control_gate.confirm() if zero_set else None
+                teleop_control_gate.confirm(
+                    int(overlay_presence_generation),
+                    int(active_hand_generation),
+                    bool(result.is_right),
+                )
+                if zero_set else None
             )
             print(
                 (
@@ -1138,7 +1172,7 @@ def _parse_args() -> argparse.Namespace:
         help="SO(3) innovation above this angle receives a smaller gain",
     )
     parser.add_argument(
-        "--orientation-filter-hard-deg", type=float, default=70.0,
+        "--orientation-filter-hard-deg", type=float, default=45.0,
         help=(
             "large-angle diagnostic threshold; follow mode passes it through, "
             "reject mode restores the former hard rejection"
@@ -1147,10 +1181,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--orientation-filter-large-angle-mode",
         choices=("follow", "reject"),
-        default="follow",
+        default="reject",
         help=(
-            "follow keeps all valid MANO wrist rotations responsive (default); "
-            "reject restores the previous large-angle blocking behaviour"
+            "reject fails closed on discontinuous MANO orientation jumps "
+            "(default); follow is a diagnostic-only passthrough"
         ),
     )
     parser.add_argument(
@@ -1185,7 +1219,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--display-helper-python",
-        default="/home/diu/anaconda3/envs/mediapipe_env/bin/python",
+        default=DEFAULT_MEDIAPIPE_PYTHON,
         help="Python with a GUI-enabled OpenCV build for the display sidecar",
     )
     parser.add_argument("--no-mesh-overlay", action="store_true",
@@ -1208,8 +1242,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", default=str(
         PACKAGE_DIR / "_DATA/hamer_ckpts/checkpoints/hamer.ckpt"))
     parser.add_argument("--data-root", default=str(PACKAGE_DIR / "_DATA"))
-    parser.add_argument("--realsense-sdk-site-packages", default=(
-        "/home/diu/anaconda3/envs/mediapipe_env/lib/python3.10/site-packages"))
+    parser.add_argument(
+        "--realsense-sdk-site-packages",
+        default=DEFAULT_REALSENSE_SITE_PACKAGES,
+    )
     parser.add_argument("--precision", choices=("fp16", "fp32"), default="fp16")
     parser.add_argument("--teleop-udp-host", default="",
                         help="optional handarm_hamer_pose_v1 destination; empty disables UDP")
@@ -1604,6 +1640,8 @@ def main() -> int:
             "valid": True,
             "reason": "manual_presence_contract",
             "generation": 0,
+            "active_hand_generation": 0,
+            "active_hand_is_right": bool(is_right),
             "detection_age_s": 0.0,
             "confirmed_detection": None,
         }
@@ -1662,11 +1700,16 @@ def main() -> int:
                     "valid": True,
                     "reason": "manual_presence_contract",
                     "generation": 0,
+                    "active_hand_generation": 0,
+                    "active_hand_is_right": bool(is_right),
                     "detection_age_s": 0.0,
                     "confirmed_detection": None,
                 }
             presence_valid = bool(presence_state["valid"])
             presence_generation = int(presence_state["generation"])
+            active_hand_generation = int(
+                presence_state.get("active_hand_generation", 0)
+            )
             presence_interval_changed = (
                 presence_generation != last_presence_generation
             )
@@ -1781,6 +1824,10 @@ def main() -> int:
                         presence_state = post_presence
                         presence_valid = bool(post_presence["valid"])
                         presence_generation = int(post_presence["generation"])
+                        active_hand_generation = int(
+                            post_presence.get("active_hand_generation", 0)
+                        )
+                        presence_interval_changed = True
                         forearm_estimator.reset()
                         previous_control_depth_m = None
                         previous_control_depth_monotonic = None
@@ -2038,6 +2085,51 @@ def main() -> int:
                         if not failure_reason
                         else failure_reason + ";" + render_reason
                     )
+            confirmed_identity = presence_state.get("confirmed_detection")
+            identity_hand_is_right = (
+                bool(is_right)
+                if async_detector is None
+                else (
+                    None
+                    if confirmed_identity is None
+                    else bool(confirmed_identity["is_right"])
+                )
+            )
+            if not presence_valid or presence_interval_changed:
+                teleop_control_gate.invalidate(
+                    "HAND_PRESENCE_CHANGED_REQUIRES_NEW_C"
+                )
+            elif identity_hand_is_right is None:
+                teleop_control_gate.invalidate(
+                    "HAND_IDENTITY_UNAVAILABLE_REQUIRES_NEW_C"
+                )
+            else:
+                teleop_control_gate.observe_identity(
+                    presence_generation,
+                    active_hand_generation,
+                    identity_hand_is_right,
+                )
+            orientation_filter_state = (
+                {} if estimates is None
+                else estimates.get("palm_orientation_filter") or {}
+            )
+            if orientation_filter_state.get("status") == "jump_rejected":
+                teleop_control_gate.invalidate(
+                    "ORIENTATION_JUMP_REQUIRES_NEW_C"
+                )
+            if (
+                result is not None
+                and identity_hand_is_right is not None
+                and bool(result.is_right) != identity_hand_is_right
+            ):
+                failure_reason = "hamer_result_identity_mismatch"
+                pose_failure_reason = failure_reason
+                pose_delta = pose_display.invalidate(
+                    pose_failure_reason, presence_generation
+                )
+                result = None
+                estimates = None
+
             if result is not None and estimates is not None:
                 try:
                     depth_now_monotonic = time.monotonic()
@@ -2057,6 +2149,8 @@ def main() -> int:
                         packet.roi,
                         teleop_session_id,
                         processed - 1,
+                        presence_generation,
+                        active_hand_generation,
                         reference_depth_m=previous_control_depth_m,
                         reference_depth_age_s=reference_depth_age_s,
                     )
@@ -2173,35 +2267,60 @@ def main() -> int:
                     "palm_frames": estimates,
                     "hamer_quality": result.quality,
                 })
-                if teleop_socket is not None:
-                    try:
-                        if pose_packet_payload is None:
-                            raise ValueError(
-                                pose_failure_reason or "6D pose unavailable"
-                            )
-                        teleop_packet = teleop_control_gate.decorate(
-                            pose_packet_payload, teleop_session_id
+            if teleop_socket is not None:
+                try:
+                    udp_payload = pose_packet_payload
+                    if udp_payload is None:
+                        udp_payload = build_invalid_teleop_packet(
+                            teleop_session_id,
+                            processed - 1,
+                            timestamp_s,
+                            pose_failure_reason
+                            or failure_reason
+                            or pose_delta.reason
+                            or "HAMER_POSE_UNAVAILABLE",
+                            presence_generation,
+                            active_hand_generation,
+                            hand_is_right=(
+                                identity_hand_is_right
+                                if presence_valid else None
+                            ),
                         )
-                        teleop_socket.sendto(
-                            json.dumps(
-                                _json_safe(teleop_packet),
-                                separators=(",", ":"),
-                            ).encode("utf-8"),
-                            (args.teleop_udp_host, int(args.teleop_udp_port)),
+                    teleop_packet = teleop_control_gate.decorate(
+                        udp_payload, teleop_session_id
+                    )
+                    teleop_socket.sendto(
+                        json.dumps(
+                            _json_safe(teleop_packet),
+                            separators=(",", ":"),
+                        ).encode("utf-8"),
+                        (args.teleop_udp_host, int(args.teleop_udp_port)),
+                    )
+                    record["teleop_udp"] = {
+                        "valid": bool(teleop_packet.get("valid", False)),
+                        "control_enabled": bool(
+                            teleop_packet.get("control_enabled", False)
+                        ),
+                        "control_reference_token": str(
+                            teleop_packet.get("control_reference_token", "")
+                        ),
+                        "invalid_reason": str(
+                            teleop_packet.get("invalid_reason", "")
+                        ),
+                    }
+                except Exception as exc:
+                    teleop_skipped_since_report += 1
+                    warning_now = time.monotonic()
+                    if warning_now - teleop_last_warning_at >= 1.0:
+                        print(
+                            "teleop UDP heartbeat failed: {} ({} frame(s) since last report)".format(
+                                exc, teleop_skipped_since_report
+                            ),
+                            file=sys.stderr,
+                            flush=True,
                         )
-                    except Exception as exc:
-                        teleop_skipped_since_report += 1
-                        warning_now = time.monotonic()
-                        if warning_now - teleop_last_warning_at >= 1.0:
-                            print(
-                                "teleop UDP pose skipped: {} ({} frame(s) since last report)".format(
-                                    exc, teleop_skipped_since_report
-                                ),
-                                file=sys.stderr,
-                                flush=True,
-                            )
-                            teleop_skipped_since_report = 0
-                            teleop_last_warning_at = warning_now
+                        teleop_skipped_since_report = 0
+                        teleop_last_warning_at = warning_now
             if output_dir is not None:
                 rgb_name = f"rgb/{processed - 1:06d}.png"
                 depth_name = f"aligned_depth/{processed - 1:06d}.png"
@@ -2301,6 +2420,34 @@ def main() -> int:
             print(json.dumps(summary, ensure_ascii=False))
         return 0 if valid_count > 0 else 2
     finally:
+        if teleop_socket is not None:
+            try:
+                teleop_control_gate.invalidate(
+                    "CAMERA_STREAM_STOPPED_REQUIRES_NEW_C"
+                )
+                shutdown_packet = teleop_control_gate.decorate(
+                    build_invalid_teleop_packet(
+                        teleop_session_id,
+                        processed,
+                        time.time(),
+                        "CAMERA_STREAM_STOPPED_REQUIRES_NEW_C",
+                        0,
+                        0,
+                    ),
+                    teleop_session_id,
+                )
+                teleop_socket.sendto(
+                    json.dumps(
+                        _json_safe(shutdown_packet), separators=(",", ":")
+                    ).encode("utf-8"),
+                    (args.teleop_udp_host, int(args.teleop_udp_port)),
+                )
+            except Exception as exc:
+                print(
+                    "teleop UDP shutdown heartbeat failed: {}".format(exc),
+                    file=sys.stderr,
+                    flush=True,
+                )
         stop.set()
         slot.close()
         preview_slot.close()

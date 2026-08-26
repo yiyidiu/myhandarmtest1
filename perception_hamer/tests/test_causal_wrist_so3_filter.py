@@ -92,7 +92,12 @@ class CausalWristSO3FilterTest(unittest.TestCase):
 
     def test_large_positive_and_negative_rotations_follow_in_one_update(self):
         for angle_deg in (-150.0, -90.0, 90.0, 150.0):
-            active = CausalWristSO3Filter()
+            active = CausalWristSO3Filter(
+                CausalWristSO3FilterConfig(
+                    innovation_hard_deg=60.0,
+                    large_angle_mode="follow",
+                )
+            )
             active.update(0.0, np.eye(3), 1.0)
             target = so3_exp([math.radians(angle_deg), 0.0, 0.0])
             result = active.update(0.1, target, 0.20)
@@ -106,10 +111,8 @@ class CausalWristSO3FilterTest(unittest.TestCase):
                 rotation_distance_rad(result.rotation, target), 1.0e-7
             )
 
-    def test_reject_mode_remains_available_as_explicit_rollback(self):
-        active = CausalWristSO3Filter(
-            CausalWristSO3FilterConfig(large_angle_mode="reject")
-        )
+    def test_default_rejects_discontinuous_rotation(self):
+        active = CausalWristSO3Filter()
         active.update(0.0, np.eye(3), 1.0)
         target = so3_exp([0.0, 0.0, math.radians(90.0)])
         result = active.update(0.1, target, 0.95)

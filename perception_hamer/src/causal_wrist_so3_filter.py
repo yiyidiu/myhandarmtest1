@@ -96,8 +96,8 @@ class CausalWristSO3FilterConfig:
     motion_gain_start_deg: float = 1.5
     motion_gain_full_deg: float = 8.0
     innovation_soft_deg: float = 25.0
-    innovation_hard_deg: float = 60.0
-    large_angle_mode: str = "follow"
+    innovation_hard_deg: float = 45.0
+    large_angle_mode: str = "reject"
 
     def validate(self) -> None:
         values = (
@@ -163,7 +163,7 @@ class CausalWristSO3FilterResult:
 
 
 class CausalWristSO3Filter:
-    """Filter valid wrist rotations without blocking intentional motion."""
+    """Filter wrist rotations and fail closed on discontinuous innovations."""
 
     def __init__(
         self, config: Optional[CausalWristSO3FilterConfig] = None

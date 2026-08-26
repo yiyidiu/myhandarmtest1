@@ -7,6 +7,12 @@ bool valid
 uint8 gesture
 float32 gesture_confidence
 string invalid_reason
+# Observed camera-side hand identity. Generations are monotonic for one camera
+# process and prevent a new/reacquired/opposite hand from inheriting an old C.
+bool hand_identity_present
+bool hand_is_right
+uint32 presence_generation
+uint32 active_hand_generation
 # Live UDP operator gate.  The camera process sets gate_present=true on every
 # packet; control_enabled becomes true only after a valid C-key reference.
 # The token changes on every successful C press, allowing the ROS controller

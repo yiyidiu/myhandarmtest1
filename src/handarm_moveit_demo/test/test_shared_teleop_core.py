@@ -934,7 +934,7 @@ class SafetyConfigurationTest(unittest.TestCase):
             config["control"]["servo_reset_fresh_target_s"], 0.40)
         self.assertTrue(config["control"]["repeat_last_target_pose"])
         self.assertAlmostEqual(
-            config["control"]["target_hold_timeout_s"], 0.0)
+            config["control"]["target_hold_timeout_s"], 0.40)
         self.assertAlmostEqual(
             config["control"]["collision_guard_enter_scale"], 0.20)
         self.assertAlmostEqual(

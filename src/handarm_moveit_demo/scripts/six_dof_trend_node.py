@@ -357,6 +357,7 @@ class SixDofTrendNode:
         self.target_hold_reason = None
         self.reference_revision = 0
         self.active_reference_token = None
+        self.active_reference_identity = None
         self.blocked_reference_token = None
         # Fail closed across process restarts.  If the camera was left enabled,
         # its current token predates this receiver and must not be treated as a
@@ -607,7 +608,7 @@ class SixDofTrendNode:
         }
         return target_position, target_rotation
 
-    def clear_reference_locked(self, armed=False, token=None):
+    def clear_reference_locked(self, armed=False, token=None, identity=None):
         self.reference_revision += 1
         self.pose_continuity.reset()
         self.estimator.reset_zero()
@@ -625,6 +626,7 @@ class SixDofTrendNode:
             "processing_ms": 0.0,
         }
         self.active_reference_token = token
+        self.active_reference_identity = identity
 
     def reset(self, _request):
         with self.lock:
@@ -652,7 +654,15 @@ class SixDofTrendNode:
         if not message.control_gate_present:
             return True
         token = str(message.control_reference_token)
-        enabled = bool(message.control_enabled and token)
+        identity = (
+            (
+                int(message.presence_generation),
+                int(message.active_hand_generation),
+                bool(message.hand_is_right),
+            )
+            if message.hand_identity_present else None
+        )
+        enabled = bool(message.control_enabled and token and identity is not None)
         if not enabled:
             with self.lock:
                 self.startup_c_gate_satisfied = True
@@ -660,6 +670,7 @@ class SixDofTrendNode:
                 state_changed = bool(
                     self.reference_armed or self.reference_ready or
                     self.active_reference_token is not None or
+                    self.active_reference_identity is not None or
                     self.latest_tracking is not None)
                 if state_changed:
                     self.clear_reference_locked(armed=False, token=None)
@@ -667,7 +678,12 @@ class SixDofTrendNode:
                 self.servo_interlock_status = None
             if state_changed:
                 self.publish_hold_now("OPERATOR_C_GATE_LOCKED")
-            self.publish_waiting(message, "WAITING_FOR_OPERATOR_C_REFERENCE")
+            waiting_reason = (
+                "HAND_IDENTITY_MISSING_REQUIRES_NEW_C"
+                if message.control_enabled and identity is None
+                else "WAITING_FOR_OPERATOR_C_REFERENCE"
+            )
+            self.publish_waiting(message, waiting_reason)
             rospy.logwarn_throttle(
                 2.0, "Gazebo control LOCKED: hold a neutral hand pose and "
                 "press C in the camera window")
@@ -693,6 +709,32 @@ class SixDofTrendNode:
             return False
 
         with self.lock:
+            identity_mismatch = bool(
+                token == self.active_reference_token
+                and self.active_reference_identity is not None
+                and identity != self.active_reference_identity
+            )
+            if identity_mismatch:
+                previous_identity = self.active_reference_identity
+                self.clear_reference_locked(
+                    armed=False,
+                    token=token,
+                    identity=previous_identity,
+                )
+        if identity_mismatch:
+            self.publish_hold_now("HAND_IDENTITY_CHANGED_REQUIRES_NEW_C")
+            self.publish_waiting(
+                message, "HAND_IDENTITY_CHANGED_REQUIRES_NEW_C"
+            )
+            rospy.logerr_throttle(
+                2.0,
+                "Camera hand identity changed inside C token %s; output is "
+                "locked until a new C reference token arrives",
+                token,
+            )
+            return False
+
+        with self.lock:
             if token == self.blocked_reference_token:
                 blocked_status = self.servo_interlock_status
                 token_changed = False
@@ -700,7 +742,9 @@ class SixDofTrendNode:
                 blocked_status = None
                 token_changed = token != self.active_reference_token
                 if token_changed:
-                    self.clear_reference_locked(armed=True, token=token)
+                    self.clear_reference_locked(
+                        armed=True, token=token, identity=identity
+                    )
                     self.blocked_reference_token = None
                     self.servo_interlock_status = None
         if blocked_status is not None:
@@ -818,6 +862,7 @@ class SixDofTrendNode:
                 self.camera_workspace_calibration_status),
             "reference_ready": self.reference_ready,
             "active_reference_token": self.active_reference_token,
+            "active_reference_identity": self.active_reference_identity,
             "servo_interlock_status": self.servo_interlock_status,
             "servo_status": self.last_servo_status,
             "servo_auto_reset_attempted": False,

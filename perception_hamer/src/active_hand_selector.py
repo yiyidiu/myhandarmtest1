@@ -23,6 +23,10 @@ class AutomaticActiveHandSelector:
         if self.switch_frames < 2:
             raise ValueError("automatic hand switching requires at least two frames")
         self.active_is_right: Optional[bool] = None
+        # Monotonic identity generation for the camera process lifetime.  This
+        # is not a biometric hand identifier; it is a fail-closed session
+        # identity that changes whenever automatic selection changes sides.
+        self.active_hand_generation = 0
         self.previous_bbox: Optional[np.ndarray] = None
         self._switch_candidate_is_right: Optional[bool] = None
         self._switch_count = 0
@@ -68,6 +72,7 @@ class AutomaticActiveHandSelector:
             "detections": all_candidates,
             "detected_hand_count": len(all_candidates),
             "active_hand_is_right": bool(self.active_is_right),
+            "active_hand_generation": int(self.active_hand_generation),
             "ignored_non_active_hand_count": sum(
                 bool(item["is_right"]) != bool(self.active_is_right)
                 for item in all_candidates
@@ -80,15 +85,23 @@ class AutomaticActiveHandSelector:
 
     def select(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload, dict):
-            return {"valid": False, "reason": "malformed_detector_payload"}
+            return {
+                "valid": False,
+                "reason": "malformed_detector_payload",
+                "active_hand_generation": int(self.active_hand_generation),
+            }
         candidates = self._valid_candidates(payload)
         if self.active_is_right is None:
             if not candidates:
                 result = dict(payload)
                 result["active_hand_policy"] = "automatic_single_active_hand"
+                result["active_hand_generation"] = int(
+                    self.active_hand_generation
+                )
                 return result
             selected = self._choose(candidates)
             self.active_is_right = bool(selected["is_right"])
+            self.active_hand_generation += 1
             self._switch_candidate_is_right = None
             self._switch_count = 0
             return self._selected_payload(selected, candidates)
@@ -111,6 +124,7 @@ class AutomaticActiveHandSelector:
                 "valid": False,
                 "reason": str(payload.get("reason", "active_hand_not_detected")),
                 "active_hand_is_right": bool(self.active_is_right),
+                "active_hand_generation": int(self.active_hand_generation),
                 "active_hand_policy": "automatic_single_active_hand",
                 "detections": [],
             }
@@ -130,12 +144,14 @@ class AutomaticActiveHandSelector:
                     self._switch_count, self.switch_frames
                 ),
                 "active_hand_is_right": bool(self.active_is_right),
+                "active_hand_generation": int(self.active_hand_generation),
                 "switch_candidate_is_right": candidate_is_right,
                 "active_hand_policy": "automatic_single_active_hand",
                 "detections": candidates,
             }
         switched_from = bool(self.active_is_right)
         self.active_is_right = candidate_is_right
+        self.active_hand_generation += 1
         self.previous_bbox = None
         self._switch_candidate_is_right = None
         self._switch_count = 0

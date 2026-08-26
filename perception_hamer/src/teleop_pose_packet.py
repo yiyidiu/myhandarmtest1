@@ -339,10 +339,19 @@ def build_live_teleop_packet(
     roi: Any,
     session_id: str,
     sequence: int,
+    presence_generation: int,
+    active_hand_generation: int,
     reference_depth_m: float = None,
     reference_depth_age_s: float = None,
 ) -> dict:
     """Build one fail-closed pose packet from the configured control frame."""
+
+    if not isinstance(getattr(result, "is_right", None), (bool, np.bool_)):
+        raise ValueError("HaMeR result must carry boolean is_right identity")
+    presence_generation = int(presence_generation)
+    active_hand_generation = int(active_hand_generation)
+    if presence_generation < 0 or active_hand_generation < 0:
+        raise ValueError("hand identity generations must be non-negative")
 
     control = estimates.get(
         "control_wrist_frame", estimates.get("mano_joint_palm_frame")
@@ -414,6 +423,10 @@ def build_live_teleop_packet(
         "palm_rotation_row_major": np.asarray(control["rotation"]).reshape(-1).tolist(),
         "confidence": [position_confidence]*3+[rotation_confidence]*3,
         "valid": True, "gesture": 0, "gesture_confidence": 0.0,
+        "hand_identity_present": True,
+        "hand_is_right": bool(result.is_right),
+        "presence_generation": presence_generation,
+        "active_hand_generation": active_hand_generation,
         "invalid_reason": (
             str(control.get("failure_reason", ""))
             if not orientation_channel_valid else ""
@@ -431,8 +444,45 @@ def build_live_teleop_packet(
     }
 
 
+def build_invalid_teleop_packet(
+    session_id: str,
+    sequence: int,
+    stamp: float,
+    invalid_reason: str,
+    presence_generation: int,
+    active_hand_generation: int,
+    hand_is_right: Any = None,
+    frame_id: str = "camera_color_optical_frame",
+) -> dict:
+    """Build an explicit no-pose heartbeat without fabricating geometry."""
+
+    presence_generation = int(presence_generation)
+    active_hand_generation = int(active_hand_generation)
+    if presence_generation < 0 or active_hand_generation < 0:
+        raise ValueError("hand identity generations must be non-negative")
+    identity_present = isinstance(hand_is_right, (bool, np.bool_))
+    reason = str(invalid_reason or "HAMER_POSE_INVALID")
+    return {
+        "schema": "handarm_hamer_pose_v1",
+        "session_id": str(session_id),
+        "sequence": int(sequence),
+        "stamp": float(stamp),
+        "frame_id": str(frame_id),
+        "valid": False,
+        "invalid_reason": reason,
+        "confidence": [0.0] * 6,
+        "gesture": 0,
+        "gesture_confidence": 0.0,
+        "hand_identity_present": bool(identity_present),
+        "hand_is_right": bool(hand_is_right) if identity_present else False,
+        "presence_generation": presence_generation,
+        "active_hand_generation": active_hand_generation,
+    }
+
+
 __all__ = [
     "build_live_teleop_packet",
+    "build_invalid_teleop_packet",
     "foreground_depth_component",
     "metric_wrist_from_arrays",
     "metric_wrist_ring_from_arrays",

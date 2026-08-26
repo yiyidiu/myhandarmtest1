@@ -32,8 +32,9 @@
   <node if="$(eval arg('input_source') == 'udp')"
         pkg="handarm_moveit_demo" type="hamer_input_adapter.py"
         name="hamer_input_adapter" output="screen">
-    <!-- Match shared_teleop.yaml safety.input_timeout_s.  The adapter uses
-         wall-monotonic time and emits one explicit invalid sample per gap. -->
+    <!-- Match shared_teleop.yaml safety.input_timeout_s. The adapter uses
+         wall-monotonic time and repeatedly publishes fail-closed status for
+         the full duration of a UDP gap. -->
     <param name="input_timeout_s" value="0.40" />
   </node>
   <node if="$(eval arg('input_source') == 'replay')"
