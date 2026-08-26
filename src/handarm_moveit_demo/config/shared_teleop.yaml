@@ -48,8 +48,10 @@ mapping:
   # AprilTag V3 sends q_delta without an axis remap.  Here the same relation
   # maps MANO wrist-local RGB axes directly to captured tool0-local XYZ axes.
   rotation_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
-  # 5 cm hand translation targets 3 cm of tool translation on every axis.
-  translation_gain: [0.6, 0.6, 0.6]
+  # Keep the proven 0.6x depth/lateral response. Image-up/down is the mapped
+  # base-Z component; use 0.8x there so the operator can reach the table/object
+  # height before the hand leaves the D455 field of view.
+  translation_gain: [0.6, 0.6, 0.8]
   # q_target = q_robot_zero * q_hand_delta: 20 deg hand -> 20 deg tool target.
   rotation_gain: [1.0, 1.0, 1.0]
 
