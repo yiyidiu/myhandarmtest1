@@ -12,6 +12,16 @@
 
 详细时间线见 [近 10 天项目节点与里程碑](docs/PROJECT_MILESTONES_20260816_20260825.md)。
 
+## Ubuntu 20.04 一键复现
+
+只安装了 ROS Noetic 的新电脑，下载 `v1.0.1-ubuntu2004-reproduction` Release 压缩包后运行：
+
+```bash
+./scripts/bootstrap_ubuntu2004.sh
+```
+
+脚本会安装 MoveIt/Gazebo 等依赖，构建六个 Catkin 包并运行当前完整的 439 项测试（感知 201、仿真 120、遥操作/Catkin 118）。面向新手的下载、校验、解压和故障定位步骤见 [Ubuntu 20.04 最快复现手册](docs/UBUNTU2004_FAST_REPRODUCTION_ZH.md)。HaMeR checkpoint 和许可受限的 MANO 文件不包含在压缩包中，D455/HaMeR 真机层需按手册单独配置。
+
 ## 目录
 
 ```text
