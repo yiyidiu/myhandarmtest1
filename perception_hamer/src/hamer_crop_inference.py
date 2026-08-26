@@ -384,6 +384,7 @@ class HamerCropInference:
         self._model: Any = None
         self._cfg: Any = None
         self._device: Any = None
+        self._perspective_projection: Any = None
         self._frozen_betas: Dict[bool, Any] = {}
         self._neutral_mano_canonical: Optional[Tuple[np.ndarray, np.ndarray]] = None
 
@@ -426,6 +427,7 @@ class HamerCropInference:
             import torch
             from hamer.configs import get_config
             from hamer.models import HAMER
+            from hamer.utils.geometry import perspective_projection
         except Exception as exc:
             raise HamerInferenceError(
                 "HaMeR runtime is unavailable; activate hamer_rtx2060"
@@ -463,6 +465,7 @@ class HamerCropInference:
         self._model = model
         self._cfg = cfg
         self._device = device
+        self._perspective_projection = perspective_projection
 
     def mano_faces(self) -> np.ndarray:
         """Return the fixed MANO triangle topology for lightweight display."""
@@ -614,6 +617,89 @@ class HamerCropInference:
         output["pred_keypoints_3d"] = mano_output.joints.reshape(batch_size, -1, 3)
         output["pred_vertices"] = mano_output.vertices.reshape(batch_size, -1, 3)
 
+    def _forward_with_frozen_betas(
+        self, batch: Dict[str, Any], is_right: bool
+    ) -> Dict[str, Any]:
+        """Run HaMeR once while injecting the calibrated shape before MANO.
+
+        Upstream HaMeR evaluates MANO inside ``forward_step``. Replacing betas
+        only after that call required a second MANO evaluation on every live
+        frame. This batch-one equivalent preserves upstream output semantics
+        while applying the frozen shape before the single MANO call.
+        """
+
+        if bool(is_right) not in self._frozen_betas:
+            raise HamerInferenceError("frozen betas are unavailable")
+        torch = self._torch
+        model = self._model
+        image = batch["img"]
+        batch_size = int(image.shape[0])
+        if batch_size != 1:
+            raise HamerInferenceError("optimized frozen-betas path requires batch one")
+        conditioning = model.backbone(image[:, :, :, 32:-32])
+        predicted, pred_cam, _ = model.mano_head(conditioning)
+        predicted = dict(predicted)
+        template = predicted["betas"]
+        predicted["betas"] = self._frozen_betas[bool(is_right)].to(
+            device=template.device,
+            dtype=template.dtype,
+        )
+        output = {
+            "pred_cam": pred_cam,
+            "pred_mano_params": {
+                key: value.clone() for key, value in predicted.items()
+            },
+        }
+        device = predicted["hand_pose"].device
+        dtype = predicted["hand_pose"].dtype
+        focal_length = (
+            self._cfg.EXTRA.FOCAL_LENGTH
+            * torch.ones(batch_size, 2, device=device, dtype=dtype)
+        )
+        pred_cam_t = torch.stack(
+            [
+                pred_cam[:, 1],
+                pred_cam[:, 2],
+                2.0
+                * focal_length[:, 0]
+                / (
+                    self._cfg.MODEL.IMAGE_SIZE * pred_cam[:, 0]
+                    + 1.0e-9
+                ),
+            ],
+            dim=-1,
+        )
+        output["pred_cam_t"] = pred_cam_t
+        output["focal_length"] = focal_length
+        mano_params = {
+            "global_orient": predicted["global_orient"].reshape(
+                batch_size, -1, 3, 3
+            ),
+            "hand_pose": predicted["hand_pose"].reshape(
+                batch_size, -1, 3, 3
+            ),
+            "betas": predicted["betas"].reshape(batch_size, -1),
+        }
+        with torch.autocast(device_type=self._device.type, enabled=False):
+            mano_output = model.mano(
+                **{key: value.float() for key, value in mano_params.items()},
+                pose2rot=False,
+            )
+            joints = mano_output.joints.reshape(batch_size, -1, 3)
+            output["pred_keypoints_3d"] = joints
+            output["pred_vertices"] = mano_output.vertices.reshape(
+                batch_size, -1, 3
+            )
+            output["pred_keypoints_2d"] = self._perspective_projection(
+                joints,
+                translation=pred_cam_t.reshape(-1, 3).float(),
+                focal_length=(
+                    focal_length.reshape(-1, 2).float()
+                    / self._cfg.MODEL.IMAGE_SIZE
+                ),
+            ).reshape(batch_size, -1, 2)
+        return output
+
     @staticmethod
     def _numpy_first(value: Any) -> np.ndarray:
         return value.detach().float().cpu().numpy()[0].copy()
@@ -660,8 +746,13 @@ class HamerCropInference:
                     dtype=torch.float16 if use_fp16 else None,
                     enabled=use_fp16,
                 ):
-                    output = self._model(batch)
-                self._apply_frozen_betas(output, bool(is_right))
+                    if self.freeze_betas and bool(is_right) in self._frozen_betas:
+                        output = self._forward_with_frozen_betas(
+                            batch, bool(is_right)
+                        )
+                    else:
+                        output = self._model(batch)
+                        self._apply_frozen_betas(output, bool(is_right))
             if self._device.type == "cuda":
                 torch.cuda.synchronize(self._device)
         except torch.cuda.OutOfMemoryError as exc:

@@ -1,6 +1,16 @@
 std_msgs/Header header
 # Original HaMeR/D455 clock in seconds. Header.stamp is ROS-domain receipt time.
 float64 source_timestamp
+# Producer-side timing from the exact RGB-D frame used for this measurement.
+# These values distinguish true camera measurements from controller replay.
+bool timing_contract_present
+uint64 source_capture_sequence
+uint32 dropped_capture_frames
+float32 capture_to_publish_s
+bool inference_executed
+float32 inference_call_s
+float32 model_inference_s
+float32 postprocess_s
 geometry_msgs/Pose wrist_pose
 float32[6] confidence
 bool valid

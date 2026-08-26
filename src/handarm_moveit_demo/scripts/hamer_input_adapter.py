@@ -17,6 +17,7 @@ from handarm_moveit_demo.msg import HamerHandPose
 from handarm_moveit_demo.hamer_input_contract import (
     HamerPacketContract,
     InputWatchdog,
+    ReferenceTokenInterlock,
 )
 
 
@@ -28,6 +29,12 @@ class HamerInputAdapter:
         self.default_frame = rospy.get_param("~camera_frame", "camera_color_optical_frame")
         self.maximum_packet_bytes = int(rospy.get_param("~maximum_packet_bytes", 65535))
         self.input_timeout_s = float(rospy.get_param("~input_timeout_s", 0.40))
+        self.maximum_pipeline_latency_s = float(
+            rospy.get_param("~maximum_pipeline_latency_s", 0.20)
+        )
+        self.require_timing_contract = bool(
+            rospy.get_param("~require_timing_contract", True)
+        )
         self.watchdog_publish_period_s = float(
             rospy.get_param("~watchdog_publish_period_s", 0.10)
         )
@@ -35,7 +42,12 @@ class HamerInputAdapter:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind((self.bind_ip, self.port))
         self.socket.setblocking(False)
-        self.contract = HamerPacketContract(self.default_frame)
+        self.contract = HamerPacketContract(
+            self.default_frame,
+            maximum_pipeline_latency_s=self.maximum_pipeline_latency_s,
+            require_timing_contract=self.require_timing_contract,
+        )
+        self.reference_interlock = ReferenceTokenInterlock()
         self.watchdog = InputWatchdog(
             self.input_timeout_s, self.watchdog_publish_period_s
         )
@@ -43,20 +55,32 @@ class HamerInputAdapter:
         self.timer = rospy.Timer(rospy.Duration(0.005), self.poll)
         rospy.loginfo(
             "HaMeR input adapter listening on udp://%s:%d -> %s "
-            "(fail-closed timeout %.3f s)",
+            "(fail-closed timeout %.3f s, producer latency %.3f s, "
+            "timing required=%s)",
             self.bind_ip,
             self.port,
             self.topic,
             self.input_timeout_s,
+            self.maximum_pipeline_latency_s,
+            self.require_timing_contract,
         )
 
     def convert(self, packet):
         normalized = self.contract.validate(packet)
+        self.reference_interlock.accept(normalized)
         message = HamerHandPose()
         # Watchdog age must stay in the same clock domain as rospy.Time.now(),
         # especially when Gazebo /use_sim_time is active.
         message.header.stamp = rospy.Time.now()
         message.source_timestamp = normalized["source_stamp"]
+        message.timing_contract_present = normalized["timing_contract_present"]
+        message.source_capture_sequence = normalized["source_capture_sequence"]
+        message.dropped_capture_frames = normalized["dropped_capture_frames"]
+        message.capture_to_publish_s = normalized["capture_to_publish_s"]
+        message.inference_executed = normalized["inference_executed"]
+        message.inference_call_s = normalized["inference_call_s"]
+        message.model_inference_s = normalized["model_inference_s"]
+        message.postprocess_s = normalized["postprocess_s"]
         message.header.seq = normalized["sequence"]
         message.header.frame_id = normalized["frame_id"]
         (message.wrist_pose.position.x, message.wrist_pose.position.y,
@@ -97,6 +121,14 @@ class HamerInputAdapter:
         message.header.seq = self.fail_closed_sequence
         message.header.frame_id = self.default_frame
         message.source_timestamp = 0.0
+        message.timing_contract_present = False
+        message.source_capture_sequence = 0
+        message.dropped_capture_frames = 0
+        message.capture_to_publish_s = 0.0
+        message.inference_executed = False
+        message.inference_call_s = 0.0
+        message.model_inference_s = 0.0
+        message.postprocess_s = 0.0
         message.wrist_pose.orientation.w = 1.0
         message.confidence = [0.0] * 6
         message.valid = False
@@ -113,7 +145,15 @@ class HamerInputAdapter:
         message.gesture_confidence = 0.0
         return message
 
-    def publish_fail_closed(self, reason):
+    def publish_fail_closed(self, reason, rejected_packet=None):
+        rejected_token = ""
+        if isinstance(rejected_packet, dict) and (
+            rejected_packet.get("control_enabled") is True
+        ):
+            rejected_token = str(
+                rejected_packet.get("control_reference_token", "")
+            )
+        self.reference_interlock.require_new_reference(rejected_token)
         self.publisher.publish(self.fail_closed_message(reason))
 
     def poll(self, _event):
@@ -138,7 +178,8 @@ class HamerInputAdapter:
                 self.publish_fail_closed(
                     "HAMER_UDP_PACKET_REJECTED:{}:{}".format(
                         type(exc).__name__, exc
-                    )
+                    ),
+                    rejected_packet=newest,
                 )
                 rospy.logwarn_throttle(
                     1.0, "HaMeR UDP packet rejected and control locked: %s", exc

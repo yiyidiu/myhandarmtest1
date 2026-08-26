@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Strict, aligned Intel RealSense D455 RGB-D capture.
+"""Strict, aligned Intel RealSense D435i/D455 RGB-D capture.
 
 The public frame carries both device and host timestamps, the calibrated color
 intrinsics used by the aligned depth image, the native depth scale, and USB
@@ -11,13 +11,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 
 import numpy as np
 
+from .realsense_capability import (
+    match_supported_device_model,
+    normalize_device_models,
+)
+
 
 class D455CaptureError(RuntimeError):
-    """Raised when the requested D455 stream cannot be trusted."""
+    """Raised when the requested calibrated RealSense stream cannot be trusted."""
 
 
 def _finite(value: Any, name: str) -> float:
@@ -293,7 +298,7 @@ class D455Frame:
 
 
 class D455Capture:
-    """Context-managed 640x480 aligned RGB-D stream with fail-closed checks."""
+    """Backward-compatible D455 name for calibrated D435i/D455 capture."""
 
     def __init__(
         self,
@@ -303,6 +308,7 @@ class D455Capture:
         serial: Optional[str] = None,
         timeout_ms: int = 3000,
         require_superspeed: bool = False,
+        device_models: Optional[Iterable[str]] = None,
     ) -> None:
         self.width = int(width)
         self.height = int(height)
@@ -310,6 +316,7 @@ class D455Capture:
         self.serial = str(serial) if serial else None
         self.timeout_ms = int(timeout_ms)
         self.require_superspeed = bool(require_superspeed)
+        self.device_models = normalize_device_models(device_models)
         if min(self.width, self.height, self.fps, self.timeout_ms) <= 0:
             raise ValueError("capture dimensions, fps, and timeout must be positive")
         self._rs: Any = None
@@ -360,11 +367,17 @@ class D455Capture:
             )
         selected = devices[0]
         name = selected.get_info(rs.camera_info.name)
-        if "D455" not in name:
-            raise D455CaptureError(f"selected device is not a D455: {name}")
+        device_model = match_supported_device_model(name, self.device_models)
+        if device_model is None:
+            raise D455CaptureError(
+                "selected RealSense device is not supported: "
+                f"{name}; allowed={','.join(self.device_models)}"
+            )
         usb = selected.get_info(rs.camera_info.usb_type_descriptor)
         if self.require_superspeed and not usb.startswith("3"):
-            raise D455CaptureError(f"D455 is not on SuperSpeed USB: descriptor={usb}")
+            raise D455CaptureError(
+                f"{device_model} is not on SuperSpeed USB: descriptor={usb}"
+            )
 
         pipeline = rs.pipeline(context)
         config = rs.config()
@@ -394,6 +407,7 @@ class D455Capture:
             self._depth_scale = _finite(depth_scale, "depth scale")
             self._metadata = {
                 "device_name": device.get_info(rs.camera_info.name),
+                "device_model": device_model,
                 "device_serial": device.get_info(rs.camera_info.serial_number),
                 "firmware_version": device.get_info(rs.camera_info.firmware_version),
                 "usb_type_descriptor": device.get_info(
@@ -456,7 +470,7 @@ class D455Capture:
             if isinstance(exc, D455CaptureError):
                 raise
             raise D455CaptureError(
-                f"failed to initialize D455 session metadata: {exc}"
+                f"failed to initialize RealSense session metadata: {exc}"
             ) from exc
         return self
 
@@ -606,3 +620,9 @@ class D455Capture:
         raise D455CaptureError(
             f"stream did not reach {consecutive} stable synchronized frames"
         )
+
+
+# Generic names for new code; legacy imports remain source-compatible.
+RealSenseCaptureError = D455CaptureError
+RealSenseFrame = D455Frame
+RealSenseCapture = D455Capture

@@ -27,6 +27,13 @@ def _unit_float(value: Any, name: str) -> float:
     return float(np.clip(parsed, 0.0, 1.0))
 
 
+def _nonnegative_float(value: Any, name: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed < 0.0:
+        raise ValueError("{} must be finite and non-negative".format(name))
+    return parsed
+
+
 def identity_reference_token(
     session_id: str,
     reference_epoch: int,
@@ -47,11 +54,41 @@ def identity_reference_token(
     )
 
 
+def authoritative_camera_c_gate_lock(
+    control_enabled: Any,
+    timing_contract_present: Any,
+) -> bool:
+    """Distinguish a camera C-up packet from adapter-generated lock status."""
+
+    return control_enabled is False and timing_contract_present is True
+
+
 class HamerPacketContract:
     """Validate packets before committing their session/sequence state."""
 
-    def __init__(self, default_frame: str) -> None:
+    def __init__(
+        self,
+        default_frame: str,
+        maximum_pipeline_latency_s: Optional[float] = None,
+        require_timing_contract: bool = False,
+    ) -> None:
         self.default_frame = str(default_frame)
+        self.require_timing_contract = bool(require_timing_contract)
+        self.maximum_pipeline_latency_s = (
+            None
+            if maximum_pipeline_latency_s is None
+            else float(maximum_pipeline_latency_s)
+        )
+        if (
+            self.maximum_pipeline_latency_s is not None
+            and (
+                not math.isfinite(self.maximum_pipeline_latency_s)
+                or self.maximum_pipeline_latency_s <= 0.0
+            )
+        ):
+            raise ValueError(
+                "maximum_pipeline_latency_s must be finite and positive"
+            )
         self.session_id: Optional[str] = None
         self.last_sequence: Optional[int] = None
 
@@ -124,6 +161,85 @@ class HamerPacketContract:
             "confidence": np.clip(confidence, 0.0, 1.0),
         }
 
+    def _timing(
+        self, packet: Mapping[str, Any], observation_valid: bool
+    ) -> Dict[str, Any]:
+        raw = packet.get("timing")
+        if raw is None:
+            if self.require_timing_contract:
+                raise ValueError("live packet requires timing contract")
+            return {
+                "timing_contract_present": False,
+                "source_capture_sequence": 0,
+                "dropped_capture_frames": 0,
+                "capture_to_publish_s": 0.0,
+                "inference_executed": False,
+                "inference_call_s": 0.0,
+                "model_inference_s": 0.0,
+                "postprocess_s": 0.0,
+            }
+        if not isinstance(raw, Mapping):
+            raise ValueError("timing must be a mapping")
+        if _nonnegative_int(
+            raw.get("contract_version"), "timing.contract_version"
+        ) != 1:
+            raise ValueError("unsupported timing contract version")
+        capture_sequence = _nonnegative_int(
+            raw.get("capture_sequence"), "timing.capture_sequence"
+        )
+        dropped = _nonnegative_int(
+            raw.get("dropped_capture_frames"),
+            "timing.dropped_capture_frames",
+        )
+        if capture_sequence > 2**64 - 1 or dropped > 2**32 - 1:
+            raise ValueError("timing sequence/drop count exceeds ROS field width")
+        capture_to_publish = _nonnegative_float(
+            raw.get("capture_to_publish_s"),
+            "timing.capture_to_publish_s",
+        )
+        inference_executed = raw.get("inference_executed") is True
+        inference_call = _nonnegative_float(
+            raw.get("inference_call_s"), "timing.inference_call_s"
+        )
+        model_inference = _nonnegative_float(
+            raw.get("model_inference_s"), "timing.model_inference_s"
+        )
+        postprocess = _nonnegative_float(
+            raw.get("postprocess_s"), "timing.postprocess_s"
+        )
+        if inference_executed and inference_call <= 0.0:
+            raise ValueError("executed inference must have positive call time")
+        if not inference_executed and (
+            inference_call > 0.0 or model_inference > 0.0
+        ):
+            raise ValueError("non-executed inference must have zero timings")
+        if model_inference > inference_call + 1.0e-6:
+            raise ValueError("model inference time exceeds total inference call")
+        if observation_valid and (
+            not inference_executed or model_inference <= 0.0
+        ):
+            raise ValueError("valid observation requires measured inference timing")
+        if (
+            observation_valid
+            and self.maximum_pipeline_latency_s is not None
+            and capture_to_publish > self.maximum_pipeline_latency_s
+        ):
+            raise ValueError(
+                "source_pipeline_latency_exceeded:{:.6f}>{:.6f}".format(
+                    capture_to_publish, self.maximum_pipeline_latency_s
+                )
+            )
+        return {
+            "timing_contract_present": True,
+            "source_capture_sequence": capture_sequence,
+            "dropped_capture_frames": dropped,
+            "capture_to_publish_s": capture_to_publish,
+            "inference_executed": inference_executed,
+            "inference_call_s": inference_call,
+            "model_inference_s": model_inference,
+            "postprocess_s": postprocess,
+        }
+
     def validate(self, packet: Mapping[str, Any]) -> Dict[str, Any]:
         if not isinstance(packet, Mapping):
             raise ValueError("packet must be a mapping")
@@ -145,6 +261,7 @@ class HamerPacketContract:
             raise ValueError("unexpected_camera_frame:{}".format(frame_id))
 
         observation_valid = packet.get("valid") is True
+        timing = self._timing(packet, observation_valid)
         identity = self._identity(packet)
         control_enabled = packet.get("control_enabled") is True
         reference_epoch = _nonnegative_int(
@@ -218,6 +335,7 @@ class HamerPacketContract:
             "control_enabled": control_enabled,
             "control_reference_epoch": reference_epoch,
             "control_reference_token": reference_token,
+            **timing,
             **identity,
             **pose,
         }
@@ -225,6 +343,48 @@ class HamerPacketContract:
         self.session_id = session
         self.last_sequence = sequence
         return normalized
+
+
+class ReferenceTokenInterlock:
+    """Latch a failed live C token until the camera creates a new epoch."""
+
+    def __init__(self) -> None:
+        self.last_accepted_token: Optional[str] = None
+        self._blocked_tokens = set()
+
+    @property
+    def blocked_token(self) -> Optional[str]:
+        """Backward-compatible single-value view for diagnostics/tests."""
+
+        if not self._blocked_tokens:
+            return None
+        if self.last_accepted_token in self._blocked_tokens:
+            return self.last_accepted_token
+        return sorted(self._blocked_tokens)[0]
+
+    def accept(self, normalized: Mapping[str, Any]) -> None:
+        enabled = normalized.get("control_enabled") is True
+        token = str(normalized.get("control_reference_token", ""))
+        if not enabled:
+            return
+        if not token:
+            raise ValueError("enabled control has no reference token")
+        if token in self._blocked_tokens:
+            raise ValueError("blocked_reference_token_requires_new_c")
+        if self._blocked_tokens:
+            self._blocked_tokens.clear()
+        self.last_accepted_token = token
+
+    def require_new_reference(
+        self, rejected_token: Optional[str] = None
+    ) -> Optional[str]:
+        candidate = str(rejected_token or "")
+        if self.last_accepted_token:
+            self._blocked_tokens.add(self.last_accepted_token)
+        if candidate:
+            self._blocked_tokens.add(candidate)
+            return candidate
+        return self.last_accepted_token
 
 
 class InputWatchdog:
@@ -274,7 +434,9 @@ class InputWatchdog:
 
 
 __all__ = [
+    "authoritative_camera_c_gate_lock",
     "HamerPacketContract",
     "InputWatchdog",
+    "ReferenceTokenInterlock",
     "identity_reference_token",
 ]

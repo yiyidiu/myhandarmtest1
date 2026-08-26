@@ -15,8 +15,10 @@ forearm failure never invalidates or hides the hand mesh.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import copy
+from dataclasses import dataclass, replace
 import math
+import threading
 import time
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
@@ -102,6 +104,314 @@ class ForearmObservation:
             ),
             "twist_observable": False,
         }
+
+
+@dataclass(frozen=True)
+class _ForearmJob:
+    aligned_depth_raw: np.ndarray
+    depth_scale_m_per_unit: float
+    color_intrinsics: Dict[str, Any]
+    wrist_center_m: np.ndarray
+    hand_detection: Optional[Dict[str, Any]]
+    detection_age_s: float
+    identity: Tuple[int, int, bool, int]
+    source_capture_sequence: int
+    source_monotonic_s: float
+    submitted_monotonic_s: float
+
+
+@dataclass(frozen=True)
+class _CompletedForearmJob:
+    observation: ForearmObservation
+    identity: Tuple[int, int, bool, int]
+    source_capture_sequence: int
+    source_monotonic_s: float
+    submitted_monotonic_s: float
+    started_monotonic_s: float
+    completed_monotonic_s: float
+    input_version: int
+
+
+class LatestOnlyForearmEstimator:
+    """Run the optional RGB-D forearm anchor outside the HaMeR control path.
+
+    The estimator is intentionally a capacity-one overwrite mailbox. A slow
+    depth fit can therefore never build a latency queue behind the camera. A
+    result is usable only by the exact hand/presence/context identity that
+    submitted it, and its confidence decays with source-frame age before it is
+    allowed to perturb the MANO wrist orientation.
+    """
+
+    def __init__(
+        self,
+        config: Optional["ForearmFusionConfig"] = None,
+        estimator: Optional["CausalForearmEstimator"] = None,
+        maximum_rate_hz: float = 0.0,
+    ) -> None:
+        self.config = config or ForearmFusionConfig()
+        self._estimator = estimator or CausalForearmEstimator(self.config)
+        rate = float(maximum_rate_hz)
+        if not math.isfinite(rate) or rate < 0.0:
+            raise ValueError("maximum_rate_hz must be finite and non-negative")
+        self._minimum_period_s = 0.0 if rate == 0.0 else 1.0 / rate
+        self._condition = threading.Condition()
+        self._job: Optional[_ForearmJob] = None
+        self._input_version = 0
+        self._consumed_version = 0
+        self._completed: Optional[_CompletedForearmJob] = None
+        self._worker_identity: Optional[Tuple[int, int, bool, int]] = None
+        self._published = 0
+        self._completed_count = 0
+        self._overwritten = 0
+        self._errors = 0
+        self._last_error = ""
+        self._stopping = False
+        self._thread = threading.Thread(
+            target=self._run,
+            name="rgbd-forearm-latest-only",
+            daemon=True,
+        )
+        self._thread.start()
+
+    @staticmethod
+    def _identity(value: Any) -> Tuple[int, int, bool, int]:
+        try:
+            presence, active_hand, is_right, context = tuple(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "forearm identity must be "
+                "(presence_generation, active_hand_generation, is_right, context)"
+            ) from exc
+        if not isinstance(is_right, (bool, np.bool_)):
+            raise ValueError("forearm identity is_right must be boolean")
+        parsed = (int(presence), int(active_hand), bool(is_right), int(context))
+        if parsed[0] < 0 or parsed[1] < 0 or parsed[3] < 0:
+            raise ValueError("forearm identity generations must be non-negative")
+        return parsed
+
+    def submit(
+        self,
+        aligned_depth_raw: Any,
+        depth_scale_m_per_unit: float,
+        color_intrinsics: Mapping[str, Any],
+        wrist_center_m: Any,
+        hand_detection: Optional[Mapping[str, Any]],
+        detection_age_s: float,
+        identity: Any,
+        source_capture_sequence: int,
+        source_monotonic_s: float,
+        now_monotonic: Optional[float] = None,
+    ) -> int:
+        """Copy and publish one job without waiting for an older fit."""
+
+        depth = np.asarray(aligned_depth_raw)
+        wrist = np.asarray(wrist_center_m, dtype=np.float64)
+        if depth.ndim != 2 or not np.issubdtype(depth.dtype, np.integer):
+            raise ValueError("async forearm depth must be a two-dimensional integer image")
+        if wrist.shape != (3,) or not np.all(np.isfinite(wrist)):
+            raise ValueError("async forearm wrist center must be a finite 3-vector")
+        sequence = int(source_capture_sequence)
+        source = float(source_monotonic_s)
+        submitted = (
+            time.monotonic() if now_monotonic is None else float(now_monotonic)
+        )
+        if sequence < 0:
+            raise ValueError("source_capture_sequence must be non-negative")
+        if (
+            not math.isfinite(source)
+            or not math.isfinite(submitted)
+            or source <= 0.0
+            or submitted < source
+        ):
+            raise ValueError("invalid forearm source/submission monotonic time")
+        job = _ForearmJob(
+            aligned_depth_raw=np.ascontiguousarray(depth).copy(),
+            depth_scale_m_per_unit=float(depth_scale_m_per_unit),
+            color_intrinsics=copy.deepcopy(dict(color_intrinsics)),
+            wrist_center_m=wrist.copy(),
+            hand_detection=(
+                None
+                if hand_detection is None
+                else copy.deepcopy(dict(hand_detection))
+            ),
+            detection_age_s=float(detection_age_s),
+            identity=self._identity(identity),
+            source_capture_sequence=sequence,
+            source_monotonic_s=source,
+            submitted_monotonic_s=submitted,
+        )
+        with self._condition:
+            if self._stopping:
+                raise RuntimeError("async forearm estimator is closed")
+            if self._input_version > self._consumed_version:
+                self._overwritten += 1
+            self._job = job
+            self._input_version += 1
+            self._published += 1
+            self._condition.notify_all()
+            return self._input_version
+
+    def latest(
+        self,
+        expected_identity: Any,
+        maximum_source_age_s: float,
+        now_monotonic: Optional[float] = None,
+    ) -> Tuple[Optional[ForearmObservation], Dict[str, Any]]:
+        """Return a fresh identity-matched observation plus audit metadata."""
+
+        expected = self._identity(expected_identity)
+        maximum_age = float(maximum_source_age_s)
+        now = time.monotonic() if now_monotonic is None else float(now_monotonic)
+        if not math.isfinite(maximum_age) or maximum_age <= 0.0:
+            raise ValueError("maximum_source_age_s must be finite and positive")
+        if not math.isfinite(now):
+            raise ValueError("now_monotonic must be finite")
+        with self._condition:
+            completed = self._completed
+            statistics = self._statistics_locked()
+        if completed is None:
+            return None, {
+                "usable": False,
+                "reason": "no_completed_forearm_measurement",
+                "expected_identity": list(expected),
+                "statistics": statistics,
+            }
+        source_age = max(0.0, now - completed.source_monotonic_s)
+        identity_matches = completed.identity == expected
+        within_age = source_age <= maximum_age
+        observation = completed.observation
+        freshness_gain = float(
+            np.clip(1.0 - source_age / maximum_age, 0.0, 1.0)
+        )
+        usable = bool(identity_matches and within_age and observation.valid)
+        reason = "ok"
+        if not identity_matches:
+            reason = "forearm_identity_mismatch"
+        elif not within_age:
+            reason = "forearm_source_stale"
+        elif not observation.valid:
+            reason = "forearm_measurement_invalid:" + str(observation.reason)
+        adjusted = None
+        if usable:
+            adjusted_confidence = float(observation.confidence * freshness_gain)
+            if adjusted_confidence >= self.config.minimum_confidence * 0.5:
+                adjusted = replace(
+                    observation,
+                    confidence=adjusted_confidence,
+                    status="async_" + str(observation.status),
+                    age_s=max(float(observation.age_s), source_age),
+                )
+            else:
+                usable = False
+                reason = "forearm_freshness_confidence_below_gate"
+        diagnostics = {
+            "usable": bool(usable),
+            "reason": reason,
+            "expected_identity": list(expected),
+            "result_identity": list(completed.identity),
+            "source_capture_sequence": int(completed.source_capture_sequence),
+            "source_age_s": source_age,
+            "maximum_source_age_s": maximum_age,
+            "freshness_gain": freshness_gain,
+            "queue_delay_s": max(
+                0.0,
+                completed.started_monotonic_s
+                - completed.submitted_monotonic_s,
+            ),
+            "worker_processing_s": max(
+                0.0,
+                completed.completed_monotonic_s
+                - completed.started_monotonic_s,
+            ),
+            "input_version": int(completed.input_version),
+            "statistics": statistics,
+        }
+        return adjusted, diagnostics
+
+    def _run(self) -> None:
+        next_start_monotonic = 0.0
+        while True:
+            with self._condition:
+                while True:
+                    if self._stopping:
+                        return
+                    has_input = self._input_version > self._consumed_version
+                    delay = next_start_monotonic - time.monotonic()
+                    if has_input and delay <= 0.0:
+                        break
+                    self._condition.wait(None if not has_input else delay)
+                job = self._job
+                version = self._input_version
+                self._consumed_version = version
+            if job is None:
+                continue
+            started = time.monotonic()
+            next_start_monotonic = started + self._minimum_period_s
+            if job.identity != self._worker_identity:
+                self._estimator.reset()
+                self._worker_identity = job.identity
+            queued_age = max(0.0, started - job.submitted_monotonic_s)
+            try:
+                observation = self._estimator.update(
+                    job.aligned_depth_raw,
+                    job.depth_scale_m_per_unit,
+                    job.color_intrinsics,
+                    job.wrist_center_m,
+                    job.hand_detection,
+                    detection_age_s=job.detection_age_s + queued_age,
+                    now_monotonic=started,
+                )
+            except Exception as exc:
+                error = "{}:{}".format(type(exc).__name__, exc)
+                observation = _invalid(
+                    "async forearm worker:" + error,
+                    started,
+                    status="mano_only_fallback",
+                )
+                with self._condition:
+                    self._errors += 1
+                    self._last_error = error
+            completed_at = time.monotonic()
+            completed = _CompletedForearmJob(
+                observation=observation,
+                identity=job.identity,
+                source_capture_sequence=job.source_capture_sequence,
+                source_monotonic_s=job.source_monotonic_s,
+                submitted_monotonic_s=job.submitted_monotonic_s,
+                started_monotonic_s=started,
+                completed_monotonic_s=completed_at,
+                input_version=version,
+            )
+            with self._condition:
+                self._completed = completed
+                self._completed_count += 1
+
+    def _statistics_locked(self) -> Dict[str, Any]:
+        return {
+            "published": int(self._published),
+            "completed": int(self._completed_count),
+            "overwritten_before_estimation": int(self._overwritten),
+            "errors": int(self._errors),
+            "last_error": str(self._last_error),
+            "maximum_rate_hz": (
+                0.0
+                if self._minimum_period_s <= 0.0
+                else 1.0 / self._minimum_period_s
+            ),
+            "capacity": 1,
+            "policy": "overwrite_old_keep_latest",
+        }
+
+    @property
+    def statistics(self) -> Dict[str, Any]:
+        with self._condition:
+            return self._statistics_locked()
+
+    def close(self) -> None:
+        with self._condition:
+            self._stopping = True
+            self._condition.notify_all()
+        self._thread.join(timeout=3.0)
 
 
 def _invalid(
@@ -826,6 +1136,7 @@ __all__ = [
     "CausalForearmEstimator",
     "ForearmFusionConfig",
     "ForearmObservation",
+    "LatestOnlyForearmEstimator",
     "apply_forearm_fusion_to_packet",
     "estimate_forearm_from_rgbd",
     "fuse_wrist_frame_with_forearm",

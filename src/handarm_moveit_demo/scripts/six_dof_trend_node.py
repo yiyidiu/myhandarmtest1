@@ -17,6 +17,9 @@ from std_msgs.msg import Bool, Float64, Int8, String
 from std_srvs.srv import Empty, Trigger, TriggerResponse
 
 from handarm_moveit_demo.msg import HamerHandPose, HandCommand
+from handarm_moveit_demo.hamer_input_contract import (
+    authoritative_camera_c_gate_lock,
+)
 from handarm_moveit_demo.shared_teleop_core import (
     AprilTagV3PoseContinuityFilter, CollisionRetreatGuard, PoseSample,
     CameraRangeWorkspaceMapper, GroundSectorWorkspace,
@@ -672,9 +675,20 @@ class SixDofTrendNode:
         )
         enabled = bool(message.control_enabled and token and identity is not None)
         if not enabled:
+            # Only a real camera packet can prove that the operator-facing C
+            # gate was visibly locked after this receiver started.  The UDP
+            # adapter's own startup/timeout fail-closed message deliberately
+            # carries no producer timing contract; counting that synthetic
+            # status as a camera C-up edge would let a pre-existing C token
+            # re-arm a freshly restarted robot.
+            camera_c_gate_locked = authoritative_camera_c_gate_lock(
+                message.control_enabled,
+                message.timing_contract_present,
+            )
             with self.lock:
-                self.startup_c_gate_satisfied = True
-                self.startup_blocked_reference_token = None
+                if camera_c_gate_locked:
+                    self.startup_c_gate_satisfied = True
+                    self.startup_blocked_reference_token = None
                 state_changed = bool(
                     self.reference_armed or self.reference_ready or
                     self.active_reference_token is not None or

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enumerate and rank D455 stream capabilities without silently starting a fallback."""
+"""Enumerate and rank supported RealSense RGB-D stream capabilities."""
 
 from __future__ import annotations
 
@@ -9,6 +9,42 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 class CapabilityError(RuntimeError):
     pass
+
+
+SUPPORTED_RGBD_DEVICE_MODELS = ("D435I", "D455")
+
+
+def normalize_device_models(models: Optional[Iterable[str]] = None) -> Tuple[str, ...]:
+    """Return a validated, deterministic RealSense model allow-list."""
+
+    source_models = SUPPORTED_RGBD_DEVICE_MODELS if models is None else models
+    normalized = tuple(
+        dict.fromkeys(
+            str(model).strip().upper()
+            for model in source_models
+            if str(model).strip()
+        )
+    )
+    if not normalized:
+        raise ValueError("at least one RealSense device model must be allowed")
+    unknown = sorted(set(normalized) - set(SUPPORTED_RGBD_DEVICE_MODELS))
+    if unknown:
+        raise ValueError(
+            "unsupported RealSense device model policy: " + ", ".join(unknown)
+        )
+    return normalized
+
+
+def match_supported_device_model(
+    device_name: str, models: Optional[Iterable[str]] = None
+) -> Optional[str]:
+    """Identify a calibrated RGB-D model without accepting arbitrary devices."""
+
+    name = str(device_name).upper()
+    return next(
+        (model for model in normalize_device_models(models) if model in name),
+        None,
+    )
 
 
 @dataclass(frozen=True)
@@ -37,7 +73,10 @@ class MotionProfile:
         return dict(self.__dict__)
 
 
-def enumerate_device_profiles(serial: Optional[str] = None) -> Dict[str, Any]:
+def enumerate_device_profiles(
+    serial: Optional[str] = None,
+    device_models: Optional[Iterable[str]] = None,
+) -> Dict[str, Any]:
     try:
         import pyrealsense2 as rs
     except ImportError as exc:
@@ -50,10 +89,18 @@ def enumerate_device_profiles(serial: Optional[str] = None) -> Dict[str, Any]:
             if item.get_info(rs.camera_info.serial_number) == serial
         ]
     if len(devices) != 1:
-        raise CapabilityError(f"expected exactly one selected device, found {len(devices)}")
+        raise CapabilityError(
+            "expected exactly one selected device, found {}".format(len(devices))
+        )
     device = devices[0]
-    if "D455" not in device.get_info(rs.camera_info.name):
-        raise CapabilityError("selected device is not a D455")
+    device_name = device.get_info(rs.camera_info.name)
+    allowed_models = normalize_device_models(device_models)
+    device_model = match_supported_device_model(device_name, allowed_models)
+    if device_model is None:
+        raise CapabilityError(
+            "selected RealSense device is not supported: "
+            "{}; allowed={}".format(device_name, ",".join(allowed_models))
+        )
     videos: List[VideoProfile] = []
     motions: List[MotionProfile] = []
     sensor_names: List[str] = []
@@ -85,10 +132,14 @@ def enumerate_device_profiles(serial: Optional[str] = None) -> Dict[str, Any]:
                 motions.append(MotionProfile(**common))
     return {
         "device": {
-            "name": device.get_info(rs.camera_info.name),
+            "name": device_name,
+            "model": device_model,
+            "allowed_models": list(allowed_models),
             "serial": device.get_info(rs.camera_info.serial_number),
             "firmware_version": device.get_info(rs.camera_info.firmware_version),
-            "usb_type_descriptor": device.get_info(rs.camera_info.usb_type_descriptor),
+            "usb_type_descriptor": device.get_info(
+                rs.camera_info.usb_type_descriptor
+            ),
         },
         "sensors": sensor_names,
         "video_profiles": [item.as_dict() for item in videos],
@@ -108,7 +159,8 @@ def _candidate_score(item: Dict[str, Any], purpose: str) -> Tuple[int, ...]:
     if purpose == "live_algorithm":
         return matched_fps, exact_640_480, min(fps, 30), -abs(fps - 30)
     pixels = min(
-        color["width"] * color["height"], depth["width"] * depth["height"]
+        color["width"] * color["height"],
+        depth["width"] * depth["height"],
     )
     return matched_fps, exact_640_480, min(fps, 30), pixels
 
@@ -121,12 +173,14 @@ def rank_rgbd_candidates(
     color = [
         item
         for item in capability["video_profiles"]
-        if "color" in item["stream"].lower() and "rgb8" in item["format"].lower()
+        if "color" in item["stream"].lower()
+        and "rgb8" in item["format"].lower()
     ]
     depth = [
         item
         for item in capability["video_profiles"]
-        if "depth" in item["stream"].lower() and "z16" in item["format"].lower()
+        if "depth" in item["stream"].lower()
+        and "z16" in item["format"].lower()
     ]
     candidates = []
     for color_profile in color:
@@ -137,8 +191,12 @@ def rank_rgbd_candidates(
             score = _candidate_score(candidate, purpose)
             candidate["score"] = list(score)
             candidate["selection_reason"] = (
-                "matched RGB8/Z16 FPS; prefer enumerated 640x480 and up to 30 Hz; "
-                f"ranked for {purpose}"
+                "matched RGB8/Z16 FPS; prefer enumerated 640x480 and up to "
+                "30 Hz; ranked for {}".format(purpose)
             )
             candidates.append(candidate)
-    return sorted(candidates, key=lambda item: tuple(item["score"]), reverse=True)
+    return sorted(
+        candidates,
+        key=lambda item: tuple(item["score"]),
+        reverse=True,
+    )

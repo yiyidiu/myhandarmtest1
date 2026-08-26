@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate that live UDP motion requires a new C edge after receiver start."""
+"""Validate startup and timeout C-token interlocks in the live UDP chain."""
 
 import argparse
 import json
@@ -12,6 +12,7 @@ import tf
 from std_msgs.msg import Int8, String
 
 from handarm_moveit_demo.hamer_input_contract import identity_reference_token
+from handarm_moveit_demo.msg import HamerHandPose
 
 
 class UdpCGateValidator:
@@ -24,6 +25,7 @@ class UdpCGateValidator:
         self.sequence = 0
         self.latest_diagnostic = {}
         self.reasons = []
+        self.hamer_reasons = []
         self.statuses = []
         self.collecting_gap = False
         self.gap_trend_diagnostics = []
@@ -37,6 +39,9 @@ class UdpCGateValidator:
         rospy.Subscriber(
             "/servo_server/status", Int8,
             self.status_callback, queue_size=20)
+        rospy.Subscriber(
+            "/shared_teleop/hamer_pose", HamerHandPose,
+            self.hamer_callback, queue_size=20)
 
     def diagnostic_callback(self, message):
         try:
@@ -58,6 +63,11 @@ class UdpCGateValidator:
 
     def status_callback(self, message):
         self.statuses.append(int(message.data))
+
+    def hamer_callback(self, message):
+        reason = str(message.invalid_reason)
+        if reason:
+            self.hamer_reasons.append(reason)
 
     def tool_position(self):
         translation, _ = self.listener.lookupTransform(
@@ -106,6 +116,19 @@ class UdpCGateValidator:
             "control_presence_generation": 1 if enabled else 0,
             "control_active_hand_generation": 1 if enabled else 0,
             "control_hand_is_right": bool(enabled),
+            # Synthetic samples still exercise the same strict producer
+            # timing contract as the live camera process.
+            "timing": {
+                "contract_version": 1,
+                "capture_sequence": self.sequence,
+                "dropped_capture_frames": 0,
+                "capture_to_loop_start_s": 0.001,
+                "capture_to_publish_s": 0.002,
+                "inference_executed": True,
+                "inference_call_s": 0.005,
+                "model_inference_s": 0.004,
+                "postprocess_s": 0.001,
+            },
         }
         self.socket.sendto(
             json.dumps(packet, separators=(",", ":")).encode("utf-8"),
@@ -126,7 +149,7 @@ class UdpCGateValidator:
         return samples
 
     def silent_stage(self, duration_s):
-        """Stop UDP input while observing V3 HOLD_LAST behavior."""
+        """Stop UDP input while observing fail-closed timeout behavior."""
         samples = []
         self.gap_trend_diagnostics = []
         self.gap_output_diagnostics = []
@@ -168,59 +191,65 @@ class UdpCGateValidator:
         accepted_token = self.latest_diagnostic.get("active_reference_token")
 
         # Start a reachable target, then deliberately stop all UDP packets.
-        # The migrated V3 receiver behavior must continue republishing the
-        # last target instead of letting the downstream watchdog brake.
+        # The adapter must clear the active reference after 0.40 s and latch
+        # epoch 2. Resuming that same token must not move the robot.
         right_samples = self.stage(
-            0.8, lambda elapsed: hand_zero + np.array([
-                0.025 * min(1.0, elapsed/0.75), 0.0, 0.0]),
+            2.0, lambda elapsed: hand_zero + np.array([
+                0.025 * min(1.0, elapsed/1.0), 0.0, 0.0]),
             enabled=True, epoch=2)
         before_gap = (
             right_samples[-1] if right_samples else self.tool_position())
-        gap_samples = self.silent_stage(1.2)
+        first_right_base_y_motion = float(before_gap[1]-initial[1])
+        hamer_reason_start = len(self.hamer_reasons)
+        gap_samples = self.silent_stage(1.0)
         after_gap = gap_samples[-1] if gap_samples else self.tool_position()
-        right_samples.extend(self.stage(
-            2.0, lambda _elapsed: hand_zero + np.array([0.025, 0.0, 0.0]),
-            enabled=True, epoch=2))
-        moved = right_samples[-1] if right_samples else self.tool_position()
-        base_y_motion = float(moved[1]-initial[1])
         gap_base_y_motion = float(after_gap[1]-before_gap[1])
-        after_gap_base_y_offset = float(after_gap[1]-initial[1])
-        minimum_gap_base_y_motion = min(
-            [float(value[1]-initial[1]) for value in gap_samples]
-            or [float("-inf")])
+        timeout_reasons = self.hamer_reasons[hamer_reason_start:]
+        timeout_lock_seen = any(
+            "HAMER_UDP_INPUT_TIMEOUT_REQUIRES_NEW_C" in reason
+            for reason in timeout_reasons)
 
-        target_ages = [
-            float(value.get("target_input_age_s", 0.0))
-            for value in self.gap_trend_diagnostics
-            if value.get("target_input_age_s") is not None]
-        output_ages = [
-            float(value.get("source_input_age_s", float("inf")))
-            for value in self.gap_output_diagnostics]
-        gap_output_reasons = sorted(set(
-            str(reason)
-            for value in self.gap_output_diagnostics
-            for reason in value.get("reasons", [])))
-        hold_last_passed = bool(
-            any(value.get("target_hold_active", False)
-                for value in self.gap_trend_diagnostics)
-            and max(target_ages or [0.0]) >= 0.8
-            and max(output_ages or [float("inf")]) <= 0.15
-            and "INPUT_TIMEOUT_ZERO" not in gap_output_reasons
-            # A fast controller may already be at the target before silence,
-            # so requiring another millimetre of travel during the gap gives
-            # a false failure.  It must instead remain at/approach the held
-            # target and must not retreat toward C-zero.
-            and after_gap_base_y_offset <= -0.010
-            and gap_base_y_motion <= 0.001
-            # A 25 mm hand target maps to -15 mm in base Y.  While UDP is
-            # silent the last pose may still be approached, but a stale hand
-            # feed-forward velocity must not drive through it.
-            and minimum_gap_base_y_motion >= -0.018)
+        same_token_origin = self.tool_position()
+        same_token_reason_start = len(self.hamer_reasons)
+        same_token_samples = self.stage(
+            1.5,
+            lambda elapsed: hand_zero + np.array([
+                0.08 if int(elapsed*5.0) % 2 == 0 else -0.08,
+                0.0,
+                0.0,
+            ]),
+            enabled=True,
+            epoch=2,
+        )
+        same_token_max_motion = max(
+            [float(np.linalg.norm(value-same_token_origin))
+             for value in same_token_samples]
+            or [float("inf")])
+        same_token_reasons = self.hamer_reasons[same_token_reason_start:]
+        same_token_block_seen = any(
+            "blocked_reference_token_requires_new_c" in reason
+            for reason in same_token_reasons)
 
+        # Only a genuinely newer C edge may recapture the current robot pose
+        # and restore control.
+        self.stage(1.0, lambda _elapsed: hand_zero, enabled=True, epoch=3)
+        recaptured_zero = self.tool_position()
+        reference_ready_after_new_c = bool(
+            self.latest_diagnostic.get("reference_ready", False))
+        accepted_new_token = self.latest_diagnostic.get(
+            "active_reference_token")
+        renewed_samples = self.stage(
+            2.0, lambda elapsed: hand_zero + np.array([
+                0.025 * min(1.0, elapsed/1.0), 0.0, 0.0]),
+            enabled=True, epoch=3)
+        renewed_position = (
+            renewed_samples[-1] if renewed_samples else self.tool_position())
+        renewed_base_y_motion = float(
+            renewed_position[1]-recaptured_zero[1])
         return_samples = self.stage(
-            3.0, lambda _elapsed: hand_zero, enabled=True, epoch=2)
+            3.0, lambda _elapsed: hand_zero, enabled=True, epoch=3)
         returned = return_samples[-1] if return_samples else self.tool_position()
-        return_error = float(np.linalg.norm(returned-initial))
+        return_error = float(np.linalg.norm(returned-recaptured_zero))
         dangerous = sorted(set(value for value in self.statuses
                                if value in (2, 4, 5)))
         waiting_seen = (
@@ -229,11 +258,18 @@ class UdpCGateValidator:
             locked_max_motion <= 0.003
             and waiting_seen
             and reference_ready
-            and accepted_token == "{}:2".format(self.session)
+            and accepted_token == identity_reference_token(
+                self.session, 2, 1, 1, True)
             # Ported AprilTag V3 wrist relation: image-right is base -Y and
             # 25 mm of hand motion targets 15 mm of tool motion.
-            and base_y_motion <= -0.010
-            and hold_last_passed
+            and first_right_base_y_motion <= -0.010
+            and timeout_lock_seen
+            and same_token_block_seen
+            and same_token_max_motion <= 0.003
+            and reference_ready_after_new_c
+            and accepted_new_token == identity_reference_token(
+                self.session, 3, 1, 1, True)
+            and renewed_base_y_motion <= -0.010
             and return_error <= 0.010
             and not dangerous)
         return {
@@ -244,18 +280,17 @@ class UdpCGateValidator:
             "waiting_for_new_c_after_startup_diagnostic_seen": waiting_seen,
             "reference_ready_after_c": reference_ready,
             "accepted_reference_token": accepted_token,
-            "image_right_base_negative_y_motion_m": base_y_motion,
-            "v3_hold_last_passed": hold_last_passed,
-            "udp_silence_duration_s": 1.2,
+            "image_right_base_negative_y_motion_before_timeout_m": (
+                first_right_base_y_motion),
+            "udp_timeout_requires_new_c_seen": timeout_lock_seen,
+            "udp_silence_duration_s": 1.0,
             "tool_base_y_motion_during_silence_m": gap_base_y_motion,
-            "tool_base_y_offset_after_silence_m": after_gap_base_y_offset,
-            "minimum_tool_base_y_offset_during_silence_m": (
-                minimum_gap_base_y_motion),
-            "maximum_target_input_age_during_silence_s": max(
-                target_ages or [0.0]),
-            "maximum_downstream_input_age_during_silence_s": max(
-                output_ages or [float("inf")]),
-            "downstream_reasons_during_silence": gap_output_reasons,
+            "same_old_c_token_rejected": same_token_block_seen,
+            "same_old_c_token_max_tool_motion_m": same_token_max_motion,
+            "reference_ready_after_new_c": reference_ready_after_new_c,
+            "accepted_new_reference_token": accepted_new_token,
+            "image_right_base_negative_y_motion_after_new_c_m": (
+                renewed_base_y_motion),
             "returned_to_c_zero": return_error <= 0.010,
             "return_translation_error_m": return_error,
             "servo_statuses_observed": sorted(set(self.statuses)),

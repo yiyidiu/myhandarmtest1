@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-workspace="/home/diu/myhandarmtest1"
+script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+workspace="$(cd "$script_directory/.." && pwd)"
 cd "$workspace"
 source /opt/ros/noetic/setup.bash
 source devel/setup.bash

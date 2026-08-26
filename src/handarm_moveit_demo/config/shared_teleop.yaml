@@ -182,10 +182,11 @@ limits:
   maximum_angular_acceleration_radps2: [500.00, 500.00, 500.00]
 
 safety:
-  # The exact-frame renderer currently produces normal live gaps of
-  # 0.19--0.30 s.  A 0.20 s watchdog repeatedly interrupted every valid
-  # command.  Allow one normal slow frame, but still stop a real loss quickly.
+  # UDP absence and producer-measured frame age are separate gates. The
+  # adapter blocks the active C token after either gate fires; the same old
+  # token cannot silently re-arm motion when packets resume.
   input_timeout_s: 0.40
+  maximum_pipeline_latency_s: 0.20
   # At the AprilTag V3 acceleration limits, full-speed commands need at most
   # 0.25 s to ramp to zero after the input watchdog fires.
   timeout_zero_deadline_s: 0.65

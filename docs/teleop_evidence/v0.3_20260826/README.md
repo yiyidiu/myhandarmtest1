@@ -61,7 +61,11 @@ verified without committing hundreds of megabytes of generated data.
 - `P0_REMEDIATION_03_ARM_SAFETY.md`: default Servo/FCL arm path, swept
   self-collision and joint-limit acceptance, PlanningScene synchronization,
   and watchdog evidence.
+- `P0_REMEDIATION_04_PERCEPTION_TIMING.md`: 20 Hz D435i timing path,
+  latest-only asynchronous forearm fusion, producer latency provenance, and
+  startup/timeout C-token interlock evidence.
 
 These records deliberately separate subsystem acceptance from complete human
 teleoperation acceptance. A new synchronized C-to-Q human trial is still
-required after perception timing and hand retargeting are repaired.
+required after hand retargeting is implemented and the complete live path is
+revalidated.

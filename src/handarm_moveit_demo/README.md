@@ -92,7 +92,7 @@ HaMeR 的 `pred_cam_t`/弱透视相机量不是 D455 公制位置，本实现不
 ### 构建和一条命令测试
 
 ```bash
-cd /home/diu/myhandarmtest1
+cd /path/to/myhandarmtest1-v0.3.0
 source /opt/ros/noetic/setup.bash
 rosdep install --from-paths src --ignore-src -r -y
 ./scripts/run_stage1_tests.sh
@@ -103,7 +103,7 @@ rosdep install --from-paths src --ignore-src -r -y
 ### 一条命令运行纯离线演示
 
 ```bash
-cd /home/diu/myhandarmtest1
+cd /path/to/myhandarmtest1-v0.3.0
 ./scripts/run_stage1_offline_demo.sh
 ```
 
@@ -112,7 +112,7 @@ cd /home/diu/myhandarmtest1
 ### 一条命令运行安全 Gazebo 演示
 
 ```bash
-cd /home/diu/myhandarmtest1
+cd /path/to/myhandarmtest1-v0.3.0
 ./scripts/run_stage1_safe_demo.sh
 ```
 
@@ -129,7 +129,7 @@ rosservice call /shared_teleop/confirm_hand_reference
 ### 一条命令验证 Gazebo 三轴平移和横滚/俯仰/偏航
 
 ```bash
-cd /home/diu/myhandarmtest1
+cd /path/to/myhandarmtest1-v0.3.0
 ./scripts/run_stage1_gazebo_direction_validation.sh
 ```
 
@@ -143,9 +143,10 @@ cd /home/diu/myhandarmtest1
 
 该脚本在按 C 前持续发送变化的人手位姿并确认机械臂不动，然后发送新 C 参考令牌，
 验证画面向右对应 `base -Y` 的 0.6 倍平移关系以及回零。中途还会故意停止 UDP
-1.2 秒，验收 V3 `HOLD_LAST` 是否持续刷新下游目标且不触发 `INPUT_TIMEOUT_ZERO`。
+1.0 秒，验收输入超时后原 C 令牌被锁定、恢复同一令牌仍不能运动，只有新的 C
+令牌才能重新捕获零位并恢复控制。
 
-### 使用当前 HaMeR + D455 实时输出（仍仅仿真）
+### 使用当前 HaMeR + D435i/D455 实时输出（仍仅仿真）
 
 地面工作空间现在有两个独立执行 profile。新位置参考方案用：
 
@@ -169,7 +170,7 @@ roslaunch handarm_moveit_demo live_human_gazebo_teleop.launch gazebo_gui:=true
 HaMeR conda 端：
 
 ```bash
-cd /home/diu/myhandarmtest1
+cd /path/to/myhandarmtest1-v0.3.0
 conda run --no-capture-output -n hamer_rtx2060 \
   python perception_hamer/scripts/run_d455_hamer_crop.py \
   --auto-roi-mediapipe \
@@ -178,11 +179,17 @@ conda run --no-capture-output -n hamer_rtx2060 \
   --roi-smoothing-alpha 1.0 \
   --orientation-filter-large-angle-mode reject \
   --orientation-filter-max-gain 1.0 \
-  --disable-forearm-fusion \
+  --forearm-rate-hz 8.0 \
+  --forearm-maximum-source-age-s 0.20 \
   --hand-presence-timeout-s 0.25 \
   --teleop-udp-host 127.0.0.1 \
   --teleop-udp-port 5010
 ```
+
+HaMeR checkpoint 和受许可约束的 MANO 文件默认应位于
+`perception_hamer/_DATA`。如果资产存放在其他工程中，显式追加
+`--checkpoint /path/to/_DATA/hamer_ckpts/checkpoints/hamer.ckpt` 与
+`--data-root /path/to/_DATA`；程序不会用缺失或未知资产静默降级。
 
 摄像头启动后控制保持锁定；手保持中性并在摄像头窗口按一次 `C`，才会同时记录
 手零位和当前 `tool0` 位姿并开始跟随。也可运行
@@ -203,7 +210,7 @@ MANO 三角面的网格。默认不再用 KLT 将旧网格缩放到最新相机�
 `--no-display` 会被拒绝。打开窗口后先保持手稳定，再按一次 `C`；按 C 前 Gazebo
 始终不跟随，再次按 C 会同时重设手零位和当前机器人零位。
 
-启动时先显示 D455 原始彩色画面。真实手、手腕和五指稳定出现在画面中后会自动
+启动时先显示 RealSense 原始彩色画面。真实手、手腕和五指稳定出现在画面中后会自动
 选择活动手并启动 HaMeR，不需要按 `C` 选择手；但必须随后按 `C` 建立 Gazebo
 控制零位。MediaPipe 可以同时看到左右手，但只有
 一个自动活动手进入单个 HaMeR/MANO；另一只手同时出现时会被忽略。活动手消失且
@@ -217,8 +224,8 @@ SO(3) 滤波：静止时抑制 MANO 抖动，明确运动时增益升到最多 `
 单帧姿态创新达到 `45°` 会锁定旧 C 会话并要求重新确认，避免 MANO 跳变被解释为
 人的连续旋转。低于硬门限的连续转动仍使用运动自适应增益。
 同一时刻只能运行一个 `run_d455_hamer_crop.py`；程序有单实例锁，重复启动会在
-加载模型前报告现有 PID，避免 RTX 2060 同时加载两份 HaMeR 后显存溢出。必须在
-D455 画面中保持完整手掌；只有显式加入 `--require-hand-confirmation` 时才需要在
+加载模型前报告现有 PID，避免 GPU 同时加载两份 HaMeR 后显存溢出。必须在
+RealSense 画面中保持完整手掌；只有显式加入 `--require-hand-confirmation` 时才需要在
 窗口中按 `c`、Enter、空格或双击。
 
 确认后 MediaPipe 仍逐帧独立检查真实手是否存在，KLT 只负责检测帧之间的快速
@@ -288,7 +295,7 @@ rosservice call /shared_teleop/reset_emergency_stop
 权威配置是 `config/shared_teleop.yaml`：
 
 - D455：`camera_color_optical_frame`，x右/y下/z前；机器人基座：`base_link`；法兰：`flange`；现有手掌基座：`handbase_link`；Servo/临时抓取中心：`tool0`。
-- 平移点为 MANO 开放手腕口 16 个边界顶点中心的 D455 公制位置；旋转主体由同一手腕环稳健拟合得到。默认允许 D455 深度前臂纵轴以最高 20% 权重校正纵向轴，MANO 仍提供完整姿态与横滚；加 `--disable-forearm-fusion` 才是纯 MANO 模式。
+- 平移点为 MANO 开放手腕口 16 个边界顶点中心的 RealSense 公制位置；旋转主体由同一手腕环稳健拟合得到。默认允许 D435i/D455 深度前臂纵轴以最高 20% 权重异步校正纵向轴，MANO 仍提供完整姿态与横滚；加 `--disable-forearm-fusion` 才是纯 MANO 模式。
 - `reference.frame=camera_color_optical_frame`、`direction_basis=FIXED_CAMERA_TRANSLATION_AND_C_ZERO_LOCAL_ROTATION`、`allow_automatic_rezero=false`；平移使用固定相机轴，姿态使用 C 零位局部轴。
 - 本系统把相机中人手相对零位的位移/旋转映射成机器人相对初始 `tool0` 的目标位姿，不把相机绝对坐标直接当机器人绝对坐标。因此不要求 `camera_color_optical_frame -> base_link` 的完整外参；`mapping.translation_matrix`、`mapping.rotation_matrix` 和两个 gain 数组定义轴对应、正负号与位姿比例。
 - 当前采用 AprilTag V3 虚拟手腕链路的关系：手靠近相机→`base +X`，画面向右→绿色轴 `base -Y`，画面向上→`base +Z`。平移统一为 0.6 倍，即手移 5 cm 生成末端 3 cm 目标。姿态使用 `R_delta=R_hand_zero^T R_hand_now` 与 `R_target=R_tool_zero R_delta`，MANO 手腕局部 RGB 轴直接对应记录零位时的 `tool0` 局部 XYZ 轴，旋转角度 1:1（手转 20° 生成 20° 目标）。

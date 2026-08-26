@@ -51,8 +51,8 @@ from perception_hamer.src.causal_wrist_so3_filter import (
 )
 from perception_hamer.src.crop_quality import bbox_crop_quality
 from perception_hamer.src.forearm_fusion import (
-    CausalForearmEstimator,
     ForearmFusionConfig,
+    LatestOnlyForearmEstimator,
     apply_forearm_fusion_to_packet,
 )
 from perception_hamer.src.hamer_crop_inference import HamerCropInference
@@ -174,6 +174,29 @@ def _percentile(values: Sequence[float], percentile: float) -> Optional[float]:
     return None if len(finite) == 0 else float(np.percentile(finite, percentile))
 
 
+def _gpu_identity() -> Dict[str, Any]:
+    try:
+        output = subprocess.check_output(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.total,driver_version",
+                "--format=csv,noheader,nounits",
+            ],
+            text=True,
+            timeout=3.0,
+        )
+        name, total_mib, driver = [
+            part.strip() for part in output.splitlines()[0].split(",")
+        ]
+        return {
+            "name": name,
+            "memory_total_mib": float(total_mib),
+            "driver_version": driver,
+        }
+    except Exception as exc:
+        return {"available": False, "error": "{}:{}".format(type(exc).__name__, exc)}
+
+
 class GPUMemorySampler:
     def __init__(self, period_s: float = 0.2) -> None:
         self.period_s = float(period_s)
@@ -240,12 +263,13 @@ class PendingReinitialization:
 
 
 class LatestDisplayOverlay:
-    """Thread-safe latest HaMeR result and its exact-frame rendered pair."""
+    """Thread-safe latest HaMeR result and its exact inference RGB frame."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._value = (
             None, None, 0.0, "HaMeR initializing", None, None, None, 0,
+            None, -1,
         )
 
     def update(
@@ -253,6 +277,8 @@ class LatestDisplayOverlay:
         failure_reason: str, mano_faces: Any, projection_source_bbox: Any,
         teleoperation_core_render: Optional[TeleoperationCoreRenderFrame],
         presence_generation: int,
+        inference_rgb: Optional[np.ndarray] = None,
+        capture_sequence: int = -1,
     ) -> None:
         with self._lock:
             self._value = (
@@ -264,6 +290,8 @@ class LatestDisplayOverlay:
                 ),
                 teleoperation_core_render,
                 int(presence_generation),
+                inference_rgb,
+                int(capture_sequence),
             )
 
     def snapshot(self) -> tuple:
@@ -957,6 +985,8 @@ def _display_worker(
     last_version = 0
     displayed = 0
     started = time.monotonic()
+    rendered_capture_sequence = -1
+    rendered_reference: Optional[TeleoperationCoreRenderFrame] = None
     while not stop.is_set():
         try:
             last_version, packet = preview_slot.get_after(last_version, timeout_s=1.0)
@@ -971,6 +1001,7 @@ def _display_worker(
             result, estimates, processed_fps, failure_reason, mano_faces,
             projection_source_bbox, teleoperation_core_render,
             overlay_presence_generation,
+            inference_rgb, inference_capture_sequence,
         ) = overlay_state.snapshot()
         hand_presence_valid = True
         roi_matches_detected_hand = True
@@ -1015,6 +1046,33 @@ def _display_worker(
                         alignment["normalized_center_distance"],
                     )
                 )
+        if (
+            mesh_renderer == "teleoperation-core"
+            and result is not None
+            and mano_faces is not None
+            and inference_rgb is not None
+            and teleoperation_core_render is None
+        ):
+            if int(inference_capture_sequence) != rendered_capture_sequence:
+                try:
+                    rendered_reference = render_inference_frame(
+                        inference_rgb,
+                        result,
+                        mano_faces,
+                    )
+                    rendered_capture_sequence = int(inference_capture_sequence)
+                except Exception as exc:
+                    rendered_reference = None
+                    rendered_capture_sequence = int(inference_capture_sequence)
+                    render_reason = "display_render:{}:{}".format(
+                        type(exc).__name__, exc
+                    )
+                    failure_reason = (
+                        render_reason
+                        if not failure_reason
+                        else failure_reason + ";" + render_reason
+                    )
+            teleoperation_core_render = rendered_reference
         canvas = make_overlay(
             packet.frame.rgb, packet.roi, result, estimates,
             processed_fps, failure_reason, mano_faces,
@@ -1211,6 +1269,24 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="diagnostic MANO-only mode; normal single-HaMeR command enables fusion",
     )
+    parser.add_argument(
+        "--forearm-maximum-source-age-s",
+        type=float,
+        default=0.20,
+        help=(
+            "maximum capture age for the asynchronous RGB-D forearm anchor; "
+            "older results fall back to MANO without blocking HaMeR"
+        ),
+    )
+    parser.add_argument(
+        "--forearm-rate-hz",
+        type=float,
+        default=8.0,
+        help=(
+            "maximum asynchronous RGB-D forearm fit rate; the low-weight "
+            "anchor is latest-only and does not need to run at HaMeR rate"
+        ),
+    )
     parser.add_argument("--left-hand", action="store_true")
     parser.add_argument("--no-display", action="store_true")
     parser.add_argument(
@@ -1284,6 +1360,12 @@ def main() -> int:
             "0 <= start < full < hard-deg")
     if not 0.0 <= args.forearm_fusion_max_weight <= 0.35:
         raise SystemExit("--forearm-fusion-max-weight must be in [0, 0.35]")
+    if not 0.05 <= args.forearm_maximum_source_age_s <= 0.50:
+        raise SystemExit(
+            "--forearm-maximum-source-age-s must be in [0.05, 0.50]"
+        )
+    if not 1.0 <= args.forearm_rate_hz <= 15.0:
+        raise SystemExit("--forearm-rate-hz must be in [1, 15]")
     if not 0 <= args.hand_miss_grace_frames <= 2:
         raise SystemExit("--hand-miss-grace-frames must be 0, 1, or 2")
     if args.teleop_udp_host and args.no_display:
@@ -1334,6 +1416,7 @@ def main() -> int:
     teleop_control_gate = TeleopControlGate()
     pending = PendingReinitialization()
     session_records = []
+    session_timing_records = []
     previous_joint_quaternion = None
     previous_control_quaternion = None
     # Keep translation alive when only the monocular MANO orientation channel
@@ -1369,10 +1452,20 @@ def main() -> int:
     forearm_fusion_config = ForearmFusionConfig(
         maximum_fusion_weight=float(args.forearm_fusion_max_weight)
     )
-    forearm_estimator = CausalForearmEstimator(forearm_fusion_config)
+    forearm_estimator = (
+        None
+        if args.disable_forearm_fusion
+        else LatestOnlyForearmEstimator(
+            forearm_fusion_config,
+            maximum_rate_hz=args.forearm_rate_hz,
+        )
+    )
+    forearm_context_generation = 0
     calibrator = RobustBetasCalibrator(required_samples=30, maximum_samples=60)
     processed = 0
     valid_count = 0
+    valid_control_packets = 0
+    last_processed_capture_sequence: Optional[int] = None
     started_monotonic = 0.0
     teleop_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) if args.teleop_udp_host else None
     teleop_session_id = "hamer-live-{}-{}".format(os.getpid(), int(time.time()))
@@ -1681,6 +1774,13 @@ def main() -> int:
             last_version, packet = slot.get_after(last_version)
             if packet is None:
                 break
+            sample_loop_started_monotonic = time.monotonic()
+            capture_monotonic_s = (
+                float(packet.frame.host_monotonic_ns_alignment_completed)
+                / 1.0e9
+            )
+            inference_call_started_monotonic = None
+            inference_call_completed_monotonic = None
             last_packet = packet
             processed += 1
             result = None
@@ -1691,6 +1791,14 @@ def main() -> int:
             pose_packet_payload = None
             pose_failure_reason = ""
             forearm_observation = None
+            forearm_async_diagnostics = {
+                "usable": False,
+                "reason": (
+                    "forearm_fusion_disabled"
+                    if forearm_estimator is None
+                    else "no_forearm_job_submitted"
+                ),
+            }
             crop_quality_score = 0.0
             timestamp_s = packet.frame.color_timestamp_ms / 1000.0
             if async_detector is not None:
@@ -1721,7 +1829,7 @@ def main() -> int:
                 previous_control_depth_m = None
                 previous_control_depth_monotonic = None
                 previous_quality_bbox = None
-                forearm_estimator.reset()
+                forearm_context_generation += 1
             confirmed_detection = presence_state.get("confirmed_detection")
             roi_alignment = (
                 {"valid": True, "iou": 1.0,
@@ -1758,6 +1866,7 @@ def main() -> int:
                     pending.request_reset()
                     failure_reason = "hand_reacquiring:awaiting_confirmed_bbox"
             elif packet.roi.lost or packet.roi.bbox is None:
+                forearm_context_generation += 1
                 previous_control_depth_m = None
                 previous_control_depth_monotonic = None
                 previous_quality_bbox = None
@@ -1783,6 +1892,7 @@ def main() -> int:
                         pending.set(confirmed_detection["bbox"], detected_is_right)
                         failure_reason = "roi_reacquiring:mediapipe_bbox"
             elif not roi_alignment["valid"]:
+                forearm_context_generation += 1
                 # A real hand elsewhere in the image does not validate this
                 # crop.  Block HaMeR and force a detector-anchored correction.
                 previous_control_depth_m = None
@@ -1801,9 +1911,16 @@ def main() -> int:
                 )
             else:
                 try:
-                    candidate_result = runner.infer(
-                        packet.frame.rgb, packet.roi.bbox, is_right, timestamp_s
-                    )
+                    inference_call_started_monotonic = time.monotonic()
+                    try:
+                        candidate_result = runner.infer(
+                            packet.frame.rgb,
+                            packet.roi.bbox,
+                            is_right,
+                            timestamp_s,
+                        )
+                    finally:
+                        inference_call_completed_monotonic = time.monotonic()
                     post_presence = (
                         None
                         if async_detector is None
@@ -1828,7 +1945,7 @@ def main() -> int:
                             post_presence.get("active_hand_generation", 0)
                         )
                         presence_interval_changed = True
-                        forearm_estimator.reset()
+                        forearm_context_generation += 1
                         previous_control_depth_m = None
                         previous_control_depth_monotonic = None
                         previous_quality_bbox = None
@@ -2063,7 +2180,8 @@ def main() -> int:
                 except Exception as exc:
                     failure_reason = f"{type(exc).__name__}:{exc}"
             if (
-                args.mesh_renderer == "teleoperation-core"
+                output_dir is not None
+                and args.mesh_renderer == "teleoperation-core"
                 and result is not None
                 and mano_faces is not None
             ):
@@ -2167,8 +2285,17 @@ def main() -> int:
                             diagnostics["depth_m"]
                         )
                         previous_control_depth_monotonic = depth_now_monotonic
-                    if not args.disable_forearm_fusion:
-                        forearm_observation = forearm_estimator.update(
+                    if (
+                        forearm_estimator is not None
+                        and presence_state.get("confirmed_detection") is not None
+                    ):
+                        forearm_identity = (
+                            presence_generation,
+                            active_hand_generation,
+                            bool(result.is_right),
+                            forearm_context_generation,
+                        )
+                        forearm_estimator.submit(
                             packet.frame.aligned_depth_raw,
                             packet.frame.depth_scale_m_per_unit,
                             packet.frame.color_intrinsics,
@@ -2177,12 +2304,25 @@ def main() -> int:
                             detection_age_s=float(
                                 presence_state.get("detection_age_s", float("inf"))
                             ),
+                            identity=forearm_identity,
+                            source_capture_sequence=packet.capture_sequence,
+                            source_monotonic_s=capture_monotonic_s,
+                        )
+                        (
+                            forearm_observation,
+                            forearm_async_diagnostics,
+                        ) = forearm_estimator.latest(
+                            forearm_identity,
+                            args.forearm_maximum_source_age_s,
                         )
                     pose_packet_payload = apply_forearm_fusion_to_packet(
                         pose_packet_payload,
                         forearm_observation,
                         forearm_fusion_config,
                     )
+                    pose_packet_payload["forearm_fusion"][
+                        "async_runtime"
+                    ] = forearm_async_diagnostics
                     estimates["forearm_fusion"] = pose_packet_payload.get(
                         "forearm_fusion"
                     )
@@ -2225,36 +2365,99 @@ def main() -> int:
                 result, estimates, hamer_fps, failure_reason, mano_faces,
                 projection_source_bbox, teleoperation_core_render,
                 presence_generation,
+                packet.frame.rgb if result is not None else None,
+                packet.capture_sequence if result is not None else -1,
             )
-            record: Dict[str, Any] = {
-                "index": processed - 1,
-                "capture_sequence": packet.capture_sequence,
-                "timestamp": timestamp_s,
-                "timestamp_ms": packet.frame.color_timestamp_ms,
-                "timestamp_domain": packet.frame.color_timestamp_domain,
-                "frame_number": packet.frame.color_frame_number,
-                "roi": packet.roi.as_dict(),
-                "roi_detector_alignment": _json_safe(roi_alignment),
-                "crop_quality": float(crop_quality_score),
-                "mano_renderer": args.mesh_renderer,
-                "mano_render_exact_inference_frame": bool(
-                    teleoperation_core_render is not None
+            publish_ready_monotonic = time.monotonic()
+            dropped_capture_frames = (
+                0
+                if last_processed_capture_sequence is None
+                else max(
+                    0,
+                    int(packet.capture_sequence)
+                    - int(last_processed_capture_sequence)
+                    - 1,
+                )
+            )
+            last_processed_capture_sequence = int(packet.capture_sequence)
+            inference_executed = bool(
+                inference_call_started_monotonic is not None
+                and inference_call_completed_monotonic is not None
+            )
+            inference_call_s = (
+                0.0
+                if not inference_executed
+                else max(
+                    0.0,
+                    inference_call_completed_monotonic
+                    - inference_call_started_monotonic,
+                )
+            )
+            postprocess_started_monotonic = (
+                inference_call_completed_monotonic
+                if inference_executed
+                else sample_loop_started_monotonic
+            )
+            timing_payload = {
+                "contract_version": 1,
+                "capture_sequence": int(packet.capture_sequence),
+                "dropped_capture_frames": int(dropped_capture_frames),
+                "capture_to_loop_start_s": max(
+                    0.0,
+                    sample_loop_started_monotonic - capture_monotonic_s,
                 ),
-                "hand_presence": _json_safe(presence_state),
-                "valid": result is not None and estimates is not None,
-                "failure_reason": failure_reason,
-                "hand_pose_6d": pose_delta.as_dict(),
-                "hand_pose_6d_failure_reason": pose_failure_reason,
-                "forearm_fusion": (
-                    None
-                    if pose_packet_payload is None
-                    else _json_safe(pose_packet_payload.get("forearm_fusion"))
+                "capture_to_publish_s": max(
+                    0.0, publish_ready_monotonic - capture_monotonic_s
                 ),
-                "inference_ms": None if result is None else 1000.0 * result.inference_time_s,
-                "betas_calibration": calibrator.as_dict(),
-                "gpu_system_peak_used_mib_so_far": gpu_sampler.peak_used_mib,
+                "inference_executed": inference_executed,
+                "inference_call_s": inference_call_s,
+                "model_inference_s": (
+                    0.0
+                    if result is None
+                    else float(result.inference_time_s)
+                ),
+                "postprocess_s": max(
+                    0.0,
+                    publish_ready_monotonic - postprocess_started_monotonic,
+                ),
             }
-            if result is not None:
+            record: Dict[str, Any] = {
+                "inference_ms": None if result is None else 1000.0 * result.inference_time_s,
+                "timing": timing_payload,
+            }
+            if output_dir is not None:
+                record.update({
+                    "index": processed - 1,
+                    "capture_sequence": packet.capture_sequence,
+                    "timestamp": timestamp_s,
+                    "timestamp_ms": packet.frame.color_timestamp_ms,
+                    "timestamp_domain": packet.frame.color_timestamp_domain,
+                    "frame_number": packet.frame.color_frame_number,
+                    "roi": packet.roi.as_dict(),
+                    "roi_detector_alignment": _json_safe(roi_alignment),
+                    "crop_quality": float(crop_quality_score),
+                    "mano_renderer": args.mesh_renderer,
+                    "mano_render_exact_inference_frame": bool(
+                        teleoperation_core_render is not None
+                    ),
+                    "hand_presence": _json_safe(presence_state),
+                    "valid": result is not None and estimates is not None,
+                    "failure_reason": failure_reason,
+                    "hand_pose_6d": pose_delta.as_dict(),
+                    "hand_pose_6d_failure_reason": pose_failure_reason,
+                    "forearm_fusion": (
+                        None
+                        if pose_packet_payload is None
+                        else _json_safe(
+                            pose_packet_payload.get("forearm_fusion")
+                        )
+                    ),
+                    "betas_calibration": calibrator.as_dict(),
+                    "gpu_system_peak_used_mib_so_far": (
+                        gpu_sampler.peak_used_mib
+                    ),
+                })
+            if result is not None and output_dir is not None:
                 record.update({
                     "bbox": result.requested_bbox_xyxy,
                     "mano_vertices": result.pred_vertices_source_camera_axes,
@@ -2286,9 +2489,11 @@ def main() -> int:
                                 if presence_valid else None
                             ),
                         )
+                    udp_payload["timing"] = dict(timing_payload)
                     teleop_packet = teleop_control_gate.decorate(
                         udp_payload, teleop_session_id
                     )
+                    udp_send_started_monotonic = time.monotonic()
                     teleop_socket.sendto(
                         json.dumps(
                             _json_safe(teleop_packet),
@@ -2296,6 +2501,18 @@ def main() -> int:
                         ).encode("utf-8"),
                         (args.teleop_udp_host, int(args.teleop_udp_port)),
                     )
+                    udp_send_completed_monotonic = time.monotonic()
+                    record["timing"]["udp_serialize_send_s"] = max(
+                        0.0,
+                        udp_send_completed_monotonic
+                        - udp_send_started_monotonic,
+                    )
+                    record["timing"]["capture_to_send_complete_s"] = max(
+                        0.0,
+                        udp_send_completed_monotonic - capture_monotonic_s,
+                    )
+                    if bool(teleop_packet.get("valid", False)):
+                        valid_control_packets += 1
                     record["teleop_udp"] = {
                         "valid": bool(teleop_packet.get("valid", False)),
                         "control_enabled": bool(
@@ -2336,20 +2553,59 @@ def main() -> int:
                 if overlay is None:
                     raise RuntimeError("experiment overlay was not rendered")
                 video.write(overlay)
-            session_records.append(record)
+                session_records.append(record)
+            session_timing_records.append({
+                **dict(record["timing"]),
+                "capture_monotonic_s": capture_monotonic_s,
+                "publish_monotonic_s": publish_ready_monotonic,
+                "valid_hamer": bool(result is not None),
+                "valid_pose_packet": bool(pose_packet_payload is not None),
+            })
             if (display is not None and display.pop_reinitialize_request()
                     and last_packet is not None):
                 pending.set(_select_bbox(last_packet.frame.rgb), is_right)
         elapsed = max(1e-9, time.monotonic() - started_monotonic)
-        inference_times = [record["inference_ms"] for record in session_records
-                           if record["inference_ms"] is not None]
+        inference_times = [
+            1000.0 * item["model_inference_s"]
+            for item in session_timing_records
+            if item["valid_hamer"]
+        ]
+        inference_call_times = [
+            1000.0 * item["inference_call_s"]
+            for item in session_timing_records
+            if item["inference_executed"]
+        ]
+        capture_to_publish_times = [
+            1000.0 * item["capture_to_publish_s"]
+            for item in session_timing_records
+        ]
+        capture_to_loop_start_times = [
+            1000.0 * item["capture_to_loop_start_s"]
+            for item in session_timing_records
+        ]
+        postprocess_times = [
+            1000.0 * item["postprocess_s"]
+            for item in session_timing_records
+        ]
+        valid_publish_times = [
+            item["publish_monotonic_s"]
+            for item in session_timing_records
+            if item["valid_pose_packet"]
+        ]
+        measurement_intervals_ms = (
+            1000.0 * np.diff(np.asarray(valid_publish_times, dtype=np.float64))
+            if len(valid_publish_times) >= 2
+            else np.asarray([], dtype=np.float64)
+        )
         summary = {
-            "schema_version": 1,
+            "schema_version": 2,
             "experiment": args.experiment,
-            "profile": "D455 color RGB8 + aligned depth Z16, 640x480@30",
+            "profile": "{} color RGB8 + aligned depth Z16, 640x480@30".format(
+                capture.device_metadata.get("device_model", "RealSense")
+            ),
             "usb_type_descriptor": capture.device_metadata["usb_type_descriptor"],
             "device": capture.device_metadata,
-            "gpu": "NVIDIA GeForce RTX 2060 6144 MiB",
+            "gpu": _gpu_identity(),
             "precision": args.precision,
             "batch_size": 1,
             "vitdet_enabled": False,
@@ -2365,12 +2621,26 @@ def main() -> int:
             "obj_export_enabled": False,
             "hand_pose_6d_display_enabled": not args.no_display,
             "hand_pose_6d_reference": (
-                "C_ZERO_MANO_WRIST_RING_16_D455_METRIC_SO3_"
+                "C_ZERO_MANO_WRIST_RING_16_REALSENSE_METRIC_SO3_"
                 "PLUS_LOW_WEIGHT_RGBD_FOREARM_AXIS"
             ),
             "forearm_fusion_enabled": not args.disable_forearm_fusion,
             "forearm_fusion_max_weight": float(
                 args.forearm_fusion_max_weight
+            ),
+            "forearm_maximum_source_age_s": float(
+                args.forearm_maximum_source_age_s
+            ),
+            "forearm_rate_hz": float(args.forearm_rate_hz),
+            "forearm_async_runtime": (
+                None
+                if forearm_estimator is None
+                else forearm_estimator.statistics
+            ),
+            "live_mesh_render_execution": (
+                "display_worker_off_control_path"
+                if output_dir is None
+                else "synchronous_exact_frame_experiment_recording"
             ),
             "orientation_filter_large_angle_mode": (
                 args.orientation_filter_large_angle_mode
@@ -2389,11 +2659,81 @@ def main() -> int:
                 and seed_validation.get("valid")
             ),
             "actual_hamer_hz": valid_count / elapsed,
+            "processed_sample_hz": processed / elapsed,
+            "valid_pose_packet_hz": (
+                sum(item["valid_pose_packet"] for item in session_timing_records)
+                / elapsed
+            ),
+            "valid_control_udp_hz": valid_control_packets / elapsed,
+            "valid_pose_packet_interval_ms": {
+                "mean": (
+                    None
+                    if len(measurement_intervals_ms) == 0
+                    else float(np.mean(measurement_intervals_ms))
+                ),
+                "median": _percentile(measurement_intervals_ms, 50),
+                "p95": _percentile(measurement_intervals_ms, 95),
+                "maximum": (
+                    None
+                    if len(measurement_intervals_ms) == 0
+                    else float(np.max(measurement_intervals_ms))
+                ),
+                "over_250_ms_fraction": (
+                    None
+                    if len(measurement_intervals_ms) == 0
+                    else float(np.mean(measurement_intervals_ms > 250.0))
+                ),
+            },
             "inference_ms": {
                 "mean": None if not inference_times else float(np.mean(inference_times)),
                 "median": _percentile(inference_times, 50),
                 "p95": _percentile(inference_times, 95),
             },
+            "inference_call_ms": {
+                "mean": (
+                    None
+                    if not inference_call_times
+                    else float(np.mean(inference_call_times))
+                ),
+                "median": _percentile(inference_call_times, 50),
+                "p95": _percentile(inference_call_times, 95),
+            },
+            "capture_to_publish_ms": {
+                "mean": (
+                    None
+                    if not capture_to_publish_times
+                    else float(np.mean(capture_to_publish_times))
+                ),
+                "median": _percentile(capture_to_publish_times, 50),
+                "p95": _percentile(capture_to_publish_times, 95),
+                "maximum": (
+                    None
+                    if not capture_to_publish_times
+                    else float(np.max(capture_to_publish_times))
+                ),
+            },
+            "capture_to_loop_start_ms": {
+                "mean": (
+                    None
+                    if not capture_to_loop_start_times
+                    else float(np.mean(capture_to_loop_start_times))
+                ),
+                "median": _percentile(capture_to_loop_start_times, 50),
+                "p95": _percentile(capture_to_loop_start_times, 95),
+            },
+            "postprocess_ms": {
+                "mean": (
+                    None
+                    if not postprocess_times
+                    else float(np.mean(postprocess_times))
+                ),
+                "median": _percentile(postprocess_times, 50),
+                "p95": _percentile(postprocess_times, 95),
+            },
+            "capture_frames_dropped_before_processing": int(sum(
+                item["dropped_capture_frames"]
+                for item in session_timing_records
+            )),
             "hamer_warmup_ms": 1000.0 * warmup_s,
             "latest_frame_scheduler": slot.statistics,
             "roi_seed": _json_safe(seed_validation),
@@ -2406,8 +2746,10 @@ def main() -> int:
             "gpu_system_peak_used_mib": gpu_sampler.peak_used_mib,
             "gpu_memory_samples": gpu_sampler.samples,
             "development_limitation": (
-                "当前D455使用USB 2.1，本阶段结果用于算法开发。"
-                "最终实时性能、正式数据集和长时间稳定性以后在USB3条件下重新测试。"
+                "当前相机链路为USB {}；最终真人遥操作结论仍需在C-to-Q同步"
+                "视频、ROS与GPU数据复验后给出。".format(
+                    capture.device_metadata["usb_type_descriptor"]
+                )
             ),
         }
         if output_dir is not None:
@@ -2436,6 +2778,19 @@ def main() -> int:
                     ),
                     teleop_session_id,
                 )
+                shutdown_packet["timing"] = {
+                    "contract_version": 1,
+                    "capture_sequence": int(
+                        last_processed_capture_sequence or 0
+                    ),
+                    "dropped_capture_frames": 0,
+                    "capture_to_loop_start_s": 0.0,
+                    "capture_to_publish_s": 0.0,
+                    "inference_executed": False,
+                    "inference_call_s": 0.0,
+                    "model_inference_s": 0.0,
+                    "postprocess_s": 0.0,
+                }
                 teleop_socket.sendto(
                     json.dumps(
                         _json_safe(shutdown_packet), separators=(",", ":")
@@ -2451,6 +2806,8 @@ def main() -> int:
         stop.set()
         slot.close()
         preview_slot.close()
+        if forearm_estimator is not None:
+            forearm_estimator.close()
         if worker is not None:
             worker.join(timeout=5.0)
         if display_worker is not None:

@@ -37,6 +37,8 @@
          wall-monotonic time and repeatedly publishes fail-closed status for
          the full duration of a UDP gap. -->
     <param name="input_timeout_s" value="0.40" />
+    <param name="maximum_pipeline_latency_s" value="0.20" />
+    <param name="require_timing_contract" value="true" />
   </node>
   <node if="$(eval arg('input_source') == 'replay')"
         pkg="handarm_moveit_demo" type="teleop_pose_replay.py"

@@ -138,6 +138,8 @@ class D455FrameContractTest(unittest.TestCase):
     def test_capture_configuration_validation(self):
         with self.assertRaises(ValueError):
             D455Capture(fps=0)
+        with self.assertRaises(ValueError):
+            D455Capture(device_models=("D415",))
 
     def test_intrinsics_dimensions_match_arrays(self):
         frame = make_frame()

@@ -159,6 +159,17 @@ class GroundWorkspaceGazeboValidator:
             "control_presence_generation": 1 if enabled else 0,
             "control_active_hand_generation": 1 if enabled else 0,
             "control_hand_is_right": bool(enabled),
+            "timing": {
+                "contract_version": 1,
+                "capture_sequence": self.sequence,
+                "dropped_capture_frames": 0,
+                "capture_to_loop_start_s": 0.001,
+                "capture_to_publish_s": 0.002,
+                "inference_executed": True,
+                "inference_call_s": 0.005,
+                "model_inference_s": 0.004,
+                "postprocess_s": 0.001,
+            },
         }
         self.socket.sendto(
             json.dumps(packet, separators=(",", ":")).encode("utf-8"),
