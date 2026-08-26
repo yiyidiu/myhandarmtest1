@@ -13,6 +13,32 @@ from typing import Optional, Sequence
 import numpy as np
 
 
+def collision_proximity_hold_required(
+        collision_scale: float, hard_hold_scale: float,
+        retreat_authorized: bool = False,
+        retreat_authorization_age_s: float = float("inf"),
+        retreat_authorization_timeout_s: float = 0.12) -> bool:
+    """Fail closed at collision proximity while permitting a fresh retreat.
+
+    MoveIt Servo's distance scaler may leave a small nonzero command. A stiff
+    position plant must re-anchor before that residual can creep into contact.
+    Only a fresh authorization from the C-zero retreat guard is exempted.
+    """
+
+    scale = float(collision_scale)
+    threshold = float(hard_hold_scale)
+    age = float(retreat_authorization_age_s)
+    timeout = float(retreat_authorization_timeout_s)
+    if (not np.isfinite(scale) or not np.isfinite(threshold) or
+            not 0.0 <= scale <= 1.0 or
+            not 0.0 <= threshold < 1.0 or
+            np.isnan(age) or not np.isfinite(timeout) or timeout <= 0.0):
+        raise ValueError("invalid collision proximity hold inputs")
+    retreat_is_fresh = bool(
+        retreat_authorized and 0.0 <= age <= timeout)
+    return bool(scale <= threshold and not retreat_is_fresh)
+
+
 def _finite_vector(name: str, values: Sequence[float], size: int) -> np.ndarray:
     vector = np.asarray(values, dtype=float)
     if vector.shape != (size,):
@@ -120,6 +146,15 @@ class EgmPositionReferenceModel:
         self.feedforward_velocity.fill(0.0)
         self.latest_command_time = None
         self.last_step_time = None
+
+    def hold_reference(self, positions: Sequence[float]) -> None:
+        """Stop feed-forward without redefining the configured reference."""
+
+        self.actual = _finite_vector(
+            "hold positions", positions, self.size).copy()
+        self.latest_velocity.fill(0.0)
+        self.feedforward_velocity.fill(0.0)
+        self.latest_command_time = None
 
     def update_velocity(self, velocity: Sequence[float], stamp_s: float) -> None:
         stamp = float(stamp_s)

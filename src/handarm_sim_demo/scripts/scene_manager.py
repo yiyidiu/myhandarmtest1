@@ -70,11 +70,19 @@ def validate_config(data, scenario):
 class SceneManager:
     def __init__(self):
         self.timeout = float(rospy.get_param("~startup_timeout", 90.0))
+        self.wait_for_startup_ready = bool(rospy.get_param(
+            "~wait_for_startup_ready", True))
         self.scene_path = rospy.get_param("~scene_config")
         self.scenario = rospy.get_param("~scenario", "double_obstacle")
         with open(self.scene_path, "r", encoding="utf-8") as stream:
             self.config = yaml.safe_load(stream)
         self.objects = validate_config(self.config, self.scenario)
+        self.planning_objects = [
+            item for item in self.objects
+            if item.get("planning_scene_enabled", True)
+        ]
+        if not self.planning_objects:
+            raise ValueError("scenario has no PlanningScene collision objects")
         self.ready_pub = rospy.Publisher(
             "/handarm_sim_demo/scene_ready", Bool, queue_size=1, latch=True
         )
@@ -83,6 +91,8 @@ class SceneManager:
         )
 
     def wait_startup(self):
+        if not self.wait_for_startup_ready:
+            return
         msg = rospy.wait_for_message(
             "/handarm_sim_demo/startup_ready", Bool, timeout=self.timeout
         )
@@ -102,7 +112,7 @@ class SceneManager:
         scene = moveit_commander.PlanningSceneInterface(synchronous=True)
 
         deadline = time.monotonic() + self.timeout
-        expected_names = {item["name"] for item in self.objects}
+        expected_names = {item["name"] for item in self.planning_objects}
         # Logical support surfaces (for example the z=0 ground used by grasp
         # geometry) need not be spawned, deleted, or mirrored as ordinary box
         # models. Existing scene files omit this flag and keep prior behavior.
@@ -111,15 +121,20 @@ class SceneManager:
             if item.get("scene_manager_enabled", True)
         ]
         all_names = {item["name"] for item in managed_items}
+        expected_gazebo_names = {
+            item["name"] for item in self.objects
+            if item.get("scene_manager_enabled", True)
+        }
         while time.monotonic() < deadline and not rospy.is_shutdown():
-            if all_names.issubset(set(get_world().model_names)):
+            if expected_gazebo_names.issubset(set(get_world().model_names)):
                 break
             time.sleep(0.1)
         else:
             raise RuntimeError("Gazebo scene models did not appear")
 
         removed_models = []
-        for name in sorted(all_names - expected_names):
+        present_models = set(get_world().model_names)
+        for name in sorted((all_names - expected_gazebo_names) & present_models):
             response = delete_model(name)
             if not response.success:
                 raise RuntimeError(
@@ -130,32 +145,44 @@ class SceneManager:
             removed_models.append(name)
         while time.monotonic() < deadline and not rospy.is_shutdown():
             world_names = set(get_world().model_names)
-            if expected_names.issubset(world_names) and not (
-                (all_names - expected_names) & world_names
+            if expected_gazebo_names.issubset(world_names) and not (
+                (all_names - expected_gazebo_names) & world_names
             ):
                 break
             time.sleep(0.1)
         else:
             raise RuntimeError("Gazebo active model set did not converge")
 
-        gazebo_poses = {}
-        for name in sorted(all_names):
+        collision_poses = {}
+        all_planning_names = {
+            item["name"] for item in self.config["objects"].values()
+            if item.get("planning_scene_enabled", True)
+        }
+        for name in sorted(all_planning_names):
             scene.remove_world_object(name)
-        for item in self.objects:
-            state = get_state(item["name"], "world")
-            if not state.success:
-                raise RuntimeError(
-                    "Gazebo pose unavailable for {}: {}".format(
-                        item["name"], state.status_message
+        for item in self.planning_objects:
+            if item.get("scene_manager_enabled", True):
+                state = get_state(item["name"], "world")
+                if not state.success:
+                    raise RuntimeError(
+                        "Gazebo pose unavailable for {}: {}".format(
+                            item["name"], state.status_message
+                        )
                     )
+                collision_poses[item["name"]] = state.pose
+            else:
+                pose = Pose()
+                pose.position.x, pose.position.y, pose.position.z = (
+                    item["pose"]["position"]
                 )
-            gazebo_poses[item["name"]] = state.pose
+                pose.orientation.w = 1.0
+                collision_poses[item["name"]] = pose
 
-        for item in self.objects:
+        for item in self.planning_objects:
             pose = PoseStamped()
             pose.header.frame_id = self.config["frame_id"]
             pose.header.stamp = rospy.Time.now()
-            pose.pose = gazebo_poses[item["name"]]
+            pose.pose = collision_poses[item["name"]]
             padding = item.get("planning_padding_m", [0.0, 0.0, 0.0])
             planning_size = tuple(
                 size + 2.0 * margin for size, margin in zip(item["size"], padding)
@@ -173,7 +200,7 @@ class SceneManager:
         rows = []
         max_position_error = 0.0
         max_orientation_error = 0.0
-        for item in self.objects:
+        for item in self.planning_objects:
             name = item["name"]
             collision = objects.get(name)
             if collision is None or len(collision.primitives) != 1:
@@ -195,7 +222,7 @@ class SceneManager:
             if collision.primitive_poses:
                 local_pose = collision.primitive_poses[0]
             planning_pose = compose_pose(collision.pose, local_pose)
-            gazebo_pose = gazebo_poses[name]
+            gazebo_pose = collision_poses[name]
             position_error = math.sqrt(
                 (planning_pose.position.x - gazebo_pose.position.x) ** 2
                 + (planning_pose.position.y - gazebo_pose.position.y) ** 2
@@ -210,6 +237,9 @@ class SceneManager:
                 {
                     "gazebo_name": name,
                     "planning_scene_name": name,
+                    "pose_source": (
+                        "gazebo" if item.get("scene_manager_enabled", True)
+                        else "configured_static_proxy"),
                     "size_m": list(item["size"]),
                     "planning_size_m": planning_size,
                     "planning_padding_m": list(padding),

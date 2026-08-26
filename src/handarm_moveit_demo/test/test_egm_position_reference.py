@@ -8,7 +8,8 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import yaml
 
-from handarm_moveit_demo.egm_position_reference import EgmPositionReferenceModel
+from handarm_moveit_demo.egm_position_reference import (
+    EgmPositionReferenceModel, collision_proximity_hold_required)
 
 
 PACKAGE = pathlib.Path(__file__).resolve().parents[1]
@@ -29,6 +30,25 @@ def make_model(**overrides):
     )
     values.update(overrides)
     return EgmPositionReferenceModel(**values)
+
+
+class CollisionProximityHoldTest(unittest.TestCase):
+    def test_low_scale_holds_without_a_fresh_explicit_retreat(self):
+        self.assertTrue(collision_proximity_hold_required(
+            0.19, 0.20, False, float("inf"), 0.12))
+        self.assertTrue(collision_proximity_hold_required(
+            0.19, 0.20, True, 0.13, 0.12))
+
+    def test_fresh_retreat_is_the_only_low_scale_exception(self):
+        self.assertFalse(collision_proximity_hold_required(
+            0.19, 0.20, True, 0.02, 0.12))
+        self.assertFalse(collision_proximity_hold_required(
+            0.21, 0.20, False, float("inf"), 0.12))
+
+    def test_invalid_monitor_values_are_rejected(self):
+        with self.assertRaises(ValueError):
+            collision_proximity_hold_required(
+                math.nan, 0.20, False, float("inf"), 0.12)
 
 
 class EgmPositionReferenceModelTest(unittest.TestCase):
@@ -115,6 +135,18 @@ class EgmPositionReferenceModelTest(unittest.TestCase):
         np.testing.assert_allclose(output.feedforward_velocity, [0.0, 0.0])
         self.assertFalse(output.command_fresh)
 
+    def test_hold_reference_stops_feedforward_without_capturing_sag(self):
+        model = make_model()
+        model.update_actual([0.0, 0.5])
+        model.step(0.0)
+        model.update_velocity([1.0, 0.0], 0.0)
+        moved = model.step(0.02)
+        model.hold_reference([-0.01, 0.48])
+        held = model.step(0.04)
+        np.testing.assert_allclose(held.reference, moved.reference)
+        np.testing.assert_allclose(held.feedforward_velocity, [0.0, 0.0])
+        np.testing.assert_allclose(held.actual, [-0.01, 0.48])
+
     def test_wide_revolute_reference_reanchors_to_nearest_equivalent_turn(self):
         model = make_model(
             initial_reference=[0.0, 5.97],
@@ -189,6 +221,40 @@ class EgmPositionProfileWiringTest(unittest.TestCase):
             "$(arg legacy_moveit_servo_reference)")
         self.assertEqual(nodes["egm_position_reference_adapter.py"].get("required"), "true")
 
+        strict_guard = nodes["full_robot_self_collision_guard"]
+        self.assertEqual(
+            strict_guard.get("if"), "$(arg legacy_moveit_servo_reference)")
+        self.assertEqual(strict_guard.get("required"), "true")
+        guard_parameters = {
+            item.get("name"): item.get("value")
+            for item in strict_guard.findall("param")}
+        self.assertEqual(
+            guard_parameters["raw_velocity_topic"],
+            "/egm_position_reference/raw_joint_velocity")
+        self.assertEqual(
+            guard_parameters["safe_velocity_topic"],
+            "/egm_position_reference/collision_checked_joint_velocity")
+        self.assertAlmostEqual(
+            float(guard_parameters["prediction_horizon_s"]), 0.40)
+        self.assertEqual(
+            guard_parameters["hand_command_topic"],
+            "/controller_gazebo_hand/command")
+        guard_rosparams = {
+            item.get("param"): yaml.safe_load(item.text)
+            for item in strict_guard.findall("rosparam")}
+        self.assertEqual(
+            guard_rosparams["hand_reference_joint_names"],
+            ["f1j1", "f1j2", "f2j1", "f3j2"])
+        self.assertEqual(
+            guard_rosparams["initial_hand_reference"],
+            [0.051, 0.0317, 0.0227, 0.0363])
+        adapter_parameters = {
+            item.get("name"): item.get("value")
+            for item in nodes["egm_position_reference_adapter.py"].findall("param")}
+        self.assertEqual(
+            adapter_parameters["raw_velocity_topic"],
+            "/egm_position_reference/collision_checked_joint_velocity")
+
         direct_node = nodes["egm_cartesian_reference_adapter.py"]
         parameters = {
             item.get("name"): item for item in direct_node.findall("param")}
@@ -204,12 +270,15 @@ class EgmPositionProfileWiringTest(unittest.TestCase):
             [float(value) for value in leash.text.strip("[]").split(",")],
             [0.08, 0.08, 0.08, 0.12, 0.12, 0.16])
 
-    def test_public_egm_entry_defaults_to_directional_recovery(self):
+    def test_public_egm_entry_defaults_to_safe_hybrid_servo(self):
         path = PACKAGE / "launch/live_human_ground_gazebo_egm_teleop.launch"
         root = ET.parse(str(path)).getroot()
         arguments = {item.get("name"): item.get("default")
                      for item in root.findall("arg")}
-        self.assertEqual(arguments["legacy_moveit_servo_reference"], "false")
+        self.assertEqual(arguments["use_moveit_servo_safety"], "true")
+        self.assertEqual(
+            arguments["legacy_moveit_servo_reference"],
+            "$(arg use_moveit_servo_safety)")
         self.assertEqual(
             arguments["stable_position_reference_profile"], "true")
         include = root.find("include")
@@ -221,6 +290,57 @@ class EgmPositionProfileWiringTest(unittest.TestCase):
         self.assertEqual(
             forwarded["stable_position_reference_profile"],
             "$(arg stable_position_reference_profile)")
+        self.assertEqual(forwarded["require_scene_ready"], "true")
+        scene = next(node for node in root.findall("node")
+                     if node.get("type") == "scene_manager.py")
+        self.assertEqual(scene.get("required"), "true")
+
+    def test_safe_hybrid_has_feedback_leash_and_fail_closed_monitors(self):
+        root = ET.parse(str(
+            PACKAGE / "launch/shared_teleop_egm_position_demo.launch")).getroot()
+        node = next(item for item in root.findall("node")
+                    if item.get("type") == "egm_position_reference_adapter.py")
+        leash = next(item for item in node.findall("rosparam")
+                     if item.get("param") == "maximum_following_error_rad")
+        self.assertEqual(
+            [float(value) for value in leash.text.strip("[]").split(",")],
+            [0.04, 0.04, 0.04, 0.06, 0.06, 0.08])
+        parameters = {
+            item.get("name"): item.get("value")
+            for item in node.findall("param")}
+        self.assertAlmostEqual(
+            float(parameters["hard_stop_collision_scale"]), 0.20)
+        self.assertLessEqual(
+            float(parameters["collision_scale_timeout_s"]), 0.25)
+        self.assertLessEqual(
+            float(parameters["retreat_authorization_timeout_s"]), 0.12)
+        self.assertLessEqual(
+            float(parameters["strict_command_safe_timeout_s"]), 0.25)
+        self.assertEqual(
+            parameters["strict_command_safe_topic"],
+            "/full_robot_self_collision_guard/command_safe")
+
+    def test_safety_hold_captures_feedback_once_then_freezes_reference(self):
+        source = (PACKAGE / "scripts/egm_position_reference_adapter.py").read_text()
+        hold_start = source.index(
+            "if hard_safety_hold and self.latest_actual is not None:")
+        hold_end = source.index("output = self.model.step(now)", hold_start)
+        hold_block = source[hold_start:hold_end]
+        self.assertIn("if not self.hard_safety_hold_active:", hold_block)
+        self.assertEqual(
+            hold_block.count(
+                "self.model.synchronize_reference(self.latest_actual)"), 1)
+        self.assertIn("self.model.hold_reference(self.latest_actual)", hold_block)
+        self.assertIn("self.hard_safety_hold_active = True", hold_block)
+
+    def test_strict_guard_checks_arm_hand_and_measured_swept_motion(self):
+        source = (PACKAGE / "src/full_robot_self_collision_guard.cpp").read_text()
+        self.assertIn('"prediction_horizon_s", prediction_horizon_s_, 0.40', source)
+        self.assertIn("maximum_prediction_step_rad_, 0.01", source)
+        self.assertIn('"SERVO_COMMAND_HAND_REFERENCE"', source)
+        self.assertIn('"MEASURED_COAST"', source)
+        self.assertIn("positionsSatisfyBounds(candidate, 0.0", source)
+        self.assertNotIn("candidate.satisfiesBounds(", source)
 
     def test_stable_response_is_egm_opt_in_and_keeps_global_profile(self):
         path = PACKAGE / "launch/shared_teleop_core.launch"
@@ -278,6 +398,36 @@ class EgmPositionProfileWiringTest(unittest.TestCase):
         self.assertNotEqual(
             config["command_out_topic"],
             "/abbarm_egm_position_controller/command")
+        self.assertTrue(config["check_collisions"])
+        self.assertGreaterEqual(config["collision_check_rate"], 50.0)
+        self.assertLessEqual(config["lower_singularity_threshold"], 17.0)
+        self.assertLessEqual(config["hard_stop_singularity_threshold"], 30.0)
+        self.assertGreaterEqual(config["joint_limit_margin"], 0.08)
+
+    def test_semantic_model_exempts_only_true_structural_neighbors(self):
+        path = WORKSPACE_SRC / "abb120_moveit_config1/config/handarm.srdf"
+        root = ET.parse(str(path)).getroot()
+        disabled = root.findall("disable_collisions")
+        reasons = [item.get("reason") for item in disabled]
+        self.assertNotIn("Never", reasons)
+        self.assertNotIn("Default", reasons)
+        self.assertEqual(reasons.count("Adjacent"), 15)
+        self.assertEqual(reasons.count("StructuralAdjacent"), 4)
+
+    def test_complete_robot_has_collision_mesh_and_physics_backstop(self):
+        path = WORKSPACE_SRC / "abb120_moveit_config1/config/gazebo_handarm.urdf"
+        root = ET.parse(str(path)).getroot()
+        palm = root.find("link[@name='handbase_link']/collision/geometry/mesh")
+        self.assertIsNotNone(palm)
+        self.assertIn("handbase_link_collision_8mm.STL", palm.get("filename"))
+        protected = {
+            item.get("reference") for item in root.findall("gazebo")
+            if item.findtext("selfCollide") == "true"}
+        self.assertEqual(protected, {
+            "base_link", "link_1", "link_2", "link_3", "link_4",
+            "link_5", "link_6", "handbase_link", "f1link1", "f1link2",
+            "f1link3", "f2link1", "f2link2", "f3link1", "f3link2",
+            "f3link3"})
 
     def test_egm_plant_enables_gravity_and_loads_finite_effort_pid(self):
         path = WORKSPACE_SRC / "abb120_moveit_config1/launch/gazebo_egm_position.launch"

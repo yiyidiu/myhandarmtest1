@@ -5,10 +5,15 @@ catkin_python_setup()
 
 find_package(catkin REQUIRED COMPONENTS
   rospy
+  roscpp
+  moveit_core
+  moveit_ros_planning
   moveit_msgs
   geometry_msgs
+  sensor_msgs
   std_msgs
   std_srvs
+  trajectory_msgs
   message_generation
 )
 
@@ -25,8 +30,18 @@ generate_messages(
 )
 
 catkin_package(
-  CATKIN_DEPENDS geometry_msgs message_runtime moveit_msgs rospy std_msgs std_srvs
+  CATKIN_DEPENDS geometry_msgs message_runtime moveit_core moveit_msgs
+    moveit_ros_planning roscpp rospy sensor_msgs std_msgs std_srvs
+    trajectory_msgs
 )
+
+include_directories(${catkin_INCLUDE_DIRS})
+
+add_executable(full_robot_self_collision_guard
+  src/full_robot_self_collision_guard.cpp)
+add_dependencies(full_robot_self_collision_guard
+  ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+target_link_libraries(full_robot_self_collision_guard ${catkin_LIBRARIES})
 
 catkin_install_python(PROGRAMS
   scripts/01_print_moveit_info.py
@@ -75,12 +90,16 @@ catkin_install_python(PROGRAMS
   scripts/analyze_irb120_ground_workspace.py
   scripts/check_ground_workspace_mapping.py
   scripts/validate_ground_workspace_gazebo.py
+  scripts/validate_dynamic_self_collision_stop.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
 install(DIRECTORY config launch
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
+
+install(TARGETS full_robot_self_collision_guard
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 
 if(CATKIN_ENABLE_TESTING)
   catkin_add_nosetests(test/test_shared_teleop_core.py)

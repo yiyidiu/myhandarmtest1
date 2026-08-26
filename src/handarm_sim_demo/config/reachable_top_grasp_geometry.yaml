@@ -14,6 +14,10 @@ finger_geometry:
   distal_pad_links: {f1: f1link3, f2: f2link2, f3: f3link3}
   non_contact_links: [handbase_link, f1link1, f3link1]
   capsule_axis_samples: 31
+mesh_collision_box_proxies:
+  handbase_link:
+    - center_xyz_m: [-0.00136, -0.00082, 0.0825]
+      half_extents_m: [0.069, 0.069, 0.0895]
 grasp_center:
   reference_closure_fraction: 0.50
   expected_handbase_xyz_m: [0.008705, 0.010090, 0.250669]

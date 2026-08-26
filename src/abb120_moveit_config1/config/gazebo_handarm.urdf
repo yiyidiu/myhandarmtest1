@@ -21,10 +21,13 @@
                 <color rgba="1 0.94902 0.89804 1" />
             </material>
         </visual>
-        <!-- Collision-only proxy: never use the 466k-triangle visual STL in ODE. -->
+        <!-- Decimated collision mesh preserves the palm/knuckle geometry while
+             remaining light enough for Gazebo and MoveIt/FCL. -->
         <collision>
-            <origin rpy="0 0 0" xyz="-0.00136 -0.00082 0.0825" />
-            <geometry><cylinder radius="0.069" length="0.179" /></geometry>
+            <origin rpy="0 0 0" xyz="0 0 0" />
+            <geometry>
+                <mesh filename="package://handarmtest1/meshes/myhand/handbase_link_collision_8mm.STL" />
+            </geometry>
         </collision>
     </link>
     <joint name="arm_hand" type="fixed">
@@ -721,6 +724,23 @@
     <gazebo reference="f3link1"><mu1>1.5</mu1><mu2>1.5</mu2></gazebo>
     <gazebo reference="f3link2"><mu1>1.5</mu1><mu2>1.5</mu2></gazebo>
     <gazebo reference="f3link3"><mu1>1.5</mu1><mu2>1.5</mu2></gazebo>
+    <!-- Physics-level self-collision backstop for the complete arm and hand. -->
+    <gazebo reference="base_link"><selfCollide>true</selfCollide></gazebo>
+    <gazebo reference="link_1"><selfCollide>true</selfCollide></gazebo>
+    <gazebo reference="link_2"><selfCollide>true</selfCollide></gazebo>
+    <gazebo reference="link_3"><selfCollide>true</selfCollide></gazebo>
+    <gazebo reference="link_4"><selfCollide>true</selfCollide></gazebo>
+    <gazebo reference="link_5"><selfCollide>true</selfCollide></gazebo>
+    <gazebo reference="link_6"><selfCollide>true</selfCollide></gazebo>
+    <gazebo reference="handbase_link"><selfCollide>true</selfCollide></gazebo>
+    <gazebo reference="f1link1"><selfCollide>true</selfCollide></gazebo>
+    <gazebo reference="f1link2"><selfCollide>true</selfCollide></gazebo>
+    <gazebo reference="f1link3"><selfCollide>true</selfCollide></gazebo>
+    <gazebo reference="f2link1"><selfCollide>true</selfCollide></gazebo>
+    <gazebo reference="f2link2"><selfCollide>true</selfCollide></gazebo>
+    <gazebo reference="f3link1"><selfCollide>true</selfCollide></gazebo>
+    <gazebo reference="f3link2"><selfCollide>true</selfCollide></gazebo>
+    <gazebo reference="f3link3"><selfCollide>true</selfCollide></gazebo>
     <gazebo>
         <plugin name="gazebo_ros_control" filename="libgazebo_ros_control.so">
             <robotNamespace>/</robotNamespace>

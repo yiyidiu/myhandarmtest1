@@ -1,0 +1,74 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Isolated acceptance plant for the public Servo -> swept FCL gate ->
+       EGM position-reference chain. The validator is the only command writer. -->
+  <arg name="gazebo_gui" default="false" />
+  <arg name="paused" default="false" />
+  <arg name="world_name" default="worlds/empty.world" />
+  <arg name="world_pose" default="-x 0 -y 0 -z 1.0 -R 0 -P 0 -Y 0" />
+  <arg name="run_validator" default="true" />
+  <arg name="hand_stability_profile" default="physical_grasp" />
+  <arg name="initial_joint_positions"
+       default=" -J f1j1 0.051 -J f3j1 0.051 -J f1j2 0.0317 -J f1j3 0.0317 -J f2j1 0.0227 -J f2j2 0.0227 -J f3j2 0.0363 -J f3j3 0.0363 -J joint_1 0.0 -J joint_2 0.0 -J joint_3 0.0 -J joint_4 0.0 -J joint_5 1.5707963267948966 -J joint_6 0.0" />
+
+  <include file="$(find abb120_moveit_config1)/launch/gazebo_egm_position.launch">
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)" />
+    <arg name="paused" value="$(arg paused)" />
+    <arg name="world_name" value="$(arg world_name)" />
+    <arg name="world_pose" value="$(arg world_pose)" />
+    <arg name="initial_joint_positions" value="$(arg initial_joint_positions)" />
+    <arg name="hand_stability_profile" value="$(arg hand_stability_profile)" />
+  </include>
+  <include file="$(find abb120_moveit_config1)/launch/demo.launch">
+    <arg name="load_robot_description" value="false" />
+    <arg name="moveit_controller_manager" value="ros_control" />
+    <arg name="use_rviz" value="false" />
+  </include>
+  <include file="$(find abb120_moveit_config1)/launch/abbarm_servo_egm_position_gazebo.launch" />
+
+  <node name="full_robot_self_collision_guard"
+        pkg="handarm_moveit_demo"
+        type="full_robot_self_collision_guard"
+        output="screen" required="true">
+    <param name="state_timeout_s" value="0.25" />
+    <param name="status_rate_hz" value="50.0" />
+    <param name="prediction_horizon_s" value="0.40" />
+    <param name="measured_joint_limit_tolerance_rad" value="0.02" />
+    <param name="hand_command_topic" value="/controller_gazebo_hand/command" />
+    <rosparam param="hand_reference_joint_names">[f1j1, f1j2, f2j1, f3j2]</rosparam>
+    <rosparam param="initial_hand_reference">[0.051, 0.0317, 0.0227, 0.0363]</rosparam>
+    <param name="raw_velocity_topic"
+           value="/egm_position_reference/raw_joint_velocity" />
+    <param name="safe_velocity_topic"
+           value="/egm_position_reference/collision_checked_joint_velocity" />
+    <rosparam param="required_joint_names">[joint_1, joint_2, joint_3, joint_4, joint_5, joint_6, f1j1, f1j2, f2j1, f3j2]</rosparam>
+  </node>
+
+  <node pkg="handarm_moveit_demo" type="egm_position_reference_adapter.py"
+        name="egm_position_reference_adapter" output="screen" required="true">
+    <param name="rate_hz" value="250.0" />
+    <param name="raw_velocity_topic"
+           value="/egm_position_reference/collision_checked_joint_velocity" />
+    <param name="controller_topic"
+           value="/abbarm_egm_position_controller/command" />
+    <param name="command_timeout_s" value="0.10" />
+    <param name="joint_limit_margin_rad" value="0.01" />
+    <param name="maximum_step_dt_s" value="0.02" />
+    <param name="hard_stop_collision_scale" value="0.20" />
+    <param name="collision_scale_timeout_s" value="0.25" />
+    <param name="strict_command_safe_timeout_s" value="0.25" />
+    <param name="retreat_authorization_timeout_s" value="0.12" />
+    <rosparam param="arm_joints">[joint_1, joint_2, joint_3, joint_4, joint_5, joint_6]</rosparam>
+    <rosparam param="initial_reference">[0.0, 0.0, 0.0, 0.0, 1.5707963267948966, 0.0]</rosparam>
+    <rosparam param="lower_limits">[-2.87979, -1.91986, -1.91986, -2.79253, -2.094395, -6.981317]</rosparam>
+    <rosparam param="upper_limits">[2.87979, 1.91986, 1.22173, 2.79253, 2.094395, 6.981317]</rosparam>
+    <rosparam param="maximum_velocity">[4.36332, 4.36332, 4.36332, 5.58505, 5.58505, 7.33038]</rosparam>
+    <rosparam param="maximum_acceleration">[8.0, 8.0, 8.0, 12.0, 12.0, 16.0]</rosparam>
+    <rosparam param="maximum_following_error_rad">[0.04, 0.04, 0.04, 0.06, 0.06, 0.08]</rosparam>
+  </node>
+
+  <node if="$(arg run_validator)" name="dynamic_self_collision_acceptance"
+        pkg="handarm_moveit_demo"
+        type="validate_dynamic_self_collision_stop.py"
+        output="screen" required="true" />
+</launch>

@@ -198,6 +198,13 @@ class SceneAlgorithmsTest(unittest.TestCase):
                     continue
                 collisions = link.findall("collision")
                 self.assertTrue(collisions, (filename, link.get("name")))
+                if link.get("name") == "handbase_link":
+                    meshes = [collision.find("geometry/mesh")
+                              for collision in collisions]
+                    self.assertEqual(len(meshes), 1)
+                    self.assertTrue(meshes[0].get("filename").endswith(
+                        "handbase_link_collision_8mm.STL"))
+                    continue
                 for collision in collisions:
                     self.assertIsNone(
                         collision.find("geometry/mesh"),
@@ -216,6 +223,7 @@ class SceneAlgorithmsTest(unittest.TestCase):
                 )
                 for gazebo in root.findall("gazebo")
                 if gazebo.get("reference") in hand_links - {"handbase_link"}
+                and gazebo.find("mu1") is not None
             }
             self.assertEqual(set(friction), hand_links - {"handbase_link"})
             self.assertTrue(
@@ -249,8 +257,17 @@ class SceneAlgorithmsTest(unittest.TestCase):
             & hand_joints,
             hand_joints,
         )
-        for collision in root.findall("link/collision"):
-            self.assertIsNone(collision.find("geometry/mesh"))
+        for link in root.findall("link"):
+            collisions = link.findall("collision")
+            if link.get("name") == "handbase_link":
+                self.assertEqual(len(collisions), 1)
+                mesh = collisions[0].find("geometry/mesh")
+                self.assertIsNotNone(mesh)
+                self.assertTrue(mesh.get("filename").endswith(
+                    "handbase_link_collision_8mm.STL"))
+                continue
+            for collision in collisions:
+                self.assertIsNone(collision.find("geometry/mesh"))
         with open(
             os.path.join(HAND_PACKAGE, "xacro", "hand_g.xacro"),
             encoding="utf-8",
@@ -667,7 +684,7 @@ class SceneAlgorithmsTest(unittest.TestCase):
             coordinator.index('rospy.ServiceProxy("/gazebo/unpause_physics"'),
         )
 
-    def test_joint6_avoids_folded_ode_stop(self):
+    def test_joint6_preserves_the_full_abb_axis6_working_range(self):
         for filename in ("gazebo_handarm.urdf", "gazebo_handarm_velocity.urdf"):
             urdf_path = os.path.join(
                 os.path.dirname(PACKAGE),
@@ -680,8 +697,8 @@ class SceneAlgorithmsTest(unittest.TestCase):
             self.assertIsNotNone(joint, filename)
             self.assertEqual(joint.attrib["type"], "revolute", filename)
             limit = joint.find("limit")
-            self.assertAlmostEqual(float(limit.attrib["lower"]), -3.14159)
-            self.assertAlmostEqual(float(limit.attrib["upper"]), 3.14159)
+            self.assertAlmostEqual(float(limit.attrib["lower"]), -6.981317)
+            self.assertAlmostEqual(float(limit.attrib["upper"]), 6.981317)
             folded_stop = 6.98132 - 2.0 * math.pi
             self.assertGreater(abs(float(limit.attrib["lower"])), folded_stop)
 

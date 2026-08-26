@@ -11,9 +11,14 @@
   <arg name="log_directory" default="/tmp/handarm_egm_position_teleop_logs" />
   <arg name="world_name" default="worlds/empty.world" />
   <arg name="mapping_profile" default="current_linear" />
-  <!-- true restores the archived first EGM experiment (MoveIt Servo qdot
-       integration). false uses directional damped recovery and is default. -->
-  <arg name="legacy_moveit_servo_reference" default="false" />
+  <arg name="require_scene_ready" default="false" />
+  <!-- Default: MoveIt Servo performs velocity, collision, singularity and
+       joint-limit safety; the adapter adds a bounded position reference.
+       Direct Cartesian IK remains an explicit simulation-only rollback. -->
+  <arg name="use_moveit_servo_safety" default="true" />
+  <arg name="legacy_moveit_servo_reference"
+       default="$(arg use_moveit_servo_safety)"
+       doc="deprecated compatibility alias; false selects direct IK rollback" />
   <arg name="stable_position_reference_profile" default="true"
        doc="true enables bounded low-latency motion plus stiff hold; false restores the prior aggressive EGM response" />
   <arg name="hand_stability_profile" default="physical_grasp"
@@ -38,23 +43,54 @@
   <include if="$(arg legacy_moveit_servo_reference)"
            file="$(find abb120_moveit_config1)/launch/abbarm_servo_egm_position_gazebo.launch" />
 
+  <!-- Fail-closed, swept-state FCL gate after Servo.  It merges the complete
+       arm/hand state and rejects current, candidate and interpolated collisions. -->
+  <node if="$(arg legacy_moveit_servo_reference)"
+        name="full_robot_self_collision_guard"
+        pkg="handarm_moveit_demo"
+        type="full_robot_self_collision_guard"
+        output="screen"
+        required="true">
+    <param name="state_timeout_s" value="0.25" />
+    <param name="status_rate_hz" value="50.0" />
+    <param name="prediction_horizon_s" value="0.40" />
+    <param name="measured_joint_limit_tolerance_rad" value="0.02" />
+    <param name="hand_command_topic" value="/controller_gazebo_hand/command" />
+    <rosparam param="hand_reference_joint_names">[f1j1, f1j2, f2j1, f3j2]</rosparam>
+    <rosparam param="initial_hand_reference">[0.051, 0.0317, 0.0227, 0.0363]</rosparam>
+    <param name="raw_velocity_topic"
+           value="/egm_position_reference/raw_joint_velocity" />
+    <param name="safe_velocity_topic"
+           value="/egm_position_reference/collision_checked_joint_velocity" />
+    <rosparam param="required_joint_names">[joint_1, joint_2, joint_3, joint_4, joint_5, joint_6, f1j1, f1j2, f2j1, f3j2]</rosparam>
+  </node>
+
   <node if="$(arg legacy_moveit_servo_reference)"
         pkg="handarm_moveit_demo" type="egm_position_reference_adapter.py"
         name="egm_position_reference_adapter" output="screen" required="true">
     <param name="rate_hz" value="250.0" />
     <param name="raw_velocity_topic"
-           value="/egm_position_reference/raw_joint_velocity" />
+           value="/egm_position_reference/collision_checked_joint_velocity" />
     <param name="controller_topic"
            value="/abbarm_egm_position_controller/command" />
     <param name="command_timeout_s" value="0.10" />
     <param name="joint_limit_margin_rad" value="0.01" />
     <param name="maximum_step_dt_s" value="0.02" />
+    <param name="hard_stop_collision_scale" value="0.20" />
+    <param name="collision_scale_timeout_s" value="0.25" />
+    <param name="strict_command_safe_timeout_s" value="0.25" />
+    <param name="retreat_authorization_timeout_s" value="0.12" />
+    <param name="retreat_authorization_topic"
+           value="/shared_teleop/collision_retreat_authorized" />
+    <param name="strict_command_safe_topic"
+           value="/full_robot_self_collision_guard/command_safe" />
     <rosparam param="arm_joints">[joint_1, joint_2, joint_3, joint_4, joint_5, joint_6]</rosparam>
     <rosparam param="initial_reference">[0.0, 0.0, 0.0, 0.0, 1.5707963267948966, 0.0]</rosparam>
     <rosparam param="lower_limits">[-2.87979, -1.91986, -1.91986, -2.79253, -2.094395, -6.981317]</rosparam>
     <rosparam param="upper_limits">[2.87979, 1.91986, 1.22173, 2.79253, 2.094395, 6.981317]</rosparam>
     <rosparam param="maximum_velocity">[4.36332, 4.36332, 4.36332, 5.58505, 5.58505, 7.33038]</rosparam>
     <rosparam param="maximum_acceleration">[8.0, 8.0, 8.0, 12.0, 12.0, 16.0]</rosparam>
+    <rosparam param="maximum_following_error_rad">[0.04, 0.04, 0.04, 0.06, 0.06, 0.08]</rosparam>
   </node>
 
   <node unless="$(arg legacy_moveit_servo_reference)"
@@ -111,6 +147,7 @@
     <arg name="enable_gesture_demo" value="$(arg enable_gesture_demo)" />
     <arg name="log_directory" value="$(arg log_directory)" />
     <arg name="mapping_profile" value="$(arg mapping_profile)" />
+    <arg name="require_scene_ready" value="$(arg require_scene_ready)" />
     <arg name="stable_position_reference_profile"
          value="$(arg stable_position_reference_profile)" />
     <arg name="camera_workspace_calibration_file"

@@ -26,6 +26,8 @@ SHA-256：`7b9ea411fddf5beaf5a427ac81576f499396dce17d6c343a21eba154871cc860`
   方式锁定控制。
 - 第二批修复将 Gazebo 手指默认执行机构改为单一所有者的有限柔顺弹簧阻尼模型，
   避免主动关节 PID 与 mimic 插件在机械臂运动和接触约束下互相对抗。
+- 第三批修复将默认机械臂路径切回 MoveIt Servo，并在其后增加完整臂手状态的
+  连续扫掠 FCL 保护器；场景、关节状态、碰撞监视器或速度命令失联时均闭锁。
 
 人手遥操作仍使用原来的启动入口；`physical_grasp` 已是默认手指模型：
 
@@ -52,3 +54,14 @@ roslaunch handarm_sim_demo hand_transport_stability_ab.launch \
 该验收只证明“机械臂搬运期间固定手指目标”的稳定性，不等同于完成了人手指映射、
 物体接触抓取或端到端遥操作验收。详细结果见
 `docs/teleop_evidence/v0.3_20260826/P0_REMEDIATION_02_HAND_PLANT.md`。
+
+机械臂自碰撞、关节限位和恢复的自动验收：
+
+```bash
+roslaunch handarm_moveit_demo egm_servo_safety_acceptance.launch
+```
+
+最终仿真结果为自碰撞接近/恢复、关节上限接近/恢复全部 PASS；状态失联闭锁和公开
+入口 PlanningScene 同步也已单独验证。该结论仍不覆盖动态外部障碍物、奇异位形、
+真机或端到端真人遥操作质量。实现与测量见
+`docs/teleop_evidence/v0.3_20260826/P0_REMEDIATION_03_ARM_SAFETY.md`。

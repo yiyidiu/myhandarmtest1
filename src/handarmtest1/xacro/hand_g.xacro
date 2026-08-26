@@ -44,40 +44,48 @@
 
   <gazebo reference="handbase_link">
     <material>Gazebo/Black</material>
-    <turnGravityOff>true</turnGravityOff>
+    <turnGravityOff>false</turnGravityOff>
   </gazebo>
 
   <gazebo reference="f1link1">
     <material>Gazebo/Grey</material>
-    <turnGravityOff>true</turnGravityOff>
+    <turnGravityOff>false</turnGravityOff>
+    <mu1>1.5</mu1><mu2>1.5</mu2>
   </gazebo>
   <gazebo reference="f1link2">
     <material>Gazebo/Grey</material>
-    <turnGravityOff>true</turnGravityOff>
+    <turnGravityOff>false</turnGravityOff>
+    <mu1>1.5</mu1><mu2>1.5</mu2>
   </gazebo>
   <gazebo reference="f1link3">
     <material>Gazebo/Grey</material>
-    <turnGravityOff>true</turnGravityOff>
+    <turnGravityOff>false</turnGravityOff>
+    <mu1>1.5</mu1><mu2>1.5</mu2>
   </gazebo>
   <gazebo reference="f2link1">
     <material>Gazebo/Grey</material>
-    <turnGravityOff>true</turnGravityOff>
+    <turnGravityOff>false</turnGravityOff>
+    <mu1>1.5</mu1><mu2>1.5</mu2>
   </gazebo>
   <gazebo reference="f2link2">
     <material>Gazebo/Grey</material>
-    <turnGravityOff>true</turnGravityOff>
+    <turnGravityOff>false</turnGravityOff>
+    <mu1>1.5</mu1><mu2>1.5</mu2>
   </gazebo>
   <gazebo reference="f3link1">
     <material>Gazebo/Grey</material>
-    <turnGravityOff>true</turnGravityOff>
+    <turnGravityOff>false</turnGravityOff>
+    <mu1>1.5</mu1><mu2>1.5</mu2>
   </gazebo>
   <gazebo reference="f3link2">
     <material>Gazebo/Grey</material>
-    <turnGravityOff>true</turnGravityOff>
+    <turnGravityOff>false</turnGravityOff>
+    <mu1>1.5</mu1><mu2>1.5</mu2>
   </gazebo>
   <gazebo reference="f3link3">
     <material>Gazebo/Grey</material>
-    <turnGravityOff>true</turnGravityOff>
+    <turnGravityOff>false</turnGravityOff>
+    <mu1>1.5</mu1><mu2>1.5</mu2>
   </gazebo>
 
 

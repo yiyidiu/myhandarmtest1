@@ -24,6 +24,13 @@ finger_geometry:
   non_contact_links: [handbase_link, f1link1, f3link1]
   capsule_axis_samples: 31
 
+# Runtime uses a reduced non-convex STL. The offline evaluator uses this
+# conservative box, equivalent to the former cylinder's bounds.
+mesh_collision_box_proxies:
+  handbase_link:
+    - center_xyz_m: [-0.00136, -0.00082, 0.0825]
+      half_extents_m: [0.069, 0.069, 0.0895]
+
 # The reference center is the centroid of the three distal collision-cylinder
 # centers halfway through the synchronized OPEN->CLOSE sweep.  The Python
 # implementation recomputes it from the installed URDF and rejects this file

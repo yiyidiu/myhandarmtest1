@@ -54,6 +54,9 @@ class SixDofTrendNode:
             "frame", frames.get("camera", "camera_color_optical_frame"))
         self.mapping_profile_name = str(rospy.get_param(
             "~mapping_profile", "current_linear"))
+        self.require_scene_ready = bool(rospy.get_param(
+            "~require_scene_ready", False))
+        self.scene_ready = not self.require_scene_ready
         self.camera_workspace_calibration_status = "NOT_USED"
         self.pose_reachability_enabled = False
         self.pose_reachability_cache = []
@@ -440,6 +443,11 @@ class SixDofTrendNode:
                 "servo_collision_scale",
                 "/servo_server/internal/collision_velocity_scale"),
             Float64, self.collision_scale_callback, queue_size=1)
+        if self.require_scene_ready:
+            rospy.Subscriber(
+                rospy.get_param(
+                    "~scene_ready_topic", "/handarm_sim_demo/scene_ready"),
+                Bool, self.scene_ready_callback, queue_size=1)
         rospy.Service("/shared_teleop/reset_hand_zero", Trigger, self.reset)
         rospy.Service("/shared_teleop/confirm_hand_reference", Trigger, self.reset)
         rospy.Service("/shared_teleop/clear_hand_reference", Trigger,
@@ -798,6 +806,24 @@ class SixDofTrendNode:
                 self.collision_velocity_scale <= self.collision_disarm_scale):
             self.engage_servo_interlock(3)
 
+    def scene_ready_callback(self, message):
+        ready = bool(message.data)
+        with self.lock:
+            was_ready = self.scene_ready
+            self.scene_ready = ready
+            active = bool(
+                self.reference_armed or self.reference_ready or
+                self.latest_tracking is not None)
+            if not ready and active:
+                self.clear_reference_locked(armed=False, token=None)
+        if ready and not was_ready:
+            rospy.loginfo(
+                "MoveIt PlanningScene is synchronized; live reference may be captured")
+        elif not ready and active:
+            self.publish_hold_now("PLANNING_SCENE_NOT_READY")
+            rospy.logerr(
+                "MoveIt PlanningScene readiness was lost; hand reference disarmed")
+
     def maybe_reset_recoverable_servo_halt(
             self, target_age_s, velocity, collision_retreat):
         """Reset a latched Servo halt only for a fresh, safe recovery command.
@@ -938,6 +964,11 @@ class SixDofTrendNode:
             rospy.logwarn_throttle(
                 1.0, "HaMeR reference frame changed: expected %s, got %s",
                 self.reference_frame, message.header.frame_id)
+            return
+        if self.require_scene_ready and not self.scene_ready:
+            self.publish_waiting(message, "WAITING_FOR_PLANNING_SCENE")
+            rospy.logwarn_throttle(
+                2.0, "Gazebo control locked until MoveIt PlanningScene is synchronized")
             return
         if not self.prepare_operator_reference(message):
             return

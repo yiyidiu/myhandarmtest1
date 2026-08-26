@@ -14,7 +14,7 @@ import math
 
 import numpy as np
 import yaml
-from urdf_parser_py.urdf import Box, Cylinder, Sphere, URDF
+from urdf_parser_py.urdf import Box, Cylinder, Mesh, Sphere, URDF
 
 
 EPS = 1.0e-12
@@ -476,6 +476,39 @@ class HandGeometry:
         root = self.root_transforms(values)
         return np.linalg.inv(root[reference]) @ root[target]
 
+    def _mesh_box_proxies(self, link_name, T_hand_link):
+        """Return explicit conservative boxes for a URDF collision mesh.
+
+        Runtime FCL/Gazebo may use a reduced mesh. This deterministic offline
+        evaluator uses boxes declared in YAML; missing proxies fail closed.
+        """
+        configured = self.config.get("mesh_collision_box_proxies", {}).get(
+            link_name
+        )
+        if not configured:
+            raise ValueError(
+                "collision mesh on {} requires mesh_collision_box_proxies"
+                .format(link_name)
+            )
+        boxes = []
+        for index, item in enumerate(configured):
+            name = "mesh proxy {}[{}]".format(link_name, index)
+            center = _finite_array(item["center_xyz_m"], (3,), name + " center")
+            half_extents = _finite_array(
+                item["half_extents_m"], (3,), name + " half extents")
+            if np.any(half_extents <= 0.0):
+                raise ValueError(name + " half extents must be positive")
+            rpy = _finite_array(
+                item.get("rpy_rad", [0.0, 0.0, 0.0]),
+                (3,), name + " rpy")
+            T_hand_proxy = T_hand_link @ transform(
+                rotation_from_rpy(rpy), center)
+            boxes.append(BoxProxy(
+                T_hand_proxy[:3, 3],
+                validate_rotation(T_hand_proxy[:3, :3]),
+                half_extents, link_name))
+        return boxes
+
     def joint_values_at(self, closure_fraction):
         fraction = float(closure_fraction)
         if not math.isfinite(fraction) or fraction < 0.0 or fraction > 1.0:
@@ -493,6 +526,7 @@ class HandGeometry:
         capsules, boxes = [], []
         for link_name in links:
             T_hand_link = T_hand_root @ roots[link_name]
+            mesh_proxy_added = False
             for collision in self.robot.link_map[link_name].collisions:
                 geometry = collision.geometry
                 T_hand_geometry = T_hand_link @ origin_transform(collision.origin)
@@ -543,6 +577,11 @@ class HandGeometry:
                             link_name,
                         )
                     )
+                elif isinstance(geometry, Mesh) and not family:
+                    if not mesh_proxy_added:
+                        boxes.extend(
+                            self._mesh_box_proxies(link_name, T_hand_link))
+                        mesh_proxy_added = True
                 else:
                     raise ValueError(
                         "unsupported collision geometry {} on {}".format(

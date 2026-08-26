@@ -51,3 +51,17 @@ verified without committing hundreds of megabytes of generated data.
    real ROS-side input watchdog.
 3. Restore a constraint-complete arm safety path and replace the unstable
    legacy hand plant in subsequent changes.
+
+## Tracked remediation records
+
+- `P0_REMEDIATION_01.md`: hand identity, presence generation, invalid
+  heartbeat, and C-session fail-closed behavior.
+- `P0_REMEDIATION_02_HAND_PLANT.md`: finite-compliance Gazebo hand plant and
+  fixed-target arm-transport A/B evidence.
+- `P0_REMEDIATION_03_ARM_SAFETY.md`: default Servo/FCL arm path, swept
+  self-collision and joint-limit acceptance, PlanningScene synchronization,
+  and watchdog evidence.
+
+These records deliberately separate subsystem acceptance from complete human
+teleoperation acceptance. A new synchronized C-to-Q human trial is still
+required after perception timing and hand retargeting are repaired.

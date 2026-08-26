@@ -50,12 +50,14 @@ class GroundSceneTest(unittest.TestCase):
         self.assertEqual(config["support_surface_key"], "ground")
         ground = config["objects"]["ground"]
         top = ground["pose"]["position"][2] + 0.5 * ground["size"][2]
-        self.assertAlmostEqual(top, 0.0)
+        self.assertAlmostEqual(top, -0.003)
         self.assertFalse(ground["scene_manager_enabled"])
-        self.assertNotIn("ground", config["scenario_object_sets"]["no_obstacle"])
+        self.assertTrue(ground["planning_scene_enabled"])
+        self.assertIn("ground", config["scenario_object_sets"]["no_obstacle"])
         self.assertEqual(
             set(config["scenario_object_sets"]["no_obstacle"]),
-            {"target", "left_object", "right_object"})
+            {"ground", "target", "left_object", "right_object"})
+        self.assertEqual(config["scenario_object_sets"]["ground_only"], ["ground"])
 
     def test_ground_launch_is_well_formed_and_uses_new_files(self):
         path = PACKAGE / "launch/ground_grasp_pose_demo.launch"
