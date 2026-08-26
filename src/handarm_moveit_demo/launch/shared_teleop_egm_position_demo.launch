@@ -16,6 +16,8 @@
   <arg name="legacy_moveit_servo_reference" default="false" />
   <arg name="stable_position_reference_profile" default="true"
        doc="true enables bounded low-latency motion plus stiff hold; false restores the prior aggressive EGM response" />
+  <arg name="hand_stability_profile" default="physical_grasp"
+       doc="physical_grasp uses one finite-compliance hand plant; original restores the v0.3 PID/mimic plant" />
   <arg name="camera_workspace_calibration_file"
        default="$(find handarm_moveit_demo)/config/camera_workspace_calibration.yaml" />
   <arg name="safe_initial_joint_positions"
@@ -26,6 +28,7 @@
     <arg name="paused" value="false" />
     <arg name="world_name" value="$(arg world_name)" />
     <arg name="initial_joint_positions" value="$(arg safe_initial_joint_positions)" />
+    <arg name="hand_stability_profile" value="$(arg hand_stability_profile)" />
   </include>
   <include file="$(find abb120_moveit_config1)/launch/demo.launch">
     <arg name="load_robot_description" value="false" />

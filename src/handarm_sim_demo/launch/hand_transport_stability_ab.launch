@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Simulation-only A/B: fixed finger target while three arm joints sweep. -->
+  <arg name="hand_stability_profile" default="physical_grasp"
+       doc="physical_grasp, rigid_transport, or original" />
+  <arg name="output_file"
+       default="/tmp/hand_transport_$(arg hand_stability_profile).json" />
+  <arg name="duration_s" default="12.0" />
+  <arg name="sample_period_s" default="0.02" />
+
+  <include file="$(find abb120_moveit_config1)/launch/gazebo_egm_position.launch">
+    <arg name="gazebo_gui" value="false" />
+    <arg name="paused" value="false" />
+    <arg name="hand_stability_profile" value="$(arg hand_stability_profile)" />
+  </include>
+
+  <node name="validate_hand_transport_stability"
+        pkg="handarm_sim_demo"
+        type="validate_hand_transport_stability.py"
+        output="screen" required="true">
+    <param name="profile" value="$(arg hand_stability_profile)" />
+    <param name="output_file" value="$(arg output_file)" />
+    <param name="duration_s" value="$(arg duration_s)" />
+    <param name="settle_s" value="2.0" />
+    <param name="sample_period_s" value="$(arg sample_period_s)" />
+    <param name="range_limit_rad" value="0.01" />
+    <param name="velocity_p95_limit_rad_s" value="0.20" />
+  </node>
+</launch>

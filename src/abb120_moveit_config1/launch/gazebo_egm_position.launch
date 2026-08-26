@@ -5,6 +5,10 @@
   <arg name="paused" default="false" />
   <arg name="world_name" default="worlds/empty.world" />
   <arg name="world_pose" default="-x 0 -y 0 -z 0 -R 0 -P 0 -Y 0" />
+  <!-- Only robot_description is rendered. The canonical URDF is unchanged,
+       and original remains an immediate rollback for controlled A/B tests. -->
+  <arg name="hand_stability_profile" default="physical_grasp"
+       doc="physical_grasp, rigid_transport, or original" />
   <arg name="initial_joint_positions"
        default=" -J f1j1 0.051 -J f1j2 0.0317 -J f2j1 0.0227 -J f3j2 0.0363 -J joint_1 0.0 -J joint_2 0.0 -J joint_3 0.0 -J joint_4 0.0 -J joint_5 1.5707963267948966 -J joint_6 0.0" />
 
@@ -16,16 +20,33 @@
   <!-- Use PositionJointInterface plus finite-effort P/D gains. Unlike the
        preserved velocity plant, gravity remains enabled in this URDF. -->
   <param name="robot_description"
-         textfile="$(find abb120_moveit_config1)/config/gazebo_handarm.urdf" />
+         command="$(find handarm_sim_demo)/scripts/render_teleop_hand_urdf.py --input $(find abb120_moveit_config1)/config/gazebo_handarm.urdf --profile $(arg hand_stability_profile)" />
   <rosparam file="$(find abb120_moveit_config1)/config/gazebo_controllers.yaml" />
   <!-- Keep the new arm tuning isolated from the established speed profile. -->
   <rosparam command="load"
             file="$(find handarm_sim_demo)/config/gazebo_arm_egm_position_pid.yaml"
             ns="gazebo_ros_control/pid_gains" />
-  <rosparam command="load"
+  <rosparam if="$(eval arg('hand_stability_profile') == 'original')"
+            command="load"
             file="$(find handarm_sim_demo)/config/gazebo_hand_only_pid.yaml"
             ns="gazebo_ros_control/pid_gains" />
-  <include file="$(find abb120_moveit_config1)/launch/ros_controllers_egm_position.launch" />
+  <include file="$(find abb120_moveit_config1)/launch/ros_controllers_egm_position.launch">
+    <arg name="spawn_hand_controller"
+         value="$(eval arg('hand_stability_profile') != 'physical_grasp')" />
+  </include>
+  <!-- Preserve the standard hand FollowJointTrajectory API while one
+       finite-compliance plugin owns all eight Gazebo hand joints. -->
+  <node if="$(eval arg('hand_stability_profile') == 'physical_grasp')"
+        name="physical_hand_trajectory_action_server"
+        pkg="handarm_sim_demo"
+        type="physical_hand_trajectory_action_server.py"
+        respawn="false" required="true" output="screen">
+    <rosparam param="joint_names">[f1j1, f1j2, f2j1, f3j2]</rosparam>
+    <param name="command_topic" value="/controller_gazebo_hand/command" />
+    <param name="action_name"
+           value="/controller_gazebo_hand/follow_joint_trajectory" />
+    <param name="default_goal_tolerance_rad" value="0.05" />
+  </node>
 
   <arg name="unpause" value="$(eval '' if arg('paused') else '-unpause')" />
   <node name="spawn_gazebo_model" pkg="gazebo_ros" type="spawn_model"

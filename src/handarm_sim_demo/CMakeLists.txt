@@ -31,6 +31,11 @@ add_library(handarm_deterministic_attach_plugin
 target_link_libraries(handarm_deterministic_attach_plugin
   ${catkin_LIBRARIES} ${GAZEBO_LIBRARIES})
 
+add_library(handarm_stable_hand_spring_plugin
+  src/stable_hand_spring_plugin.cpp)
+target_link_libraries(handarm_stable_hand_spring_plugin
+  ${catkin_LIBRARIES} ${GAZEBO_LIBRARIES})
+
 catkin_install_python(PROGRAMS
   scripts/simulation_guard.py
   scripts/startup_coordinator.py
@@ -40,6 +45,9 @@ catkin_install_python(PROGRAMS
   scripts/hand_commander.py
   scripts/run_hand_cycle_tests.py
   scripts/run_hand_stability_tests.py
+  scripts/render_teleop_hand_urdf.py
+  scripts/physical_hand_trajectory_action_server.py
+  scripts/validate_hand_transport_stability.py
   scripts/scripted_pick_demo.py
   scripts/grasp_candidate_quality.py
   scripts/grasp_geometry.py
@@ -58,6 +66,7 @@ install(DIRECTORY config launch worlds
 )
 
 install(TARGETS handarm_deterministic_attach_plugin
+                handarm_stable_hand_spring_plugin
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
@@ -65,4 +74,5 @@ install(TARGETS handarm_deterministic_attach_plugin
 
 if(CATKIN_ENABLE_TESTING)
   catkin_add_nosetests(test/test_ground_scene.py)
+  catkin_add_nosetests(test/test_hand_stability_profile.py)
 endif()

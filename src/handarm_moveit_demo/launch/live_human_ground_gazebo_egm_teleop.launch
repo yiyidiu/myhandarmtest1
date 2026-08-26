@@ -9,6 +9,8 @@
        doc="true restores the first archived EGM qdot-integration experiment" />
   <arg name="stable_position_reference_profile" default="true"
        doc="false restores the previous aggressive EGM response" />
+  <arg name="hand_stability_profile" default="physical_grasp"
+       doc="original restores the v0.3 hand PID/mimic plant for A/B rollback" />
   <arg name="log_directory" default="/tmp/handarm_ground_egm_teleop_logs" />
   <arg name="camera_workspace_calibration_file"
        default="$(find handarm_moveit_demo)/config/camera_workspace_calibration.yaml" />
@@ -36,5 +38,7 @@
          value="$(arg legacy_moveit_servo_reference)" />
     <arg name="stable_position_reference_profile"
          value="$(arg stable_position_reference_profile)" />
+    <arg name="hand_stability_profile"
+         value="$(arg hand_stability_profile)" />
   </include>
 </launch>
