@@ -48,6 +48,38 @@ class AutomaticActiveHandSelectorTest(unittest.TestCase):
         self.assertTrue(switched["automatic_hand_switch"])
         self.assertEqual(switched["active_hand_generation"], 2)
 
+    def test_same_track_handedness_flip_does_not_change_identity(self):
+        selector = AutomaticActiveHandSelector(
+            switch_frames=3, handedness_flip_continuity_iou=0.60
+        )
+        first = selector.select(
+            payload(detection(True, [100, 100, 220, 260]))
+        )
+        flipped = selector.select(
+            payload(detection(False, [103, 101, 223, 261]))
+        )
+        self.assertTrue(first["is_right"])
+        self.assertTrue(flipped["valid"])
+        self.assertTrue(flipped["is_right"])
+        self.assertFalse(flipped["detector_reported_is_right"])
+        self.assertTrue(
+            flipped["handedness_stabilized_by_spatial_continuity"]
+        )
+        self.assertEqual(flipped["active_hand_generation"], 1)
+
+    def test_distant_opposite_box_is_still_a_real_switch_candidate(self):
+        selector = AutomaticActiveHandSelector(
+            switch_frames=2, handedness_flip_continuity_iou=0.60
+        )
+        selector.select(payload(detection(True, [100, 100, 220, 260])))
+        distant = detection(False, [350, 100, 470, 260])
+        pending = selector.select(payload(distant))
+        switched = selector.select(payload(distant))
+        self.assertFalse(pending["valid"])
+        self.assertTrue(switched["valid"])
+        self.assertFalse(switched["is_right"])
+        self.assertEqual(switched["active_hand_generation"], 2)
+
     def test_no_hand_does_not_silently_switch_identity(self):
         selector = AutomaticActiveHandSelector(switch_frames=2)
         selector.select(payload(detection(False, [100, 100, 220, 260])))

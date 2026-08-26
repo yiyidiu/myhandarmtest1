@@ -32,7 +32,9 @@
         output="screen" required="true">
     <param name="state_timeout_s" value="0.25" />
     <param name="status_rate_hz" value="50.0" />
+    <param name="enable_swept_command_gate" value="true" />
     <param name="prediction_horizon_s" value="0.40" />
+    <param name="maximum_prediction_samples" value="256" />
     <param name="measured_joint_limit_tolerance_rad" value="0.02" />
     <param name="hand_command_topic" value="/controller_gazebo_hand/command" />
     <rosparam param="hand_reference_joint_names">[f1j1, f1j2, f2j1, f3j2]</rosparam>

@@ -83,12 +83,16 @@ public:
         "hand_command_topic", hand_command_topic_,
         "/controller_gazebo_hand/command");
     private_nh_.param("command_timeout_s", command_timeout_s_, 0.10);
+    private_nh_.param(
+        "enable_swept_command_gate", enable_swept_command_gate_, true);
     // The EGM emulation is a position-reference plant, so zeroing qdot does
     // not stop it instantaneously.  Keep enough look-ahead for reference
     // re-anchoring plus closed-loop braking under the configured speed cap.
     private_nh_.param("prediction_horizon_s", prediction_horizon_s_, 0.40);
     private_nh_.param("maximum_prediction_step_rad",
                       maximum_prediction_step_rad_, 0.01);
+    private_nh_.param("maximum_prediction_samples",
+                      maximum_prediction_samples_, 256);
     private_nh_.param("measured_joint_limit_tolerance_rad",
                       measured_joint_limit_tolerance_rad_, 0.0);
     if (!private_nh_.getParam("required_joint_names", required_joint_names_))
@@ -104,10 +108,12 @@ public:
     if (!(std::isfinite(state_timeout_s_) && state_timeout_s_ > 0.0 &&
           std::isfinite(status_rate_hz_) && status_rate_hz_ >= 20.0 &&
           std::isfinite(command_timeout_s_) && command_timeout_s_ > 0.0 &&
-          std::isfinite(prediction_horizon_s_) && prediction_horizon_s_ >= 0.10 &&
+          std::isfinite(prediction_horizon_s_) && prediction_horizon_s_ >= 0.02 &&
           std::isfinite(maximum_prediction_step_rad_) &&
           maximum_prediction_step_rad_ > 0.0 &&
           maximum_prediction_step_rad_ <= 0.02 &&
+          maximum_prediction_samples_ >= 1 &&
+          maximum_prediction_samples_ <= 256 &&
           std::isfinite(measured_joint_limit_tolerance_rad_) &&
           measured_joint_limit_tolerance_rad_ >= 0.0 &&
           measured_joint_limit_tolerance_rad_ <= 0.02))
@@ -163,7 +169,10 @@ public:
     ROS_WARN_STREAM("Strict full-robot self-collision guard armed on "
                     << joint_state_topic_ << "; candidate service="
                     << service_name_ << "; MoveIt/FCL velocity gate="
-                    << raw_velocity_topic_ << " -> " << safe_velocity_topic_);
+                    << raw_velocity_topic_ << " -> " << safe_velocity_topic_
+                    << "; swept command gate="
+                    << (enable_swept_command_gate_ ? "enabled" :
+                        "disabled (MoveIt Servo is authoritative)"));
   }
 
 private:
@@ -493,9 +502,12 @@ private:
       for (const auto& item : predicted_velocity)
         maximum_travel = std::max(
             maximum_travel, std::abs(item.second) * prediction_horizon_s_);
-      const std::size_t samples = std::max<std::size_t>(
-          1, static_cast<std::size_t>(
-                 std::ceil(maximum_travel / maximum_prediction_step_rad_)));
+      const std::size_t samples = std::min<std::size_t>(
+          static_cast<std::size_t>(maximum_prediction_samples_),
+          std::max<std::size_t>(
+              1, static_cast<std::size_t>(
+                     std::ceil(maximum_travel /
+                               maximum_prediction_step_rad_))));
       moveit::core::RobotState candidate(start);
       for (std::size_t sample = 1; sample <= samples; ++sample)
       {
@@ -532,35 +544,23 @@ private:
       return true;
     };
 
-    // The outgoing Servo command is not the whole state of a position-driven
-    // plant: the arm can still have measured momentum and the compliant hand
-    // can move independently. Check both the commanded future and a
-    // constant-velocity measured coast for every independent arm/hand joint.
-    std::map<std::string, double> commanded_future;
-    std::map<std::string, double> commanded_hand_reference_future;
-    std::map<std::string, double> measured_coast;
+    // Servo already checks its own arm command against its planning scene.
+    // This strict ACM adds only the full arm/hand geometry Servo intentionally
+    // exempts.  Evaluate one combined future (arm command plus the current
+    // hand reference); extrapolating noisy measured finger velocities as
+    // separate scenarios caused false joint-limit stops and hundreds of FCL
+    // calls in a single 20 ms control period.
+    std::map<std::string, double> combined_future;
     for (const std::string& name : required_joint_names_)
-    {
-      const double measured = start.hasVelocities() ?
-          start.getVariableVelocity(name) : 0.0;
-      commanded_future[name] = measured;
-      measured_coast[name] = measured;
-    }
+      combined_future[name] = 0.0;
     for (std::size_t index = 0; index < arm_joint_names_.size(); ++index)
-      commanded_future[arm_joint_names_[index]] = velocity[index];
-    commanded_hand_reference_future = commanded_future;
+      combined_future[arm_joint_names_[index]] = velocity[index];
     for (const auto& target : hand_reference)
-      commanded_hand_reference_future[target.first] =
+      combined_future[target.first] =
           (target.second - start.getVariablePosition(target.first)) /
           prediction_horizon_s_;
 
-    if (!check_scenario(commanded_future, "SERVO_COMMAND"))
-      return false;
-    if (!check_scenario(
-            commanded_hand_reference_future,
-            "SERVO_COMMAND_HAND_REFERENCE"))
-      return false;
-    if (!check_scenario(measured_coast, "MEASURED_COAST"))
+    if (!check_scenario(combined_future, "STRICT_ARM_HAND_FUTURE"))
       return false;
     reason = "SAFE";
     return true;
@@ -621,7 +621,7 @@ private:
     }
 
     std::string reason;
-    if (!predictedVelocityIsSafe(
+    if (enable_swept_command_gate_ && !predictedVelocityIsSafe(
             velocity, start, hand_reference, reason))
     {
       publishZeroVelocity();
@@ -714,8 +714,9 @@ private:
     // grasp hand, for example, publishes its eight joints independently from
     // gazebo_ros_control's six arm joints.  Validate each fragment first, then
     // merge only independent variables into a short-lived snapshot.  A
-    // complete state is accepted only while every required fragment is fresh;
-    // statusTimer still latches a fault if either publisher disappears.
+    // complete state is accepted only while every required fragment is fresh.
+    // A publisher pause makes the output fail closed until fresh fragments
+    // arrive again; it is not a permanent robot fault by itself.
     if (message->name.size() != message->position.size())
     {
       latchFault("INVALID_JOINT_STATE:joint name/position length mismatch");
@@ -907,15 +908,14 @@ private:
           std::numeric_limits<double>::infinity();
     }
     if (!fault && have_state && age > state_timeout_s_)
-    {
-      latchFault("JOINT_STATE_TIMEOUT");
-      fault = true;
       detail = "JOINT_STATE_TIMEOUT";
-    }
     const bool safe = have_state && !fault && age <= state_timeout_s_;
     publishStatus(safe, safe ? "SAFE" :
         (detail.empty() ? "WAITING_FOR_COMPLETE_JOINT_STATE" : detail));
-    if (!safe && have_state)
+    // Only an invalid/measured-colliding robot state is a latched emergency.
+    // A transient stale state still fails closed below, but automatically
+    // recovers after the next complete fresh joint-state snapshot.
+    if (fault)
     {
       std_msgs::Bool stop;
       stop.data = true;
@@ -932,7 +932,10 @@ private:
     if (!safe || command_stale)
     {
       publishZeroVelocity();
-      if (command_stale)
+      if (!safe)
+        publishCommandStatus(false, detail.empty() ?
+            "WAITING_FOR_COMPLETE_JOINT_STATE" : detail);
+      else if (command_stale)
         publishCommandStatus(false, "RAW_VELOCITY_COMMAND_TIMEOUT");
     }
   }
@@ -966,8 +969,10 @@ private:
   double state_timeout_s_{ 0.25 };
   double status_rate_hz_{ 50.0 };
   double command_timeout_s_{ 0.10 };
+  bool enable_swept_command_gate_{ true };
   double prediction_horizon_s_{ 0.40 };
   double maximum_prediction_step_rad_{ 0.01 };
+  int maximum_prediction_samples_{ 256 };
   double measured_joint_limit_tolerance_rad_{ 0.0 };
   ros::WallTime last_raw_command_wall_time_;
   bool have_raw_command_{ false };

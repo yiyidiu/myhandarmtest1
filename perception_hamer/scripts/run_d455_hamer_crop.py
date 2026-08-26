@@ -84,6 +84,7 @@ from perception_hamer.src.roi_provider import KLTTrackerROIProvider
 from perception_hamer.src.teleop_pose_packet import (
     build_invalid_teleop_packet,
     build_live_teleop_packet,
+    invalidate_stale_teleop_observation,
 )
 from perception_hamer.src.teleop_control_gate import TeleopControlGate
 from perception_hamer.src.teleoperation_core_mano_renderer import (
@@ -430,16 +431,26 @@ def _detect_bbox_with_mediapipe_sidecar(
 class MediaPipeDetectionSidecar:
     """Persistent 2-D detector; avoids reloading MediaPipe for every frame."""
 
-    def __init__(self, width: int, height: int, minimum_confidence: float) -> None:
+    def __init__(
+        self,
+        width: int,
+        height: int,
+        minimum_confidence: float,
+        cpu_affinity: str = "",
+    ) -> None:
         helper = SCRIPT_DIR / "mediapipe_detect_roi_once.py"
         self.width = int(width)
         self.height = int(height)
+        command = [
+            DEFAULT_MEDIAPIPE_PYTHON, "-u", str(helper), "--width",
+            str(self.width), "--height", str(self.height),
+            "--min-detection-confidence", str(float(minimum_confidence)),
+            "--stream",
+        ]
+        if str(cpu_affinity).strip():
+            command = ["taskset", "-c", str(cpu_affinity).strip()] + command
         self._process = subprocess.Popen(
-            [
-                DEFAULT_MEDIAPIPE_PYTHON, "-u", str(helper), "--width", str(self.width),
-                "--height", str(self.height), "--min-detection-confidence",
-                str(float(minimum_confidence)), "--stream",
-            ],
+            command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -993,12 +1004,15 @@ def _display_worker(
     async_detector: Optional[AsyncMediaPipeDetection],
     stop: threading.Event,
     mesh_renderer: str,
+    maximum_display_rate_hz: float,
 ) -> None:
     last_version = 0
     displayed = 0
     started = time.monotonic()
     rendered_capture_sequence = -1
     rendered_reference: Optional[TeleoperationCoreRenderFrame] = None
+    minimum_display_period_s = 1.0 / float(maximum_display_rate_hz)
+    last_display_monotonic = -float("inf")
     while not stop.is_set():
         try:
             last_version, packet = preview_slot.get_after(last_version, timeout_s=1.0)
@@ -1009,6 +1023,10 @@ def _display_worker(
             break
         if packet is None:
             break
+        display_now = time.monotonic()
+        if display_now - last_display_monotonic < minimum_display_period_s:
+            continue
+        last_display_monotonic = display_now
         (
             result, estimates, processed_fps, failure_reason, mano_faces,
             projection_source_bbox, teleoperation_core_render,
@@ -1022,10 +1040,7 @@ def _display_worker(
         ignored_non_active_hand_count = 0
         if async_detector is not None:
             presence = async_detector.presence_snapshot()
-            hand_presence_valid = bool(
-                presence["valid"]
-                and int(presence.get("consecutive_negative_results", 0)) == 0
-            )
+            hand_presence_valid = bool(presence["valid"])
             active_hand_is_right = presence.get("active_hand_is_right")
             active_hand_generation = int(
                 presence.get("active_hand_generation", 0)
@@ -1324,6 +1339,22 @@ def _parse_args() -> argparse.Namespace:
         default=DEFAULT_MEDIAPIPE_PYTHON,
         help="Python with a GUI-enabled OpenCV build for the display sidecar",
     )
+    parser.add_argument(
+        "--display-rate-hz",
+        type=float,
+        default=15.0,
+        help="maximum camera-window refresh rate; key polling uses the same rate",
+    )
+    parser.add_argument(
+        "--inference-cpu-affinity",
+        default="",
+        help="optional taskset CPU list reserved for HaMeR/capture threads",
+    )
+    parser.add_argument(
+        "--sidecar-cpu-affinity",
+        default="",
+        help="optional taskset CPU list for MediaPipe and GUI helper processes",
+    )
     parser.add_argument("--no-mesh-overlay", action="store_true",
                         help="disable the MANO mesh overlay")
     parser.add_argument(
@@ -1368,11 +1399,40 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--teleop-udp-host", default="",
                         help="optional handarm_hamer_pose_v1 destination; empty disables UDP")
     parser.add_argument("--teleop-udp-port", type=int, default=5010)
+    parser.add_argument(
+        "--teleop-maximum-pipeline-latency-s",
+        type=float,
+        default=0.20,
+        help=(
+            "producer freshness ceiling; overdue poses become identity-preserving "
+            "invalid heartbeats and never re-zero control"
+        ),
+    )
     return parser.parse_args()
+
+
+def _apply_process_cpu_affinity(cpu_affinity: str) -> None:
+    affinity = str(cpu_affinity).strip()
+    if not affinity:
+        return
+    completed = subprocess.run(
+        ["taskset", "-apc", affinity, str(os.getpid())],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    if completed.returncode != 0:
+        raise SystemExit(
+            "cannot apply HaMeR CPU affinity {}: {}".format(
+                affinity, completed.stdout.strip()
+            )
+        )
+    print("HaMeR/capture CPU affinity: {}".format(affinity), flush=True)
 
 
 def main() -> int:
     args = _parse_args()
+    _apply_process_cpu_affinity(args.inference_cpu_affinity)
     if not 0.0 < args.roi_smoothing_alpha <= 1.0:
         raise SystemExit("--roi-smoothing-alpha must be in (0, 1]")
     if args.orientation_filter_time_constant_s <= 0.0:
@@ -1412,6 +1472,12 @@ def main() -> int:
         raise SystemExit("--hand-miss-grace-frames must be in [0, 30]")
     if not 0.0 <= args.hand_miss_grace_s <= 1.0:
         raise SystemExit("--hand-miss-grace-s must be in [0, 1]")
+    if not 1.0 <= args.display_rate_hz <= 30.0:
+        raise SystemExit("--display-rate-hz must be in [1, 30]")
+    if not 0.05 <= args.teleop_maximum_pipeline_latency_s <= 1.0:
+        raise SystemExit(
+            "--teleop-maximum-pipeline-latency-s must be in [0.05, 1.0]"
+        )
     if args.teleop_udp_host and args.no_display:
         raise SystemExit(
             "live teleoperation requires the camera window because C is the "
@@ -1472,7 +1538,12 @@ def main() -> int:
     preview_slot = LatestFrameSlot()
     overlay_state = LatestDisplayOverlay()
     pose_display = RelativeWristPoseDisplay()
-    teleop_control_gate = TeleopControlGate()
+    # C is an operator clutch.  Perception dropouts produce invalid/zero
+    # heartbeats but may never cancel or silently replace the captured robot
+    # reference; only another C or camera shutdown changes that reference.
+    teleop_control_gate = TeleopControlGate(
+        retain_reference_until_operator_action=True
+    )
     pending = PendingReinitialization()
     session_records = []
     session_timing_records = []
@@ -1580,12 +1651,14 @@ def main() -> int:
                 args.display_helper_python,
                 SCRIPT_DIR / "display_frame_stream.py",
                 backend=args.display_backend,
+                cpu_affinity=args.sidecar_cpu_affinity,
             )
         seed_validation: Dict[str, Any]
         if args.auto_roi_mediapipe:
             detector_sidecar = MediaPipeDetectionSidecar(
                 seed_frame.rgb.shape[1], seed_frame.rgb.shape[0],
                 args.mediapipe_min_detection_confidence,
+                cpu_affinity=args.sidecar_cpu_affinity,
             )
             async_detector = AsyncMediaPipeDetection(
                 detector_sidecar,
@@ -1764,6 +1837,7 @@ def main() -> int:
                     async_detector,
                     stop,
                     args.mesh_renderer,
+                    args.display_rate_hz,
                 ),
                 name="hamer-live-preview",
                 daemon=True,
@@ -1876,12 +1950,6 @@ def main() -> int:
                     "confirmed_detection": None,
                 }
             presence_valid = bool(presence_state["valid"])
-            presence_measurement_current = bool(
-                presence_valid
-                and int(
-                    presence_state.get("consecutive_negative_results", 0)
-                ) == 0
-            )
             presence_generation = int(presence_state["generation"])
             active_hand_generation = int(
                 presence_state.get("active_hand_generation", 0)
@@ -1911,14 +1979,6 @@ def main() -> int:
                 # survive independent evidence that the real hand disappeared.
                 if last_presence_valid or not packet.roi.lost:
                     pending.request_reset()
-            elif not presence_measurement_current:
-                # A short MediaPipe miss suspends motion without destroying
-                # the operator's C reference.  No stale KLT/MANO measurement
-                # is published while detector evidence is uncertain.
-                failure_reason = (
-                    "hand_presence_temporarily_unconfirmed:"
-                    + str(presence_state["reason"])
-                )
             elif presence_interval_changed:
                 # Never resume from the old background/hand track.  A new
                 # continuous presence interval always starts from MediaPipe's
@@ -2002,24 +2062,12 @@ def main() -> int:
                         if async_detector is None
                         else async_detector.presence_snapshot()
                     )
-                    post_measurement_current = bool(
-                        post_presence is None
-                        or (
-                            post_presence["valid"]
-                            and int(
-                                post_presence.get(
-                                    "consecutive_negative_results", 0
-                                )
-                            ) == 0
-                        )
-                    )
                     if (
                         post_presence is not None
                         and (
                             not post_presence["valid"]
                             or int(post_presence["generation"])
                             != presence_generation
-                            or not post_measurement_current
                         )
                     ):
                         # HaMeR is slower than MediaPipe.  A disappearance can
@@ -2053,11 +2101,6 @@ def main() -> int:
                             pending.request_reset()
                             failure_reason = "no_real_hand:" + str(
                                 post_presence["reason"]
-                            )
-                        elif not post_measurement_current:
-                            failure_reason = (
-                                "hand_presence_temporarily_unconfirmed:"
-                                + str(post_presence["reason"])
                             )
                         elif confirmed_detection is not None:
                             detected_is_right = bool(
@@ -2315,28 +2358,18 @@ def main() -> int:
                     else bool(confirmed_identity["is_right"])
                 )
             )
-            if not presence_valid or presence_interval_changed:
-                teleop_control_gate.invalidate(
-                    "HAND_PRESENCE_CHANGED_REQUIRES_NEW_C"
-                )
-            elif identity_hand_is_right is None:
-                teleop_control_gate.invalidate(
-                    "HAND_IDENTITY_UNAVAILABLE_REQUIRES_NEW_C"
-                )
-            else:
+            if presence_valid and identity_hand_is_right is not None:
                 teleop_control_gate.observe_identity(
                     presence_generation,
                     active_hand_generation,
                     identity_hand_is_right,
                 )
-            orientation_filter_state = (
-                {} if estimates is None
-                else estimates.get("palm_orientation_filter") or {}
-            )
-            if orientation_filter_state.get("status") == "jump_rejected":
-                teleop_control_gate.invalidate(
-                    "ORIENTATION_JUMP_REQUIRES_NEW_C"
-                )
+            # A rejected SO(3) innovation is local to the orientation
+            # measurement channel.  The packet builder already substitutes
+            # the last trusted rotation with zero rotational confidence, so
+            # position can continue causally.  Invalidating the operator's C
+            # token here used to strand the whole arm after one noisy HaMeR
+            # frame even though the D455 wrist position remained valid.
             if (
                 result is not None
                 and identity_hand_is_right is not None
@@ -2656,6 +2689,10 @@ def main() -> int:
                             ),
                         )
                     udp_payload["timing"] = dict(timing_payload)
+                    udp_payload = invalidate_stale_teleop_observation(
+                        udp_payload,
+                        args.teleop_maximum_pipeline_latency_s,
+                    )
                     teleop_packet = teleop_control_gate.decorate(
                         udp_payload, teleop_session_id
                     )

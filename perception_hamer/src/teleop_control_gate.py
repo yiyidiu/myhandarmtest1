@@ -15,8 +15,13 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 class TeleopControlGate:
     """Decorate live pose packets with an explicit, repeatable C-key gate."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self, retain_reference_until_operator_action: bool = False
+    ) -> None:
         self._lock = threading.RLock()
+        self._retain_reference_until_operator_action = bool(
+            retain_reference_until_operator_action
+        )
         self._enabled = False
         self._reference_epoch = 0
         self._bound_identity: Optional[Tuple[int, int, bool]] = None
@@ -127,9 +132,12 @@ class TeleopControlGate:
         )
         with self._lock:
             if self._enabled and identity != self._bound_identity:
-                self._enabled = False
-                self._bound_identity = None
-                self._lock_reason = "HAND_IDENTITY_CHANGED_REQUIRES_NEW_C"
+                if not self._retain_reference_until_operator_action:
+                    self._enabled = False
+                    self._bound_identity = None
+                    self._lock_reason = (
+                        "HAND_IDENTITY_CHANGED_REQUIRES_NEW_C"
+                    )
             return self._enabled
 
     def invalidate(self, reason: str) -> None:
@@ -155,7 +163,11 @@ class TeleopControlGate:
                 output.get("hand_is_right"),
             )
         with self._lock:
-            if self._enabled and observed_identity != self._bound_identity:
+            if (
+                self._enabled
+                and not self._retain_reference_until_operator_action
+                and observed_identity != self._bound_identity
+            ):
                 self._enabled = False
                 self._bound_identity = None
                 self._lock_reason = "HAND_IDENTITY_CHANGED_REQUIRES_NEW_C"
@@ -165,6 +177,25 @@ class TeleopControlGate:
             epoch = self._reference_epoch
             bound_identity = self._bound_identity
             lock_reason = self._lock_reason
+        if (
+            enabled
+            and self._retain_reference_until_operator_action
+            and bound_identity is not None
+        ):
+            # In live Gazebo operation C is an operator clutch, not a fragile
+            # detector lease.  Missing/reacquired detections may invalidate
+            # geometry, but they cannot rewrite or cancel the C-bound robot
+            # reference.  Keep one stable identity token on every heartbeat;
+            # the active-hand selector still guarantees a single pose source.
+            if output.get("valid") is True and observed_identity is None:
+                output["valid"] = False
+                output["invalid_reason"] = (
+                    "HAND_IDENTITY_UNAVAILABLE_HOLDING_C_REFERENCE"
+                )
+            output["hand_identity_present"] = True
+            output["presence_generation"] = int(bound_identity[0])
+            output["active_hand_generation"] = int(bound_identity[1])
+            output["hand_is_right"] = bool(bound_identity[2])
         if not enabled:
             output["valid"] = False
             output["invalid_reason"] = str(

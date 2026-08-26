@@ -125,7 +125,7 @@ class HamerInputAdapter:
         return message
 
     def fail_closed_message(self, reason):
-        """Return a geometry-free ROS status that clears every active C token."""
+        """Return a geometry-free ROS status that immediately stops motion."""
 
         self.fail_closed_sequence += 1
         message = HamerHandPose()
@@ -165,14 +165,10 @@ class HamerInputAdapter:
         return message
 
     def publish_fail_closed(self, reason, rejected_packet=None):
-        rejected_token = ""
-        if isinstance(rejected_packet, dict) and (
-            rejected_packet.get("control_enabled") is True
-        ):
-            rejected_token = str(
-                rejected_packet.get("control_reference_token", "")
-            )
-        self.reference_interlock.require_new_reference(rejected_token)
+        # Transport/serialization faults stop output immediately, but C is an
+        # operator clutch and must not be revoked by this receiver.  The next
+        # valid packet with the same token resumes against the original robot
+        # reference; a camera-origin disabled packet still clears it normally.
         self.publisher.publish(self.fail_closed_message(reason))
 
     def poll(self, _event):
@@ -216,11 +212,11 @@ class HamerInputAdapter:
             )
             return
         if self.watchdog.timeout_due(time.monotonic()):
-            self.publish_fail_closed("HAMER_UDP_INPUT_TIMEOUT_REQUIRES_NEW_C")
+            self.publish_fail_closed("HAMER_UDP_INPUT_TIMEOUT_HOLDING_C")
             rospy.logwarn_throttle(
                 1.0,
-                "No accepted HaMeR UDP packet for %.3f s; control locked and "
-                "a new C reference is required",
+                "No accepted HaMeR UDP packet for %.3f s; output is zero "
+                "while the existing camera C reference is retained",
                 self.input_timeout_s,
             )
 

@@ -322,10 +322,10 @@ control:
   target_ik_timeout_s: 0.06
   # MoveIt Servo already stops/scales status 2/3/5 commands and can recover when
   # the operator commands away from the singularity, joint limit, or nearby
-  # obstacle.  Externally latching those transient states stranded the arm and
-  # made every later C token fail.  Only status 4 (an actual collision) disarms
-  # the hand reference and requires a new C after the simulation is made safe.
-  servo_interlock_statuses: [4]
+  # obstacle. Externally latching any Servo status stranded the simulation and
+  # made recovery depend on another C. Servo and the collision guard still
+  # emit zero/retreat-safe commands, but C remains an operator-only clutch.
+  servo_interlock_statuses: []
   # A hard singularity halt (2) or joint-bound halt (5) must not strand the
   # arm.  While either status is present, pass only motion that reduces the
   # measured tool-pose error to the robot pose captured at C.  Returning the

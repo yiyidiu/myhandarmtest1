@@ -378,7 +378,7 @@ class SixDofTrendNode:
         self.collision_velocity_scale = 1.0
         self.servo_interlock_statuses = {
             int(value) for value in control.get(
-                "servo_interlock_statuses", [4])
+                "servo_interlock_statuses", [])
         }
         if not self.servo_interlock_statuses.issubset(set(range(-1, 6))):
             raise ValueError(
@@ -689,26 +689,39 @@ class SixDofTrendNode:
                 if camera_c_gate_locked:
                     self.startup_c_gate_satisfied = True
                     self.startup_blocked_reference_token = None
-                state_changed = bool(
+                active_reference = bool(
                     self.reference_armed or self.reference_ready or
                     self.active_reference_token is not None or
                     self.active_reference_identity is not None or
                     self.latest_tracking is not None)
-                if state_changed:
+                if camera_c_gate_locked and active_reference:
                     self.clear_reference_locked(armed=False, token=None)
-                self.blocked_reference_token = None
-                self.servo_interlock_status = None
-            if state_changed:
+                if camera_c_gate_locked:
+                    self.blocked_reference_token = None
+                    self.servo_interlock_status = None
+            if camera_c_gate_locked and active_reference:
                 self.publish_hold_now("OPERATOR_C_GATE_LOCKED")
+            elif not camera_c_gate_locked and active_reference:
+                self.publish_hold_now(
+                    "CAMERA_INPUT_FAULT_HOLDING_C_REFERENCE"
+                )
             waiting_reason = (
-                "HAND_IDENTITY_MISSING_REQUIRES_NEW_C"
-                if message.control_enabled and identity is None
-                else "WAITING_FOR_OPERATOR_C_REFERENCE"
+                "WAITING_FOR_OPERATOR_C_REFERENCE"
+                if camera_c_gate_locked
+                else (
+                    message.invalid_reason
+                    or "CAMERA_INPUT_FAULT_HOLDING_C_REFERENCE"
+                )
             )
             self.publish_waiting(message, waiting_reason)
-            rospy.logwarn_throttle(
-                2.0, "Gazebo control LOCKED: hold a neutral hand pose and "
-                "press C in the camera window")
+            if camera_c_gate_locked:
+                rospy.logwarn_throttle(
+                    2.0, "Gazebo control LOCKED: hold a neutral hand pose and "
+                    "press C in the camera window")
+            else:
+                rospy.logwarn_throttle(
+                    2.0, "Camera input fault: motion is held without "
+                    "cancelling the existing C reference")
             return False
 
         with self.lock:
@@ -736,22 +749,15 @@ class SixDofTrendNode:
                 and self.active_reference_identity is not None
                 and identity != self.active_reference_identity
             )
-            if identity_mismatch:
-                previous_identity = self.active_reference_identity
-                self.clear_reference_locked(
-                    armed=False,
-                    token=token,
-                    identity=previous_identity,
-                )
         if identity_mismatch:
-            self.publish_hold_now("HAND_IDENTITY_CHANGED_REQUIRES_NEW_C")
+            self.publish_hold_now("HAND_IDENTITY_MISMATCH_HOLDING_C_REFERENCE")
             self.publish_waiting(
-                message, "HAND_IDENTITY_CHANGED_REQUIRES_NEW_C"
+                message, "HAND_IDENTITY_MISMATCH_HOLDING_C_REFERENCE"
             )
-            rospy.logerr_throttle(
+            rospy.logwarn_throttle(
                 2.0,
                 "Camera hand identity changed inside C token %s; output is "
-                "locked until a new C reference token arrives",
+                "held while the original C reference remains available",
                 token,
             )
             return False
@@ -828,15 +834,16 @@ class SixDofTrendNode:
             active = bool(
                 self.reference_armed or self.reference_ready or
                 self.latest_tracking is not None)
-            if not ready and active:
-                self.clear_reference_locked(armed=False, token=None)
         if ready and not was_ready:
             rospy.loginfo(
                 "MoveIt PlanningScene is synchronized; live reference may be captured")
         elif not ready and active:
-            self.publish_hold_now("PLANNING_SCENE_NOT_READY")
+            self.publish_hold_now(
+                "PLANNING_SCENE_NOT_READY_HOLDING_C_REFERENCE"
+            )
             rospy.logerr(
-                "MoveIt PlanningScene readiness was lost; hand reference disarmed")
+                "MoveIt PlanningScene readiness was lost; motion held while "
+                "the C reference was retained")
 
     def maybe_reset_recoverable_servo_halt(
             self, target_age_s, velocity, collision_retreat):

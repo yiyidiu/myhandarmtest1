@@ -27,8 +27,16 @@ def _read_exact(size: int) -> Optional[bytes]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--title", default="D455 HaMeR live MANO mesh")
+    parser.add_argument("--window-width", type=int, default=1120)
+    parser.add_argument("--window-height", type=int, default=600)
+    parser.add_argument("--window-x", type=int, default=20)
+    parser.add_argument("--window-y", type=int, default=70)
     args = parser.parse_args()
-    cv2.namedWindow(args.title, cv2.WINDOW_AUTOSIZE)
+    if args.window_width <= 0 or args.window_height <= 0:
+        raise SystemExit("window dimensions must be positive")
+    cv2.namedWindow(args.title, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(args.title, args.window_width, args.window_height)
+    cv2.moveWindow(args.title, args.window_x, args.window_y)
 
     def mouse_callback(event, _x, _y, _flags, _parameter):
         if event == cv2.EVENT_LBUTTONDBLCLK:

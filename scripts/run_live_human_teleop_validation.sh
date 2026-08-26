@@ -56,17 +56,21 @@ setsid roslaunch handarm_moveit_demo \
   gazebo_gui:=true with_ground_object:=true enable_logger:=false \
   input_source:=udp \
   mapping_profile:=current_linear \
-  hamer_input_timeout_s:=0.40 \
-  hamer_maximum_pipeline_latency_s:=0.20 \
+  hamer_input_timeout_s:=2.00 \
+  hamer_maximum_pipeline_latency_s:=0.25 \
   >"$runtime_directory/roslaunch.log" 2>&1 &
 ros_pid=$!
 
 ros_ready=false
-for _ in $(seq 1 600); do
-  if rosnode info /gazebo >/dev/null 2>&1 \
-      && rosnode info /hamer_input_adapter >/dev/null 2>&1 \
-      && rosnode info /three_finger_retargeting >/dev/null 2>&1 \
-      && rosnode info /moveit_servo_output_adapter >/dev/null 2>&1; then
+ros_ready_deadline=$((SECONDS + 150))
+while (( SECONDS < ros_ready_deadline )); do
+  # An XML-RPC request issued before roscore was responsive used to block for
+  # roughly two minutes.  Bound every probe so camera startup follows actual
+  # ROS readiness instead of a socket-library timeout.
+  if timeout 1 rosnode info /gazebo >/dev/null 2>&1 \
+      && timeout 1 rosnode info /hamer_input_adapter >/dev/null 2>&1 \
+      && timeout 1 rosnode info /three_finger_retargeting >/dev/null 2>&1 \
+      && timeout 1 rosnode info /moveit_servo_output_adapter >/dev/null 2>&1; then
     ros_ready=true
     break
   fi
@@ -83,8 +87,14 @@ fi
 
 scene_ready=false
 for _ in $(seq 1 240); do
-  if timeout 1 rostopic echo -n 1 /handarm_sim_demo/scene_ready 2>/dev/null \
-      | grep -q 'data: True'; then
+  # Under Gazebo load the Python rostopic client can need more than one second
+  # merely to complete its ROS handshake.  Capture the one-shot latched value
+  # first, then inspect it locally; a short grep pipeline plus pipefail could
+  # otherwise hide a real True value behind timeout/SIGPIPE status.
+  scene_ready_message="$(
+    timeout 5 rostopic echo -n 1 /handarm_sim_demo/scene_ready 2>/dev/null
+  )" || scene_ready_message=""
+  if grep -q 'data: True' <<<"$scene_ready_message"; then
     scene_ready=true
     break
   fi
@@ -96,6 +106,7 @@ if [[ "$scene_ready" != true ]]; then
 fi
 
 echo "Gazebo、控制器、场景闸门均已就绪。正在打开相机窗口……"
+echo "本次运行日志：$runtime_directory"
 
 # This observer subscribes before C and never gates the control path.  It
 # distinguishes camera acceptance, a non-zero Servo command, and real Gazebo
@@ -104,22 +115,36 @@ rosrun handarm_moveit_demo live_teleop_terminal_monitor.py &
 link_monitor_pid=$!
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+camera_affinity_arguments=()
+if command -v taskset >/dev/null 2>&1 && (( $(nproc) >= 12 )); then
+  # i5-12400F: HaMeR gets the final two physical cores while the GUI and
+  # MediaPipe use the preceding two.  ROS/Gazebo remain scheduler-managed.
+  camera_affinity_arguments+=(
+    --inference-cpu-affinity 8-11
+    --sidecar-cpu-affinity 4-7
+  )
+fi
 "$conda_executable" run --no-capture-output -n hamer_rtx2060 \
   python perception_hamer/scripts/run_d455_hamer_crop.py \
   --auto-roi-mediapipe \
+  --mediapipe-min-detection-confidence 0.50 \
   --mesh-renderer teleoperation-core \
   --no-mesh-overlay \
+  --display-rate-hz 15 \
   --control-reference mano-wrist-ring \
   --roi-smoothing-alpha 1.0 \
   --orientation-filter-large-angle-mode reject \
   --orientation-filter-max-gain 1.0 \
   --forearm-rate-hz 8.0 \
   --forearm-maximum-source-age-s 0.20 \
-  --hand-presence-timeout-s 0.50 \
-  --hand-miss-grace-frames 8 \
-  --hand-miss-grace-s 0.35 \
+  --hand-presence-timeout-s 0.30 \
+  --hand-miss-grace-frames 2 \
+  --hand-miss-grace-s 0.15 \
+  --teleop-maximum-pipeline-latency-s 0.25 \
   --teleop-udp-host 127.0.0.1 \
   --teleop-udp-port 5010 \
   --duration-s 3600 \
   --checkpoint "$checkpoint" \
-  --data-root "$asset_root"
+  --data-root "$asset_root" \
+  "${camera_affinity_arguments[@]}" \
+  2>&1 | tee "$runtime_directory/camera.log"

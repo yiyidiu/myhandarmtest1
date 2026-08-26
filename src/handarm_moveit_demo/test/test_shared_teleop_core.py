@@ -920,7 +920,7 @@ class SafetyConfigurationTest(unittest.TestCase):
         self.assertAlmostEqual(
             config["control"]["collision_disarm_scale"], 0.0)
         self.assertEqual(
-            config["control"]["servo_interlock_statuses"], [4])
+            config["control"]["servo_interlock_statuses"], [])
         self.assertEqual(
             config["control"]["servo_retreat_statuses"], [2, 5])
         self.assertEqual(

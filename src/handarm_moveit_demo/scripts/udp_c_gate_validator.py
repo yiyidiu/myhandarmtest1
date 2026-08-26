@@ -237,8 +237,9 @@ class UdpCGateValidator:
         )
 
         # Start a reachable target, then deliberately stop all UDP packets.
-        # The adapter must clear the active reference after 0.40 s and latch
-        # epoch 2. Resuming that same token must not move the robot.
+        # The adapter must zero motion after its watchdog, while epoch 2 stays
+        # captured. Resuming that same token must continue from the original
+        # C reference rather than silently re-zeroing or demanding another C.
         right_samples = self.stage(
             2.0, lambda elapsed: hand_zero + np.array([
                 0.025 * min(1.0, elapsed/1.0), 0.0, 0.0]),
@@ -251,8 +252,8 @@ class UdpCGateValidator:
         after_gap = gap_samples[-1] if gap_samples else self.tool_position()
         gap_base_y_motion = float(after_gap[1]-before_gap[1])
         timeout_reasons = self.hamer_reasons[hamer_reason_start:]
-        timeout_lock_seen = any(
-            "HAMER_UDP_INPUT_TIMEOUT_REQUIRES_NEW_C" in reason
+        timeout_hold_seen = any(
+            "HAMER_UDP_INPUT_TIMEOUT_HOLDING_C" in reason
             for reason in timeout_reasons)
 
         same_token_origin = self.tool_position()
@@ -275,6 +276,8 @@ class UdpCGateValidator:
         same_token_block_seen = any(
             "blocked_reference_token_requires_new_c" in reason
             for reason in same_token_reasons)
+        same_token_resumed_token = self.latest_diagnostic.get(
+            "active_reference_token")
 
         # Only a genuinely newer C edge may recapture the current robot pose
         # and restore control.
@@ -312,9 +315,11 @@ class UdpCGateValidator:
             # Ported AprilTag V3 wrist relation: image-right is base -Y and
             # 25 mm of hand motion targets 15 mm of tool motion.
             and first_right_base_y_motion <= -0.010
-            and timeout_lock_seen
-            and same_token_block_seen
-            and same_token_max_motion <= 0.003
+            and timeout_hold_seen
+            and abs(gap_base_y_motion) <= 0.003
+            and not same_token_block_seen
+            and same_token_max_motion >= 0.010
+            and same_token_resumed_token == accepted_token
             and reference_ready_after_new_c
             and accepted_new_token == identity_reference_token(
                 self.session, 3, 1, 1, True)
@@ -337,11 +342,13 @@ class UdpCGateValidator:
                 resumed_token == accepted_token),
             "image_right_base_negative_y_motion_before_timeout_m": (
                 first_right_base_y_motion),
-            "udp_timeout_requires_new_c_seen": timeout_lock_seen,
+            "udp_timeout_holding_c_seen": timeout_hold_seen,
             "udp_silence_duration_s": 1.0,
             "tool_base_y_motion_during_silence_m": gap_base_y_motion,
-            "same_old_c_token_rejected": same_token_block_seen,
-            "same_old_c_token_max_tool_motion_m": same_token_max_motion,
+            "same_c_token_rejected": same_token_block_seen,
+            "same_c_token_resume_max_tool_motion_m": same_token_max_motion,
+            "same_c_token_reference_preserved": (
+                same_token_resumed_token == accepted_token),
             "reference_ready_after_new_c": reference_ready_after_new_c,
             "accepted_new_reference_token": accepted_new_token,
             "image_right_base_negative_y_motion_after_new_c_m": (

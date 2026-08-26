@@ -239,8 +239,12 @@ class EgmPositionProfileWiringTest(unittest.TestCase):
         self.assertEqual(
             guard_parameters["safe_velocity_topic"],
             "/egm_position_reference/collision_checked_joint_velocity")
+        self.assertEqual(
+            guard_parameters["enable_swept_command_gate"], "true")
         self.assertAlmostEqual(
-            float(guard_parameters["prediction_horizon_s"]), 0.40)
+            float(guard_parameters["prediction_horizon_s"]), 0.08)
+        self.assertEqual(
+            int(guard_parameters["maximum_prediction_samples"]), 3)
         self.assertEqual(
             guard_parameters["hand_command_topic"],
             "/controller_gazebo_hand/command")
@@ -314,7 +318,7 @@ class EgmPositionProfileWiringTest(unittest.TestCase):
             item.get("name"): item.get("value")
             for item in node.findall("param")}
         self.assertAlmostEqual(
-            float(parameters["hard_stop_collision_scale"]), 0.20)
+            float(parameters["hard_stop_collision_scale"]), 0.0)
         self.assertLessEqual(
             float(parameters["collision_scale_timeout_s"]), 0.25)
         self.assertLessEqual(
@@ -338,14 +342,39 @@ class EgmPositionProfileWiringTest(unittest.TestCase):
         self.assertIn("self.model.hold_reference(self.latest_actual)", hold_block)
         self.assertIn("self.hard_safety_hold_active = True", hold_block)
 
-    def test_strict_guard_checks_arm_hand_and_measured_swept_motion(self):
+    def test_strict_guard_uses_bounded_combined_arm_hand_prediction(self):
         source = (PACKAGE / "src/full_robot_self_collision_guard.cpp").read_text()
         self.assertIn('"prediction_horizon_s", prediction_horizon_s_, 0.40', source)
         self.assertIn("maximum_prediction_step_rad_, 0.01", source)
-        self.assertIn('"SERVO_COMMAND_HAND_REFERENCE"', source)
-        self.assertIn('"MEASURED_COAST"', source)
+        self.assertIn("maximum_prediction_samples_, 256", source)
+        self.assertIn('"STRICT_ARM_HAND_FUTURE"', source)
+        self.assertNotIn('"MEASURED_COAST"', source)
+        self.assertIn(
+            "if (enable_swept_command_gate_ && !predictedVelocityIsSafe(",
+            source)
         self.assertIn("positionsSatisfyBounds(candidate, 0.0", source)
         self.assertNotIn("candidate.satisfiesBounds(", source)
+
+        acceptance = ET.parse(str(
+            PACKAGE / "launch/egm_servo_safety_acceptance.launch")).getroot()
+        guard = next(node for node in acceptance.findall("node")
+                     if node.get("type") == "full_robot_self_collision_guard")
+        parameters = {
+            item.get("name"): item.get("value")
+            for item in guard.findall("param")}
+        self.assertEqual(parameters["enable_swept_command_gate"], "true")
+        self.assertEqual(parameters["maximum_prediction_samples"], "256")
+
+    def test_transient_joint_state_timeout_holds_without_latched_estop(self):
+        source = (PACKAGE / "src/full_robot_self_collision_guard.cpp").read_text()
+        timer_start = source.index("void statusTimer(const ros::TimerEvent&)")
+        timer_end = source.index("ros::NodeHandle nh_", timer_start)
+        timer = source[timer_start:timer_end]
+        self.assertNotIn('latchFault("JOINT_STATE_TIMEOUT")', timer)
+        self.assertIn("if (fault)", timer)
+        self.assertIn("if (!safe || command_stale)", timer)
+        self.assertIn(
+            'publishCommandStatus(false, detail.empty() ?', timer)
 
     def test_stable_response_is_egm_opt_in_and_keeps_global_profile(self):
         path = PACKAGE / "launch/shared_teleop_core.launch"

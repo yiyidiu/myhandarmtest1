@@ -18,10 +18,17 @@ class AutomaticActiveHandSelector:
     detector results, an explicit automatic hand-switch event is emitted.
     """
 
-    def __init__(self, switch_frames: int = 3) -> None:
+    def __init__(
+        self, switch_frames: int = 3, handedness_flip_continuity_iou: float = 0.60
+    ) -> None:
         self.switch_frames = int(switch_frames)
         if self.switch_frames < 2:
             raise ValueError("automatic hand switching requires at least two frames")
+        self.handedness_flip_continuity_iou = float(
+            handedness_flip_continuity_iou
+        )
+        if not 0.0 <= self.handedness_flip_continuity_iou <= 1.0:
+            raise ValueError("handedness flip continuity IoU must be in [0,1]")
         self.active_is_right: Optional[bool] = None
         # Monotonic identity generation for the camera process lifetime.  This
         # is not a biometric hand identifier; it is a fail-closed session
@@ -129,7 +136,41 @@ class AutomaticActiveHandSelector:
                 "detections": [],
             }
 
-        # The active hand is absent, while only the opposite hand is visible.
+        # MediaPipe handedness is a coarse per-frame classifier, not a stable
+        # physical identity.  A high-overlap box on the immediately preceding
+        # track is the same hand with a flipped label; preserve the C-bound
+        # identity and MANO reflection instead of manufacturing a hand switch.
+        # A spatially distinct opposite hand still follows the bounded switch
+        # confirmation path below.
+        if self.previous_bbox is not None:
+            continuity_candidate = max(
+                candidates,
+                key=lambda item: bbox_iou(
+                    self.previous_bbox, item.get("bbox")
+                ),
+            )
+            continuity_iou = bbox_iou(
+                self.previous_bbox, continuity_candidate.get("bbox")
+            )
+            if continuity_iou >= self.handedness_flip_continuity_iou:
+                reported_is_right = bool(continuity_candidate["is_right"])
+                stabilized = dict(continuity_candidate)
+                stabilized["detector_reported_is_right"] = reported_is_right
+                stabilized["is_right"] = bool(self.active_is_right)
+                stabilized["handedness_stabilized_by_spatial_continuity"] = True
+                stabilized["handedness_continuity_iou"] = float(
+                    continuity_iou
+                )
+                self._switch_candidate_is_right = None
+                self._switch_count = 0
+                selected = self._selected_payload(stabilized, candidates)
+                selected["ignored_non_active_hand_count"] = max(
+                    0, len(candidates) - 1
+                )
+                return selected
+
+        # The active hand is absent, while only a spatially distinct opposite
+        # hand is visible.
         candidate = self._choose(candidates)
         candidate_is_right = bool(candidate["is_right"])
         if self._switch_candidate_is_right == candidate_is_right:

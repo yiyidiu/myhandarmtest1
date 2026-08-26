@@ -277,8 +277,9 @@ class FingerRetargetingGazeboValidator:
         thumb_closed, thumb_reopened = self.move_digit([0], epoch=1)
         remaining_closed, remaining_reopened = self.move_digit([2, 3, 4], epoch=1)
 
-        # Continuous invalid heartbeats must hold immediately and must not
-        # keep the old C token alive beyond the finger timeout.
+        # Continuous invalid heartbeats must hold immediately without
+        # cancelling C. The same token must resume deterministic retargeting
+        # when valid finger evidence returns.
         status_start = len(self.diagnostic_statuses)
         before_invalid = self.current()
         invalid_samples = self.stage(
@@ -289,9 +290,12 @@ class FingerRetargetingGazeboValidator:
             finger_valid=False,
         )
         after_invalid = self.tail_mean(invalid_samples)
-        timeout_seen = "FINGER_INPUT_TIMEOUT_REQUIRES_NEW_C" in (
+        timeout_seen = "FINGER_INPUT_TIMEOUT_HOLDING_C_REFERENCE" in (
             self.diagnostic_statuses[status_start:]
-        ) or "FINGER_INPUT_TIMEOUT_REQUIRES_NEW_C" in self.diagnostic_statuses
+        ) or (
+            "FINGER_INPUT_TIMEOUT_HOLDING_C_REFERENCE"
+            in self.diagnostic_statuses
+        )
         old_token_samples = self.stage(
             1.2,
             lambda elapsed: [
@@ -307,6 +311,7 @@ class FingerRetargetingGazeboValidator:
         old_token_blocked = (
             "BLOCKED_REFERENCE_REQUIRES_NEW_C" in self.diagnostic_statuses
         )
+        old_token_delta = old_token_after - after_invalid
 
         # A new C token recalibrates and restores the same deterministic map.
         new_c_open = self.stage(1.5, lambda _elapsed: baseline, epoch=2)
@@ -348,9 +353,11 @@ class FingerRetargetingGazeboValidator:
             and abs(remaining_delta[1]) <= cross_limit
             and abs(remaining_delta[2]) <= cross_limit
             and timeout_seen
-            and old_token_blocked
+            and not old_token_blocked
             and np.max(np.abs(after_invalid - before_invalid)) <= 0.06
-            and np.max(np.abs(old_token_after - after_invalid)) <= 0.06
+            and old_token_delta[1] >= 0.30
+            and abs(old_token_delta[2]) <= cross_limit
+            and abs(old_token_delta[3]) <= cross_limit
             and renewed_selected >= 0.30
             and max(reopen_errors.values()) <= 0.06
         )
@@ -370,10 +377,8 @@ class FingerRetargetingGazeboValidator:
             "middle_ring_pinky_to_f3_delta_rad": remaining_delta,
             "invalid_heartbeat_timeout_seen": timeout_seen,
             "invalid_hold_delta_rad": (after_invalid - before_invalid).tolist(),
-            "same_old_c_token_blocked": old_token_blocked,
-            "same_old_c_token_delta_rad": (
-                old_token_after - after_invalid
-            ).tolist(),
+            "same_c_token_blocked": old_token_blocked,
+            "same_c_token_resume_delta_rad": old_token_delta.tolist(),
             "new_c_index_to_f1_delta_rad": renewed_delta,
             "reopen_max_error_rad": reopen_errors,
             "diagnostic_statuses": sorted(set(self.diagnostic_statuses)),

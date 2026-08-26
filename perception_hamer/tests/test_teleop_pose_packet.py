@@ -13,7 +13,8 @@ sys.path.insert(0, str(ROOT))
 
 from perception_hamer.src.teleop_pose_packet import (  # noqa: E402
     build_invalid_teleop_packet, build_live_teleop_packet, foreground_depth_component,
-    metric_wrist_from_arrays, metric_wrist_ring_from_arrays,
+    invalidate_stale_teleop_observation, metric_wrist_from_arrays,
+    metric_wrist_ring_from_arrays,
 )
 
 
@@ -43,6 +44,43 @@ class TeleopPosePacketTest(unittest.TestCase):
         self.assertEqual(packet["active_hand_generation"], 3)
         self.assertNotIn("wrist_position_m", packet)
         self.assertNotIn("palm_rotation_row_major", packet)
+
+    def test_overdue_valid_pose_becomes_identity_preserving_heartbeat(self):
+        packet = {
+            "valid": True,
+            "wrist_position_m": [0.1, 0.2, 0.7],
+            "palm_rotation_row_major": np.eye(3).reshape(-1).tolist(),
+            "confidence": [0.9] * 6,
+            "hand_identity_present": True,
+            "hand_is_right": True,
+            "presence_generation": 4,
+            "active_hand_generation": 2,
+            "timing": {"capture_to_publish_s": 0.251},
+            "finger_observation": {
+                "valid": True,
+                "flexion": [0.1] * 5,
+                "confidence": 0.8,
+                "invalid_reason": "",
+            },
+        }
+        stale = invalidate_stale_teleop_observation(packet, 0.25)
+        self.assertFalse(stale["valid"])
+        self.assertTrue(stale["hand_identity_present"])
+        self.assertEqual(stale["presence_generation"], 4)
+        self.assertNotIn("wrist_position_m", stale)
+        self.assertNotIn("palm_rotation_row_major", stale)
+        self.assertEqual(stale["confidence"], [0.0] * 6)
+        self.assertFalse(stale["finger_observation"]["valid"])
+        self.assertIn("SOURCE_PIPELINE_LATENCY_EXCEEDED", stale["invalid_reason"])
+
+    def test_fresh_pose_is_not_modified(self):
+        packet = {
+            "valid": True,
+            "timing": {"capture_to_publish_s": 0.249},
+        }
+        self.assertEqual(
+            invalidate_stale_teleop_observation(packet, 0.25), packet
+        )
 
     def test_16_point_wrist_ring_center_uses_projected_depth_hull(self):
         depth = np.zeros((480, 640), dtype=np.uint16)

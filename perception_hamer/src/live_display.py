@@ -39,6 +39,7 @@ class LiveDisplay:
         helper_script: Path,
         backend: str = "auto",
         jpeg_quality: int = 88,
+        cpu_affinity: str = "",
     ) -> None:
         if backend not in ("auto", "local", "sidecar"):
             raise ValueError("display backend must be auto, local, or sidecar")
@@ -60,8 +61,15 @@ class LiveDisplay:
                 raise RuntimeError("display helper Python does not exist: " + helper_python)
             if not helper.is_file():
                 raise RuntimeError("display helper script does not exist: " + str(helper))
+            helper_command = [
+                helper_python, "-u", str(helper), "--title", self.title
+            ]
+            if str(cpu_affinity).strip():
+                helper_command = [
+                    "taskset", "-c", str(cpu_affinity).strip()
+                ] + helper_command
             self._process = subprocess.Popen(
-                [helper_python, "-u", str(helper), "--title", self.title],
+                helper_command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 bufsize=0,

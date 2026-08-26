@@ -13,7 +13,10 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import String
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
-from handarm_moveit_demo.finger_retargeting import ThreeFingerRetargeter
+from handarm_moveit_demo.finger_retargeting import (
+    ThreeFingerRetargeter,
+    frozen_finger_hold_target,
+)
 from handarm_moveit_demo.msg import HamerHandPose
 
 
@@ -76,7 +79,9 @@ class ThreeFingerRetargetingNode:
         # structurally valid finger observation passes the pure controller.
         self.last_valid_finger_monotonic = time.monotonic()
         self.watchdog_latched = False
+        self.command_state_lock = threading.RLock()
         self.last_command_target = None
+        self.hold_target = None
         self.command_count = 0
         rospy.Subscriber(
             "/joint_states", JointState, self.joint_state_callback, queue_size=20
@@ -121,7 +126,9 @@ class ThreeFingerRetargetingNode:
                 return None
             return self.positions.copy()
 
-    def publish_trajectory(self, positions, duration_s=None):
+    def publish_trajectory(
+        self, positions, duration_s=None, release_hold=False
+    ):
         target = np.asarray(positions, dtype=float)
         if target.shape != (4,) or not np.all(np.isfinite(target)):
             raise ValueError("finger command target must be a finite four-vector")
@@ -135,22 +142,46 @@ class ThreeFingerRetargetingNode:
             if duration_s is None else float(duration_s)
         )
         message.points = [point]
-        self.publisher.publish(message)
-        self.last_command_target = target.copy()
-        self.command_count += 1
+        with self.command_state_lock:
+            if release_hold:
+                self.hold_target = None
+            self.publisher.publish(message)
+            self.last_command_target = target.copy()
+            self.command_count += 1
+
+    def publish_frozen_hold_trajectory(self, current):
+        if current is None:
+            return None
+        with self.command_state_lock:
+            self.hold_target = frozen_finger_hold_target(
+                self.hold_target, current
+            )
+            target = self.hold_target.copy()
+            self.publish_trajectory(target, duration_s=0.05)
+            return target
 
     def publish_hold(self, reason):
         current = self.current_joints()
-        if current is not None:
-            self.publish_trajectory(current, duration_s=0.05)
+        target = self.publish_frozen_hold_trajectory(current)
         self.publish_diagnostic(
             status=reason,
             calibrated=False,
             hold_required=True,
             actual=current,
+            hold_joint_target_rad=target,
         )
 
     def publish_diagnostic(self, **values):
+        with self.command_state_lock:
+            last_command_target = (
+                None
+                if self.last_command_target is None
+                else self.last_command_target.copy()
+            )
+            hold_target = (
+                None if self.hold_target is None else self.hold_target.copy()
+            )
+            command_count = self.command_count
         defaults = {
             "stamp_ros": rospy.Time.now().to_sec(),
             "status": "UNKNOWN",
@@ -164,12 +195,15 @@ class ThreeFingerRetargetingNode:
             "desired_joint_target_rad": None,
             "command_joint_target_rad": (
                 None
-                if self.last_command_target is None
-                else self.last_command_target.tolist()
+                if last_command_target is None
+                else last_command_target.tolist()
+            ),
+            "hold_joint_target_rad": (
+                None if hold_target is None else hold_target.tolist()
             ),
             "actual_joint_position_rad": None,
             "joint_names": list(self.joint_names),
-            "command_count": self.command_count,
+            "command_count": command_count,
         }
         for key, value in values.items():
             if isinstance(value, np.ndarray):
@@ -195,10 +229,17 @@ class ThreeFingerRetargetingNode:
                 self.retargeter.block_active_reference()
             self.publish_hold("CAMERA_C_GATE_ABSENT")
             return
-        if not message.control_enabled or not message.control_reference_token:
-            with self.retarget_lock:
-                self.retargeter.block_active_reference()
-            self.publish_hold("WAITING_FOR_NEW_CAMERA_C")
+        if not message.control_enabled:
+            if message.timing_contract_present:
+                with self.retarget_lock:
+                    self.retargeter.block_active_reference()
+                reason = "WAITING_FOR_NEW_CAMERA_C"
+            else:
+                reason = "CAMERA_INPUT_FAULT_HOLDING_C_REFERENCE"
+            self.publish_hold(reason)
+            return
+        if not message.control_reference_token:
+            self.publish_hold("CAMERA_C_TOKEN_UNAVAILABLE_HOLDING_POSITION")
             return
         if not message.valid:
             self.publish_hold(message.invalid_reason or "HAND_POSE_INVALID")
@@ -218,15 +259,19 @@ class ThreeFingerRetargetingNode:
                     current,
                 )
         except Exception as exc:
-            with self.retarget_lock:
-                self.retargeter.block_active_reference()
             self.publish_hold("FINGER_RETARGETING_EXCEPTION:{}".format(exc))
-            rospy.logerr_throttle(1.0, "Finger retargeting locked: %s", exc)
+            rospy.logerr_throttle(
+                1.0,
+                "Finger retargeting input rejected while C was retained: %s",
+                exc,
+            )
             return
         if result.command_target is not None:
-            self.publish_trajectory(result.command_target)
+            self.publish_trajectory(
+                result.command_target, release_hold=True
+            )
         elif result.hold_required:
-            self.publish_trajectory(current, duration_s=0.05)
+            self.publish_frozen_hold_trajectory(current)
         rejected_statuses = {
             "INVALID_FINGER_INPUT",
             "LOW_FINGER_CONFIDENCE",
@@ -267,11 +312,11 @@ class ThreeFingerRetargetingNode:
                 self.watchdog_latched = True
         if age <= self.input_timeout_s or latched:
             return
-        with self.retarget_lock:
-            self.retargeter.block_active_reference()
-        self.publish_hold("FINGER_INPUT_TIMEOUT_REQUIRES_NEW_C")
-        rospy.logerr(
-            "No finger input for %.3f s; hand held and old C token blocked", age
+        self.publish_hold("FINGER_INPUT_TIMEOUT_HOLDING_C_REFERENCE")
+        rospy.logwarn(
+            "No valid finger input for %.3f s; frozen hold retained the "
+            "current camera C reference",
+            age,
         )
 
 

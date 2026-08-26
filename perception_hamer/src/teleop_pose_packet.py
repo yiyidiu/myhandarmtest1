@@ -492,9 +492,62 @@ def build_invalid_teleop_packet(
     }
 
 
+def invalidate_stale_teleop_observation(
+    packet: Mapping[str, Any], maximum_pipeline_latency_s: float
+) -> dict:
+    """Convert an overdue pose into a geometry-free, identity-preserving heartbeat.
+
+    The ROS receiver still independently enforces the same latency ceiling.
+    Performing the check at the producer prevents a single ordinary scheduling
+    spike from being misclassified as a malformed enabled packet: the active C
+    token remains visible, downstream control holds its last bounded target,
+    and the next fresh observation can resume without silently re-zeroing.
+    """
+
+    maximum = float(maximum_pipeline_latency_s)
+    if not np.isfinite(maximum) or maximum <= 0.0:
+        raise ValueError("maximum_pipeline_latency_s must be finite and positive")
+    if not isinstance(packet, Mapping):
+        raise TypeError("packet must be a mapping")
+    output = dict(packet)
+    if output.get("valid") is not True:
+        return output
+    timing = output.get("timing")
+    if not isinstance(timing, Mapping):
+        raise ValueError("valid teleop observation requires a timing mapping")
+    latency = float(timing.get("capture_to_publish_s"))
+    if not np.isfinite(latency) or latency < 0.0:
+        raise ValueError("capture_to_publish_s must be finite and non-negative")
+    if latency <= maximum:
+        return output
+
+    reason = "SOURCE_PIPELINE_LATENCY_EXCEEDED:{:.6f}>{:.6f}".format(
+        latency, maximum
+    )
+    output["valid"] = False
+    output["invalid_reason"] = reason
+    output["confidence"] = [0.0] * 6
+    for geometry_key in (
+        "wrist_position_m",
+        "palm_rotation_row_major",
+        "palm_quaternion_xyzw",
+    ):
+        output.pop(geometry_key, None)
+    fingers = output.get("finger_observation")
+    if isinstance(fingers, Mapping):
+        fingers = dict(fingers)
+        fingers["valid"] = False
+        fingers["flexion"] = [0.0] * 5
+        fingers["confidence"] = 0.0
+        fingers["invalid_reason"] = reason
+        output["finger_observation"] = fingers
+    return output
+
+
 __all__ = [
     "build_live_teleop_packet",
     "build_invalid_teleop_packet",
+    "invalidate_stale_teleop_observation",
     "foreground_depth_component",
     "metric_wrist_from_arrays",
     "metric_wrist_ring_from_arrays",

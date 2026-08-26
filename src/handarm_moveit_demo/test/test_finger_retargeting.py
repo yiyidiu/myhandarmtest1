@@ -4,7 +4,10 @@ import unittest
 
 import numpy as np
 
-from handarm_moveit_demo.finger_retargeting import ThreeFingerRetargeter
+from handarm_moveit_demo.finger_retargeting import (
+    ThreeFingerRetargeter,
+    frozen_finger_hold_target,
+)
 
 
 def retargeter(**overrides):
@@ -42,6 +45,17 @@ def retargeter(**overrides):
 
 
 class ThreeFingerRetargeterTest(unittest.TestCase):
+    def test_invalid_heartbeat_hold_target_does_not_chase_joint_drift(self):
+        first_measurement = np.asarray([0.05, 0.04, 0.03, 0.04])
+        hold = frozen_finger_hold_target(None, first_measurement)
+        for drifted_measurement in (
+            [0.10, 0.08, 0.06, 0.07],
+            [0.30, 0.20, 0.18, 0.19],
+            [1.10, 0.50, 0.45, 0.75],
+        ):
+            hold = frozen_finger_hold_target(hold, drifted_measurement)
+            np.testing.assert_array_equal(hold, first_measurement)
+
     def calibrate(self, controller, token="c:1", start=10.0):
         current = [0.05, 0.04, 0.03, 0.04]
         baseline = [0.12, 0.08, 0.06, 0.10, 0.09]

@@ -400,8 +400,29 @@ class ThreeFingerRetargeter:
         )
 
 
+def frozen_finger_hold_target(
+    existing_target: Sequence[float], current_joints: Sequence[float]
+) -> np.ndarray:
+    """Capture a hand hold once instead of chasing measured plant drift.
+
+    Rebuilding a trajectory target from ``/joint_states`` on every invalid
+    camera heartbeat creates a positive feedback path: gravity/contact moves
+    a joint slightly, the next heartbeat blesses that displacement as the new
+    target, and the hand slowly walks away.  A hold transition captures the
+    measured configuration once and every later heartbeat reuses it verbatim.
+    """
+
+    current = _finite_vector(current_joints, 4, "current finger hold joints")
+    if existing_target is None:
+        return current.copy()
+    return _finite_vector(
+        existing_target, 4, "existing finger hold target"
+    ).copy()
+
+
 __all__ = [
     "FingerRetargetingResult",
     "OneEuroVectorFilter",
     "ThreeFingerRetargeter",
+    "frozen_finger_hold_target",
 ]

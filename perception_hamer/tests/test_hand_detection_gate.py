@@ -85,7 +85,7 @@ class HandDetectionGateTest(unittest.TestCase):
         self.assertIsNone(second_miss["confirmed_detection"])
         self.assertGreater(second_miss["generation"], visible["generation"])
 
-    def test_bounded_miss_run_suspends_measurement_without_losing_identity(self):
+    def test_bounded_miss_run_keeps_current_frame_tracking_identity(self):
         gate = ContinuousHandPresenceGate(
             required_frames=2,
             timeout_s=0.50,

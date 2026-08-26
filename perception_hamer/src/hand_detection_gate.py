@@ -70,11 +70,12 @@ class ContinuousHandPresenceGate:
 
     By default one negative detector result fails closed immediately.  Live
     callers may explicitly allow a bounded negative-result grace interval.
-    During that interval identity continuity is retained, while the caller is
-    expected to suspend motion and reject stale pose measurements.  Exceeding
-    either the frame or time bound fails closed.  A missing detector result
-    also fails closed after ``timeout_s`` so a dead sidecar cannot leave the
-    last MANO mesh or teleoperation packet alive forever.
+    During that interval identity continuity is retained.  A caller may keep
+    processing the current camera frame only if its live KLT crop still agrees
+    with the last confirmed detector bbox; reusing an old pose is never
+    allowed. Exceeding either the frame or time bound fails closed. A missing
+    detector result also fails closed after ``timeout_s`` so a dead sidecar
+    cannot leave the last MANO mesh or teleoperation packet alive forever.
 
     ``generation`` changes on every valid/invalid transition.  Display code
     can use it to prevent a mesh inferred before a disappearance from being
@@ -138,8 +139,9 @@ class ContinuousHandPresenceGate:
                 and negative_age <= self.negative_grace_s
             ):
                 # Short MediaPipe miss runs are common during fast motion.
-                # Retain identity only; the live caller explicitly suppresses
-                # pose output until a current positive result returns.
+                # Retain the confirmed identity/bbox for bounded continuity;
+                # the live caller still validates its current KLT crop and
+                # computes a new pose from the current camera frame.
                 self.reason = "hand_detector_transient_miss_{}/{}".format(
                     self.consecutive_negative_results,
                     self.negative_grace_frames,
