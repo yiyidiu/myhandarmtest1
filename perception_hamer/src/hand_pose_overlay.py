@@ -439,7 +439,7 @@ def draw_hand_pose_panel(
     if not delta.calibrated or delta.delta_m is None:
         line("GAZEBO CONTROL: LOCKED", (60, 80, 255), 25)
         line("RELATIVE POSE: ZERO NOT SET", (60, 210, 255), 25)
-        line("Hold neutral wrist pose, then press C", (60, 210, 255), 38)
+        line("Hold wrist + OPEN fingers steady; press C", (60, 210, 255), 38)
         line("C = SET ZERO", (230, 230, 230), 24)
         line("R = reacquire ROI   Q/Esc = exit", (190, 190, 190), 24)
         return output
@@ -454,7 +454,7 @@ def draw_hand_pose_panel(
     line("YAW   about camera Z   %+8.2f deg" % delta.yaw_deg, (100, 245, 160), 22)
     line("ROLL  about camera X   %+8.2f deg" % delta.roll_deg, (100, 245, 160), 22)
     line("SO(3) total rotation   %8.2f deg" % delta.rotation_geodesic_deg, (100, 245, 160), 28)
-    line("C = RE-ZERO", (230, 230, 230), 22)
+    line("C = RE-ZERO (OPEN steady fingers)", (230, 230, 230), 22)
     line("R = reacquire ROI   Q/Esc = exit", (190, 190, 190), 22)
     return output
 

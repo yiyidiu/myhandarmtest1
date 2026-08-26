@@ -11,6 +11,9 @@ import numpy as np
 from .shared_teleop_core import matrix_to_quaternion_xyzw, project_to_so3
 
 
+FINGER_FEATURE_DEFINITION = "mano_openpose_chain_total_bend_over_pi_v1"
+
+
 def _nonnegative_int(value: Any, name: str) -> int:
     if isinstance(value, bool):
         raise ValueError("{} must be an integer".format(name))
@@ -71,9 +74,11 @@ class HamerPacketContract:
         default_frame: str,
         maximum_pipeline_latency_s: Optional[float] = None,
         require_timing_contract: bool = False,
+        require_finger_contract: bool = False,
     ) -> None:
         self.default_frame = str(default_frame)
         self.require_timing_contract = bool(require_timing_contract)
+        self.require_finger_contract = bool(require_finger_contract)
         self.maximum_pipeline_latency_s = (
             None
             if maximum_pipeline_latency_s is None
@@ -91,6 +96,51 @@ class HamerPacketContract:
             )
         self.session_id: Optional[str] = None
         self.last_sequence: Optional[int] = None
+
+    def _fingers(
+        self, packet: Mapping[str, Any], observation_valid: bool
+    ) -> Dict[str, Any]:
+        raw = packet.get("finger_observation")
+        if raw is None:
+            if self.require_finger_contract:
+                raise ValueError("live packet requires finger observation contract")
+            return {
+                "finger_tracking_present": False,
+                "finger_tracking_valid": False,
+                "finger_flexion": np.zeros(5, dtype=float),
+                "finger_tracking_confidence": 0.0,
+                "finger_invalid_reason": "FINGER_CONTRACT_ABSENT",
+            }
+        if not isinstance(raw, Mapping):
+            raise ValueError("finger_observation must be a mapping")
+        if _nonnegative_int(
+            raw.get("contract_version"),
+            "finger_observation.contract_version",
+        ) != 1:
+            raise ValueError("unsupported finger observation contract version")
+        if raw.get("feature_definition") != FINGER_FEATURE_DEFINITION:
+            raise ValueError("unsupported finger feature definition")
+        valid = raw.get("valid") is True
+        if valid and not observation_valid:
+            raise ValueError("invalid pose cannot carry valid finger tracking")
+        flexion = np.asarray(raw.get("flexion"), dtype=float)
+        if flexion.shape != (5,) or not np.all(np.isfinite(flexion)):
+            raise ValueError("finger flexion must be a finite five-vector")
+        if np.any(flexion < 0.0) or np.any(flexion > 1.0):
+            raise ValueError("finger flexion must remain in [0,1]")
+        confidence = _unit_float(
+            raw.get("confidence", 0.0), "finger_observation.confidence"
+        )
+        return {
+            "finger_tracking_present": True,
+            "finger_tracking_valid": valid,
+            "finger_flexion": flexion,
+            "finger_tracking_confidence": confidence,
+            "finger_invalid_reason": str(
+                raw.get("invalid_reason", "")
+                or ("" if valid else "FINGER_OBSERVATION_INVALID")
+            ),
+        }
 
     @staticmethod
     def _source_stamp(value: Any) -> float:
@@ -262,6 +312,7 @@ class HamerPacketContract:
 
         observation_valid = packet.get("valid") is True
         timing = self._timing(packet, observation_valid)
+        fingers = self._fingers(packet, observation_valid)
         identity = self._identity(packet)
         control_enabled = packet.get("control_enabled") is True
         reference_epoch = _nonnegative_int(
@@ -336,6 +387,7 @@ class HamerPacketContract:
             "control_reference_epoch": reference_epoch,
             "control_reference_token": reference_token,
             **timing,
+            **fingers,
             **identity,
             **pose,
         }

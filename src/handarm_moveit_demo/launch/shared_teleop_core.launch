@@ -39,6 +39,7 @@
     <param name="input_timeout_s" value="0.40" />
     <param name="maximum_pipeline_latency_s" value="0.20" />
     <param name="require_timing_contract" value="true" />
+    <param name="require_finger_contract" value="true" />
   </node>
   <node if="$(eval arg('input_source') == 'replay')"
         pkg="handarm_moveit_demo" type="teleop_pose_replay.py"
@@ -105,7 +106,15 @@
     <param if="$(arg stable_position_reference_profile)"
            name="maximum_angular_acceleration_radps2" value="10.0" />
   </node>
-  <node pkg="handarm_moveit_demo" type="mock_three_finger_hand_adapter.py"
+  <node if="$(arg simulation)" pkg="handarm_moveit_demo"
+        type="three_finger_retargeting_node.py"
+        name="three_finger_retargeting" output="screen" required="true">
+    <param name="hand_config"
+           value="$(find handarm_sim_demo)/config/hand_commands.yaml" />
+    <param name="command_topic" value="/controller_gazebo_hand/command" />
+  </node>
+  <node unless="$(arg simulation)" pkg="handarm_moveit_demo"
+        type="mock_three_finger_hand_adapter.py"
         name="mock_three_finger_hand_adapter" output="screen" />
   <node if="$(arg enable_logger)" pkg="handarm_moveit_demo" type="teleop_csv_logger.py"
         name="teleop_csv_logger" output="screen">

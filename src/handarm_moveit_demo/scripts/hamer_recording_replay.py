@@ -16,6 +16,7 @@ from handarm_moveit_demo.shared_teleop_core import matrix_to_quaternion_xyzw
 WORKSPACE = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(WORKSPACE))
 from perception_hamer.src.teleop_pose_packet import metric_wrist_from_arrays  # noqa: E402
+from perception_hamer.src.finger_observation import observe_mano_fingers  # noqa: E402
 
 
 class HamerRecordingReplay:
@@ -64,6 +65,12 @@ class HamerRecordingReplay:
         roi_confidence = float(np.clip(record.get("roi", {}).get("confidence", 0.0), 0.0, 1.0))
         rotation_confidence = roi_confidence*float(np.clip(
             record.get("hamer_quality", {}).get("bbox_visible_fraction", 0.0), 0.0, 1.0))
+        finger_observation = observe_mano_fingers(
+            record.get("mano_joints"),
+            roi_confidence,
+            record.get("hamer_quality", {}).get("bbox_visible_fraction", 0.0),
+            record.get("crop_quality", 1.0),
+        )
         message = HamerHandPose()
         message.header.seq = sequence
         message.header.stamp = rospy.Time.now()
@@ -73,6 +80,11 @@ class HamerRecordingReplay:
         (message.wrist_pose.orientation.x, message.wrist_pose.orientation.y,
          message.wrist_pose.orientation.z, message.wrist_pose.orientation.w) = quaternion
         message.confidence = [rotation_confidence*depth_confidence]*3+[rotation_confidence]*3
+        message.finger_tracking_present = True
+        message.finger_tracking_valid = finger_observation.valid
+        message.finger_flexion = finger_observation.flexion.tolist()
+        message.finger_tracking_confidence = finger_observation.confidence
+        message.finger_invalid_reason = finger_observation.invalid_reason
         message.valid = True
         # Existing recordings contain hand_pose but no validated discrete gesture classifier.
         message.gesture = int(record.get("gesture", 0))

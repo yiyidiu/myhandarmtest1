@@ -191,8 +191,9 @@ HaMeR checkpoint 和受许可约束的 MANO 文件默认应位于
 `--checkpoint /path/to/_DATA/hamer_ckpts/checkpoints/hamer.ckpt` 与
 `--data-root /path/to/_DATA`；程序不会用缺失或未知资产静默降级。
 
-摄像头启动后控制保持锁定；手保持中性并在摄像头窗口按一次 `C`，才会同时记录
-手零位和当前 `tool0` 位姿并开始跟随。也可运行
+摄像头启动后控制保持锁定；保持中性手腕、完整张开并稳定五指，再在摄像头窗口按一次
+`C`。它会同时记录手腕/当前 `tool0` 零位；手指侧再用连续 4 个有效帧的中位数建立
+张手基线，期间机械手保持。也可运行
 `./scripts/run_live_human_gazebo_acceptance.sh --duration-s 30`，在倒计时后完成至少
 3 cm 平移和 15 度旋转。验收器不发布合成输入，只检查真人位姿、ROS 安全命令和
 Gazebo `base_link -> tool0` 实测运动，并输出带 `passed` 字段的 JSON。完整分终端命令、
@@ -207,8 +208,9 @@ MANO 三角面的网格。默认不再用 KLT 将旧网格缩放到最新相机�
 版本，程序会自动把显示帧交给带 Qt5 的 `mediapipe_env`，推理和 UDP 不会再因
 `cv2.imshow` 崩溃。终端应打印 `using the MediaPipe display sidecar`。实时遥操作
 必须保留窗口，因为 `C` 是唯一的启用/重设零位入口；同时指定 UDP 和
-`--no-display` 会被拒绝。打开窗口后先保持手稳定，再按一次 `C`；按 C 前 Gazebo
-始终不跟随，再次按 C 会同时重设手零位和当前机器人零位。
+`--no-display` 会被拒绝。打开窗口后先保持手腕稳定、完整张开且五指不动，再按一次
+`C`；按 C 前 Gazebo 始终不跟随。C 后手指控制还会收集 4 个有效帧建立张手中位数
+基线，在此期间机械手保持；再次按 C 会同时重设手腕、当前机器人零位和手指张手基线。
 
 启动时先显示 RealSense 原始彩色画面。真实手、手腕和五指稳定出现在画面中后会自动
 选择活动手并启动 HaMeR，不需要按 `C` 选择手；但必须随后按 `C` 建立 Gazebo

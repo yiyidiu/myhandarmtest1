@@ -11,6 +11,14 @@ bool inference_executed
 float32 inference_call_s
 float32 model_inference_s
 float32 postprocess_s
+# Robot-independent, continuous MANO/OpenPose finger-chain observation.
+# The five entries are [thumb,index,middle,ring,pinky] accumulated flexion,
+# normalized by pi. Robot morphology mapping is intentionally downstream.
+bool finger_tracking_present
+bool finger_tracking_valid
+float32[5] finger_flexion
+float32 finger_tracking_confidence
+string finger_invalid_reason
 geometry_msgs/Pose wrist_pose
 float32[6] confidence
 bool valid

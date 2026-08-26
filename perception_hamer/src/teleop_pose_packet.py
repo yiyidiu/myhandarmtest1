@@ -6,6 +6,10 @@ from typing import Any, Mapping, Sequence, Tuple
 import cv2
 import numpy as np
 
+from .finger_observation import (
+    invalid_finger_observation,
+    observe_mano_fingers,
+)
 from .realtime_hamer_pipeline import (
     normalized_crop_points_to_original,
     project_hamer_vertices_to_original,
@@ -415,6 +419,12 @@ def build_live_teleop_packet(
         # posture observation.
         rotation_confidence = 0.0
     filter_diagnostics = estimates.get("palm_orientation_filter")
+    finger_observation = observe_mano_fingers(
+        getattr(result, "pred_keypoints_3d_source_camera_axes", None),
+        roi_confidence,
+        visible,
+        crop_quality,
+    )
     return {
         "schema": "handarm_hamer_pose_v1",
         "session_id": str(session_id), "sequence": int(sequence),
@@ -441,6 +451,7 @@ def build_live_teleop_packet(
         "position_diagnostics": position_diagnostics,
         "crop_quality": crop_quality,
         "orientation_filter": filter_diagnostics,
+        "finger_observation": finger_observation.as_packet(),
     }
 
 
@@ -473,6 +484,7 @@ def build_invalid_teleop_packet(
         "confidence": [0.0] * 6,
         "gesture": 0,
         "gesture_confidence": 0.0,
+        "finger_observation": invalid_finger_observation(reason),
         "hand_identity_present": bool(identity_present),
         "hand_is_right": bool(hand_is_right) if identity_present else False,
         "presence_generation": presence_generation,

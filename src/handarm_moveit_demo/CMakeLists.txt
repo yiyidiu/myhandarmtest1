@@ -73,6 +73,7 @@ catkin_install_python(PROGRAMS
   scripts/shared_control_node.py
   scripts/moveit_servo_output_adapter.py
   scripts/mock_three_finger_hand_adapter.py
+  scripts/three_finger_retargeting_node.py
   scripts/synthetic_hamer_pose_publisher.py
   scripts/synthetic_direction_sequence.py
   scripts/teleop_pose_replay.py
@@ -86,6 +87,8 @@ catkin_install_python(PROGRAMS
   scripts/gazebo_x90_response_validator.py
   scripts/live_gazebo_follow_validator.py
   scripts/udp_c_gate_validator.py
+  scripts/finger_retargeting_gazebo_validator.py
+  scripts/validate_finger_open_hand_replay.py
   scripts/calibrate_camera_workspace_udp.py
   scripts/analyze_irb120_ground_workspace.py
   scripts/check_ground_workspace_mapping.py
@@ -105,4 +108,5 @@ if(CATKIN_ENABLE_TESTING)
   catkin_add_nosetests(test/test_shared_teleop_core.py)
   catkin_add_nosetests(test/test_egm_position_reference.py)
   catkin_add_nosetests(test/test_hamer_input_contract.py)
+  catkin_add_nosetests(test/test_finger_retargeting.py)
 endif()

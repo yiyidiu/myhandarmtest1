@@ -20,6 +20,12 @@ FIELDS = [
     "timing_contract_present", "source_capture_sequence", "dropped_capture_frames",
     "capture_to_publish_s", "inference_executed", "inference_call_s",
     "model_inference_s", "postprocess_s",
+    "finger_tracking_present", "finger_tracking_valid",
+    "human_finger_flexion", "finger_tracking_confidence",
+    "finger_invalid_reason", "finger_retargeting_status",
+    "finger_retargeting_calibrated", "finger_hold_required",
+    "robot_finger_closure", "finger_desired_joint_target_rad",
+    "finger_command_joint_target_rad", "finger_actual_joint_position_rad",
     "raw_hand_x", "raw_hand_y", "raw_hand_z", "raw_hand_qx", "raw_hand_qy",
     "raw_hand_qz", "raw_hand_qw", "relative_hand_x", "relative_hand_y",
     "relative_hand_z", "relative_hand_quaternion_xyzw", "raw_vx", "raw_vy",
@@ -61,7 +67,8 @@ class TeleopCsvLogger:
         self.io_lock = threading.Lock()
         self.shutting_down = False
         self.state = {"hamer": None, "raw_command": None, "safe_twist": None,
-                      "trend": {}, "assist": {}, "output": {}, "gesture": {}}
+                      "trend": {}, "assist": {}, "output": {}, "gesture": {},
+                      "finger": {}}
         self.rows = 0
         self.base_frame = frames.get("base", "base_link")
         self.control_frame = frames.get("servo_control", "tool0")
@@ -80,6 +87,8 @@ class TeleopCsvLogger:
                          String, lambda msg: self.set_json("output", msg), queue_size=1)
         rospy.Subscriber(topics.get("gesture_diagnostics", "/shared_teleop/gesture_diagnostics"),
                          String, lambda msg: self.set_json("gesture", msg), queue_size=1)
+        rospy.Subscriber(topics.get("finger_diagnostics", "/shared_teleop/finger_diagnostics"),
+                         String, lambda msg: self.set_json("finger", msg), queue_size=1)
         rate = float(config.get("logging", {}).get("rate_hz", 50.0))
         self.timer = rospy.Timer(rospy.Duration(1.0/rate), self.tick)
         rospy.on_shutdown(self.close)
@@ -112,6 +121,7 @@ class TeleopCsvLogger:
         safe = state["safe_twist"]
         trend = state["trend"]; assist = state["assist"]
         output = state["output"]; gesture = state["gesture"]
+        finger = state["finger"]
         row = dict.fromkeys(FIELDS, "")
         row.update({
             "timestamp_ros": event.current_real.to_sec(),
@@ -126,6 +136,22 @@ class TeleopCsvLogger:
             "inference_call_s": hamer.inference_call_s,
             "model_inference_s": hamer.model_inference_s,
             "postprocess_s": hamer.postprocess_s,
+            "finger_tracking_present": hamer.finger_tracking_present,
+            "finger_tracking_valid": hamer.finger_tracking_valid,
+            "human_finger_flexion": self.json_value(list(hamer.finger_flexion)),
+            "finger_tracking_confidence": hamer.finger_tracking_confidence,
+            "finger_invalid_reason": hamer.finger_invalid_reason,
+            "finger_retargeting_status": finger.get("status"),
+            "finger_retargeting_calibrated": finger.get("calibrated"),
+            "finger_hold_required": finger.get("hold_required"),
+            "robot_finger_closure": self.json_value(
+                finger.get("normalized_robot_closure")),
+            "finger_desired_joint_target_rad": self.json_value(
+                finger.get("desired_joint_target_rad")),
+            "finger_command_joint_target_rad": self.json_value(
+                finger.get("command_joint_target_rad")),
+            "finger_actual_joint_position_rad": self.json_value(
+                finger.get("actual_joint_position_rad")),
             "raw_hand_x": hamer.wrist_pose.position.x,
             "raw_hand_y": hamer.wrist_pose.position.y,
             "raw_hand_z": hamer.wrist_pose.position.z,

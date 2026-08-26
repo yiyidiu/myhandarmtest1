@@ -37,6 +37,17 @@ def packet(sequence=1, valid=True):
         ),
         "gesture": 0,
         "gesture_confidence": 0.0,
+        "finger_observation": {
+            "contract_version": 1,
+            "feature_definition": (
+                "mano_openpose_chain_total_bend_over_pi_v1"
+            ),
+            "valid": bool(valid),
+            "flexion": [0.10, 0.20, 0.30, 0.40, 0.50]
+            if valid else [0.0] * 5,
+            "confidence": 0.82 if valid else 0.0,
+            "invalid_reason": "" if valid else "no_real_hand",
+        },
     }
     if valid:
         value.update({
@@ -72,6 +83,10 @@ class HamerPacketContractTest(unittest.TestCase):
         self.assertTrue(normalized["control_enabled"])
         self.assertTrue(normalized["hand_is_right"])
         np.testing.assert_allclose(normalized["position"], [0.1, -0.2, 0.7])
+        np.testing.assert_allclose(
+            normalized["finger_flexion"], [0.10, 0.20, 0.30, 0.40, 0.50]
+        )
+        self.assertTrue(normalized["finger_tracking_valid"])
 
     def test_legacy_epoch_only_token_is_rejected(self):
         value = packet()
@@ -115,6 +130,25 @@ class HamerPacketContractTest(unittest.TestCase):
         value["gesture"] = 256
         with self.assertRaisesRegex(ValueError, "gesture must fit uint8"):
             self.contract.validate(value)
+
+    def test_finger_contract_rejects_nonfinite_or_out_of_range_features(self):
+        value = packet()
+        value["finger_observation"]["flexion"][2] = float("nan")
+        with self.assertRaisesRegex(ValueError, "finite five-vector"):
+            self.contract.validate(value)
+        value = packet()
+        value["finger_observation"]["flexion"][2] = 1.01
+        with self.assertRaisesRegex(ValueError, "remain in"):
+            self.contract.validate(value)
+
+    def test_strict_live_contract_requires_finger_observation(self):
+        contract = HamerPacketContract(
+            "camera_color_optical_frame", require_finger_contract=True
+        )
+        value = packet()
+        del value["finger_observation"]
+        with self.assertRaisesRegex(ValueError, "requires finger observation"):
+            contract.validate(value)
 
     def test_producer_timing_is_validated_and_normalized(self):
         normalized = self.contract.validate(add_timing(packet()))

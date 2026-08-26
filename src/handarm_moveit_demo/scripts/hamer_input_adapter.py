@@ -35,6 +35,9 @@ class HamerInputAdapter:
         self.require_timing_contract = bool(
             rospy.get_param("~require_timing_contract", True)
         )
+        self.require_finger_contract = bool(
+            rospy.get_param("~require_finger_contract", True)
+        )
         self.watchdog_publish_period_s = float(
             rospy.get_param("~watchdog_publish_period_s", 0.10)
         )
@@ -46,6 +49,7 @@ class HamerInputAdapter:
             self.default_frame,
             maximum_pipeline_latency_s=self.maximum_pipeline_latency_s,
             require_timing_contract=self.require_timing_contract,
+            require_finger_contract=self.require_finger_contract,
         )
         self.reference_interlock = ReferenceTokenInterlock()
         self.watchdog = InputWatchdog(
@@ -56,13 +60,14 @@ class HamerInputAdapter:
         rospy.loginfo(
             "HaMeR input adapter listening on udp://%s:%d -> %s "
             "(fail-closed timeout %.3f s, producer latency %.3f s, "
-            "timing required=%s)",
+            "timing required=%s, fingers required=%s)",
             self.bind_ip,
             self.port,
             self.topic,
             self.input_timeout_s,
             self.maximum_pipeline_latency_s,
             self.require_timing_contract,
+            self.require_finger_contract,
         )
 
     def convert(self, packet):
@@ -81,6 +86,13 @@ class HamerInputAdapter:
         message.inference_call_s = normalized["inference_call_s"]
         message.model_inference_s = normalized["model_inference_s"]
         message.postprocess_s = normalized["postprocess_s"]
+        message.finger_tracking_present = normalized["finger_tracking_present"]
+        message.finger_tracking_valid = normalized["finger_tracking_valid"]
+        message.finger_flexion = normalized["finger_flexion"].tolist()
+        message.finger_tracking_confidence = normalized[
+            "finger_tracking_confidence"
+        ]
+        message.finger_invalid_reason = normalized["finger_invalid_reason"]
         message.header.seq = normalized["sequence"]
         message.header.frame_id = normalized["frame_id"]
         (message.wrist_pose.position.x, message.wrist_pose.position.y,
@@ -129,6 +141,13 @@ class HamerInputAdapter:
         message.inference_call_s = 0.0
         message.model_inference_s = 0.0
         message.postprocess_s = 0.0
+        message.finger_tracking_present = False
+        message.finger_tracking_valid = False
+        message.finger_flexion = [0.0] * 5
+        message.finger_tracking_confidence = 0.0
+        message.finger_invalid_reason = str(
+            reason or "HAMER_INPUT_FAIL_CLOSED"
+        )
         message.wrist_pose.orientation.w = 1.0
         message.confidence = [0.0] * 6
         message.valid = False

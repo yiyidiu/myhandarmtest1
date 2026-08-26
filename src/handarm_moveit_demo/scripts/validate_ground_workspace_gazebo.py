@@ -147,6 +147,16 @@ class GroundWorkspaceGazeboValidator:
             "valid": True,
             "gesture": 0,
             "gesture_confidence": 0.0,
+            "finger_observation": {
+                "contract_version": 1,
+                "feature_definition": (
+                    "mano_openpose_chain_total_bend_over_pi_v1"
+                ),
+                "valid": True,
+                "flexion": [0.10] * 5,
+                "confidence": 1.0,
+                "invalid_reason": "",
+            },
             "invalid_reason": "",
             "hand_identity_present": True,
             "hand_is_right": True,

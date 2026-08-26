@@ -245,6 +245,39 @@ gesture:
   confidence_threshold: 0.75
   codes: {none: 0, open: 1, close: 2, configuration: 3}
 
+# Continuous five-human-digit -> three-robot-finger retargeting.  The first
+# robot coordinate is the audited palm configuration and is never mapped from
+# a human digit.  Human feature order is thumb/index/middle/ring/pinky.
+finger_retargeting:
+  joint_names: [f1j1, f1j2, f2j1, f3j2]
+  source_mixing_matrix:
+    - [0.0, 1.0, 0.0, 0.0, 0.0]  # human index -> robot outer finger f1
+    - [1.0, 0.0, 0.0, 0.0, 0.0]  # human thumb -> opposed robot finger f2
+    - [0.0, 0.0, 0.5, 0.3, 0.2]  # remaining fingers -> robot outer f3
+  minimum_confidence: 0.55
+  calibration_samples: 4
+  reference_max_flexion: [0.40, 0.40, 0.40, 0.40, 0.40]
+  calibration_max_range: 0.08
+  # Historical open-hand translation replay contains posture drift up to
+  # about 0.12 despite rigid-motion invariance of the geometric feature.
+  # Ignore that model-level motion/scale coupling before robot mapping.
+  human_flexion_deadband: [0.15, 0.15, 0.15]
+  human_close_excursion: [0.60, 0.60, 0.60]
+  one_euro_minimum_cutoff_hz: 2.0
+  one_euro_beta: 0.15
+  one_euro_derivative_cutoff_hz: 1.0
+  maximum_human_flexion_rate_per_s: 6.0
+  innovation_slack: 0.05
+  maximum_single_frame_innovation: 0.25
+  innovation_confirmation_samples: 3
+  innovation_consistency_tolerance: 0.08
+  # No target can advance faster than the URDF joint velocity.  A slightly
+  # lower flexion limit leaves margin for Gazebo scheduling jitter.
+  maximum_velocity_rad_s: [0.40, 0.75, 0.75, 0.75]
+  command_duration_s: 0.06
+  joint_state_timeout_s: 0.25
+  input_timeout_s: 0.45
+
 control:
   mode: RELATIVE_POSE_TRACKING
   rate_hz: 50.0
@@ -321,6 +354,7 @@ topics:
   servo_twist: /servo_server/delta_twist_cmds
   hand_action: /shared_teleop/hand_action
   mock_hand_command: /shared_teleop/mock_hand_command
+  finger_diagnostics: /shared_teleop/finger_diagnostics
   assist_request: /shared_teleop/assist_request
   emergency_stop: /shared_teleop/emergency_stop
   trend_diagnostics: /shared_teleop/trend_diagnostics

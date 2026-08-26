@@ -28,6 +28,10 @@ SHA-256：`7b9ea411fddf5beaf5a427ac81576f499396dce17d6c343a21eba154871cc860`
   避免主动关节 PID 与 mimic 插件在机械臂运动和接触约束下互相对抗。
 - 第三批修复将默认机械臂路径切回 MoveIt Servo，并在其后增加完整臂手状态的
   连续扫掠 FCL 保护器；场景、关节状态、碰撞监视器或速度命令失联时均闭锁。
+- 第四批修复把相机、HaMeR、前臂估计和显示解耦为最新帧路径，D435i 固定 ROI
+  实测达到 20 Hz，并将采集到发布延迟与真实推理来源写入 UDP/ROS/CSV。
+- 第五批修复加入连续手指链路：五个人手 MANO 弯曲特征经 C 后张手标定、因果滤波、
+  五到三指协同映射、限幅/限速和失效令牌锁定后，驱动 Gazebo 四个主动关节。
 
 人手遥操作仍使用原来的启动入口；`physical_grasp` 已是默认手指模型：
 
@@ -51,9 +55,19 @@ roslaunch handarm_sim_demo hand_transport_stability_ab.launch \
   output_file:=/tmp/physical_grasp.json
 ```
 
-该验收只证明“机械臂搬运期间固定手指目标”的稳定性，不等同于完成了人手指映射、
-物体接触抓取或端到端遥操作验收。详细结果见
+该验收只证明“机械臂搬运期间固定手指目标”的稳定性。连续人手指映射现在另由下述
+端到端测试覆盖；物体接触抓取和真人 C-to-Q 遥操作仍需单独验收。详细结果见
 `docs/teleop_evidence/v0.3_20260826/P0_REMEDIATION_02_HAND_PLANT.md`。
+
+连续手指 UDP→ROS→Gazebo 验收：
+
+```bash
+./scripts/run_finger_retargeting_gazebo_validation.sh
+```
+
+它验证食指→f1、拇指→对置 f2、中/无名/小指协同→f3 的独立响应，张手回零、机械臂
+运动时固定人手指输入的稳定性、INVALID 连续心跳超时和旧 C 令牌拒绝。实现与边界见
+`docs/teleop_evidence/v0.3_20260826/P0_REMEDIATION_05_FINGER_RETARGETING.md`。
 
 机械臂自碰撞、关节限位和恢复的自动验收：
 
