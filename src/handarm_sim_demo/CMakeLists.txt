@@ -20,6 +20,7 @@ find_package(catkin REQUIRED COMPONENTS
   visualization_msgs
 )
 find_package(gazebo REQUIRED)
+find_package(Qt5 REQUIRED COMPONENTS Core Widgets)
 
 catkin_package()
 
@@ -35,6 +36,11 @@ add_library(handarm_stable_hand_spring_plugin
   src/stable_hand_spring_plugin.cpp)
 target_link_libraries(handarm_stable_hand_spring_plugin
   ${catkin_LIBRARIES} ${GAZEBO_LIBRARIES})
+
+add_library(handarm_gui_render_rate_limiter_plugin
+  src/gui_render_rate_limiter_plugin.cpp)
+target_link_libraries(handarm_gui_render_rate_limiter_plugin
+  ${catkin_LIBRARIES} ${GAZEBO_LIBRARIES} Qt5::Core Qt5::Widgets)
 
 catkin_install_python(PROGRAMS
   scripts/simulation_guard.py
@@ -67,6 +73,7 @@ install(DIRECTORY config launch worlds
 
 install(TARGETS handarm_deterministic_attach_plugin
                 handarm_stable_hand_spring_plugin
+                handarm_gui_render_rate_limiter_plugin
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}

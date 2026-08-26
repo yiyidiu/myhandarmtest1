@@ -87,6 +87,7 @@ catkin_install_python(PROGRAMS
   scripts/gazebo_x90_response_validator.py
   scripts/live_gazebo_follow_validator.py
   scripts/udp_c_gate_validator.py
+  scripts/live_teleop_terminal_monitor.py
   scripts/finger_retargeting_gazebo_validator.py
   scripts/validate_finger_open_hand_replay.py
   scripts/calibrate_camera_workspace_udp.py

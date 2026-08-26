@@ -91,6 +91,10 @@
         <view_controller>orbit</view_controller>
         <projection_type>perspective</projection_type>
       </camera>
+      <plugin name="handarm_gui_render_rate_limiter"
+              filename="libhandarm_gui_render_rate_limiter_plugin.so">
+        <renderRateHz>15.0</renderRateHz>
+      </plugin>
     </gui>
   </world>
 </sdf>

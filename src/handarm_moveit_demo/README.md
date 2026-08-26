@@ -148,6 +148,16 @@ cd /path/to/myhandarmtest1-v0.3.0
 
 ### 使用当前 HaMeR + D435i/D455 实时输出（仍仅仿真）
 
+当前推荐入口会等待完整地面 PlanningScene 和控制器就绪、启动三层链路监视器，再
+打开相机：
+
+```bash
+cd /home/dongtian/myhandarmtest1-v0.3.0
+./scripts/run_live_human_teleop_validation.sh
+```
+
+下面的分终端命令仅保留给开发调试。
+
 地面工作空间现在有两个独立执行 profile。新位置参考方案用：
 
 ```bash
@@ -181,7 +191,9 @@ conda run --no-capture-output -n hamer_rtx2060 \
   --orientation-filter-max-gain 1.0 \
   --forearm-rate-hz 8.0 \
   --forearm-maximum-source-age-s 0.20 \
-  --hand-presence-timeout-s 0.25 \
+  --hand-presence-timeout-s 0.50 \
+  --hand-miss-grace-frames 8 \
+  --hand-miss-grace-s 0.35 \
   --teleop-udp-host 127.0.0.1 \
   --teleop-udp-port 5010
 ```
@@ -220,9 +232,10 @@ MANO 三角面的网格。默认不再用 KLT 将旧网格缩放到最新相机�
 必须在新手保持稳定后重新按 `c`，新手绝不继承旧手零位。
 裁剪框使用 `1.0` 新帧权重；发送给遥操作链的手掌姿态使用质量/运动自适应
 SO(3) 滤波：静止时抑制 MANO 抖动，明确运动时增益升到最多 `0.95`。裁剪靠近
-边缘或突然跳动仍会降低对应置信度。跟踪失效、presence generation 变化或左右手
-变化都会销毁已确认的人手/机器人零位；恢复后必须重新按 `c`，不会在旧参考下
-自动续跑，也不会补发失效期间的速度。
+边缘或突然跳动仍会降低对应置信度。单次短暂检测失效会在最多 8 帧/0.35 秒内发送
+INVALID 心跳并保持机械臂，当前检测恢复后沿用同一 C 且不补偿失效期间运动。超过
+边界、presence generation 变化或左右手变化仍会销毁已确认的人手/机器人零位；
+恢复后必须重新按 `c`。
 单帧姿态创新达到 `45°` 会锁定旧 C 会话并要求重新确认，避免 MANO 跳变被解释为
 人的连续旋转。低于硬门限的连续转动仍使用运动自适应增益。
 同一时刻只能运行一个 `run_d455_hamer_crop.py`；程序有单实例锁，重复启动会在

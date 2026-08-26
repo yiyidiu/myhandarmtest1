@@ -33,12 +33,32 @@ SHA-256：`7b9ea411fddf5beaf5a427ac81576f499396dce17d6c343a21eba154871cc860`
 - 第五批修复加入连续手指链路：五个人手 MANO 弯曲特征经 C 后张手标定、因果滤波、
   五到三指协同映射、限幅/限速和失效令牌锁定后，驱动 Gazebo 四个主动关节。
 
-人手遥操作仍使用原来的启动入口；`physical_grasp` 已是默认手指模型：
+人手遥操作请使用单一入口；它依次等待 Gazebo、控制器和 PlanningScene 就绪后再
+打开相机，且 `physical_grasp` 已是默认手指模型：
 
 ```bash
-source devel/setup.bash
-roslaunch handarm_moveit_demo live_human_ground_gazebo_egm_teleop.launch
+cd /home/dongtian/myhandarmtest1-v0.3.0
+./scripts/run_live_human_teleop_validation.sh
 ```
+
+相机窗口中保持中性张手并按一次 `C`，随后移动手腕。终端必须依次出现
+`[链路 1/3]`（ROS 接受 C）、`[链路 2/3]`（Servo 非零指令）和
+`[链路 3/3]`（Gazebo 末端实际移动）；缺少第三层时脚本会打印 Servo 状态与碰撞
+限速比例。按 `Q` 退出相机，脚本会同步关闭它启动的全部 ROS/Gazebo 进程。
+
+当前 EGM 真人入口默认使用未标定也可安全验证的 `current_linear` 相对映射：人手
+平移按 0.6 倍映射。`camera_ground_workspace` 只能在完成当前操作者的工作空间标定后
+显式启用，不能再把仓库中的示例范围当成真人默认值。
+
+需要正式 C-to-Q 录屏、rosbag、CSV、HaMeR JSONL 和 CPU/GPU 指标时运行：
+
+```bash
+./scripts/run_live_human_evidence_session.sh
+```
+
+该证据脚本会先启动低开销预录并等待有效张手；相机侧持久化的 C/Q 标记定义正式
+测量边界，因此不会依赖后台轮询去“猜”按键时刻。实现与自动验收结果见
+`docs/teleop_evidence/v0.3_20260826/P0_REMEDIATION_06_LIVE_CHAIN.md`。
 
 如需复现原始 v0.3 手指抖动作为 A/B 对照：
 

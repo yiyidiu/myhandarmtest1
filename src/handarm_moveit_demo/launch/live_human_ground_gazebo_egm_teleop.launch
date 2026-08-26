@@ -5,6 +5,12 @@
   <arg name="gazebo_gui" default="true" />
   <arg name="with_ground_object" default="true" />
   <arg name="enable_logger" default="true" />
+  <arg name="input_source" default="udp"
+       doc="udp for the live camera; direction_test is reserved for automated full-chain validation" />
+  <arg name="mapping_profile" default="current_linear"
+       doc="current_linear is the uncalibrated-safe 0.6x relative mapping; camera_ground_workspace requires a measured per-operator range" />
+  <arg name="hamer_input_timeout_s" default="0.40" />
+  <arg name="hamer_maximum_pipeline_latency_s" default="0.20" />
   <arg name="use_moveit_servo_safety" default="true"
        doc="true enables Servo plus swept collision gate; false is direct-IK rollback" />
   <arg name="legacy_moveit_servo_reference"
@@ -30,12 +36,15 @@
 
   <include file="$(find handarm_moveit_demo)/launch/shared_teleop_egm_position_demo.launch">
     <arg name="gazebo_gui" value="$(arg gazebo_gui)" />
-    <arg name="input_source" value="udp" />
+    <arg name="input_source" value="$(arg input_source)" />
     <arg name="enable_logger" value="$(arg enable_logger)" />
     <arg name="log_directory" value="$(arg log_directory)" />
     <arg name="world_name" value="$(arg world_name)" />
-    <arg name="mapping_profile" value="camera_ground_workspace" />
+    <arg name="mapping_profile" value="$(arg mapping_profile)" />
     <arg name="require_scene_ready" value="true" />
+    <arg name="hamer_input_timeout_s" value="$(arg hamer_input_timeout_s)" />
+    <arg name="hamer_maximum_pipeline_latency_s"
+         value="$(arg hamer_maximum_pipeline_latency_s)" />
     <arg name="camera_workspace_calibration_file"
          value="$(arg camera_workspace_calibration_file)" />
     <arg name="safe_initial_joint_positions"

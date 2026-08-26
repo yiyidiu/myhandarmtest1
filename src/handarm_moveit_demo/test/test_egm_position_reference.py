@@ -198,7 +198,12 @@ class EgmPositionProfileWiringTest(unittest.TestCase):
         self.assertIn("shared_teleop_egm_position_demo.launch", includes[0].get("file"))
         forwarded = {
             item.get("name"): item.get("value") for item in includes[0].findall("arg")}
-        self.assertEqual(forwarded["mapping_profile"], "camera_ground_workspace")
+        self.assertEqual(forwarded["mapping_profile"], "$(arg mapping_profile)")
+        self.assertEqual(forwarded["input_source"], "$(arg input_source)")
+        arguments = {
+            item.get("name"): item.get("default") for item in root.findall("arg")}
+        self.assertEqual(arguments["mapping_profile"], "current_linear")
+        self.assertEqual(arguments["input_source"], "udp")
 
     def test_egm_demo_uses_new_adapter_and_keeps_explicit_legacy_fallback(self):
         path = PACKAGE / "launch/shared_teleop_egm_position_demo.launch"
