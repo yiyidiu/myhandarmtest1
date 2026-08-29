@@ -1,0 +1,27 @@
+{
+  "control_authorized": false,
+  "evidence_scope": "POSE_ONLY_DERIVATIVE_NO_RGB_DEPTH_OR_IDENTITY",
+  "intent_label": "ROTATION",
+  "output_csv": "research/teleop_academic/evidence/m1/ry_stage0_labelled_wrist_input.csv",
+  "output_csv_sha256": "2b07ea3c60cdf25df45f4667db369f69084b230eee19358758dff4261aa7e823",
+  "output_duration_s": 15.846602201,
+  "output_record_count": 96,
+  "output_source_index_range": [
+    0,
+    475
+  ],
+  "primary_axis": "RY",
+  "rejected_indices": {},
+  "schema": "handarm_labelled_wrist_pose_replay_v1",
+  "selected_source_index_range_inclusive": [
+    0,
+    475
+  ],
+  "sources": {
+    "orientation_records": ".runtime/robotics_30day_training_20260826/research_track/human_pose_coupling_e0_20260827/data/E0_ROTATION_Y_continuous_rgbd_natural_validation_r06_20260828T233935/offline_observer_v4_crop_consensus_training_v1/CROP_MARGINALIZED_CAUSAL_SO3_RECORDS.jsonl",
+    "orientation_records_sha256": "c502e889f55e8ffbeee8b6075dd264cbe96d4b94cb0b687356ec06d69b11161c",
+    "position_records": ".runtime/robotics_30day_training_20260826/research_track/human_pose_coupling_e0_20260827/data/E0_ROTATION_Y_continuous_rgbd_natural_validation_r06_20260828T233935/offline_continuous_observation_features_v4_training_v1/CONTINUOUS_OBSERVATION_POSITION_RECORDS.jsonl",
+    "position_records_sha256": "603caa639077dc8da635a184448b2544680b1a6115ea007589922f6015b08f75"
+  },
+  "task_label_semantics": "The operator was instructed to primarily express the named axis; this is a categorical task label, not neural-intent ground truth."
+}

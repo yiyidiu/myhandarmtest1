@@ -13,6 +13,7 @@
   <arg name="mapping_profile" default="current_linear" />
   <arg name="camera_workspace_calibration_file"
        default="$(find handarm_moveit_demo)/config/camera_workspace_calibration.yaml" />
+  <arg name="live_human_velocity_profile" default="false" />
   <!-- This public teleoperation entry always uses the collision-checked
        non-EGM velocity Servo.  The old collision-disabled response experiment
        is intentionally not selectable from this launch. -->
@@ -69,6 +70,8 @@
     <arg name="log_directory" value="$(arg log_directory)" />
     <arg name="mapping_profile" value="$(arg mapping_profile)" />
     <arg name="require_full_robot_safety" value="true" />
+    <arg name="live_human_velocity_profile"
+         value="$(arg live_human_velocity_profile)" />
     <arg name="camera_workspace_calibration_file"
          value="$(arg camera_workspace_calibration_file)" />
   </include>

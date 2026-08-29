@@ -24,8 +24,10 @@ class PoseReplay:
         self.path = Path(rospy.get_param("~input_csv")).expanduser().resolve()
         self.speed = float(rospy.get_param("~speed", 1.0))
         self.loop = bool(rospy.get_param("~loop", False))
-        if self.speed <= 0.0 or not self.path.is_file():
-            raise ValueError("input_csv must exist and speed must be positive")
+        self.start_delay_s = float(rospy.get_param("~start_delay_s", 0.0))
+        if self.speed <= 0.0 or self.start_delay_s < 0.0 or not self.path.is_file():
+            raise ValueError(
+                "input_csv must exist, speed must be positive, and start_delay_s nonnegative")
         with self.path.open("r", encoding="utf-8", newline="") as handle:
             rows = list(csv.DictReader(handle))
         self.rows = []
@@ -74,6 +76,8 @@ class PoseReplay:
             self.publisher.publish(message)
 
     def run(self):
+        if self.start_delay_s > 0.0:
+            rospy.sleep(self.start_delay_s)
         while not rospy.is_shutdown():
             self.run_once()
             if not self.loop:

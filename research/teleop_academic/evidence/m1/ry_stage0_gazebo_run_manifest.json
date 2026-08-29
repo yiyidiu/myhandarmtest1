@@ -1,0 +1,167 @@
+{
+  "schema": "handarm_m1_gazebo_run_manifest_v1",
+  "recorded_at_local": "2026-08-30T01:04:07+08:00",
+  "purpose": "Propagate one task-labelled ROTATION/RY wrist-pose recording through the existing mapper, controller, simulated robot, and object observation chain.",
+  "git": {
+    "branch": "research/teleop-academic",
+    "base_commit_before_milestone": "bdafd0e6ea23d583d78b3e5e72ba1b34ecb962f5",
+    "remote": "https://github.com/yiyidiu/myhandarmtest1.git",
+    "worktree_state_at_run": "DIRTY",
+    "provenance_note": "The safe launch profile, target timeout, UDP-loss gate, and split-joint-state collision-guard changes pre-dated this milestone in the user's worktree. They are baseline runtime dependencies, not the proposed translation-orientation decoupling method. The UDP_INPUT_TIMEOUT branch was not exercised by input_source=external."
+  },
+  "environment": {
+    "operating_system": "Ubuntu 20.04.6 LTS",
+    "ros_distribution": "noetic",
+    "roslaunch_version": "1.17.4",
+    "gazebo_version": "11.15.1"
+  },
+  "commands": {
+    "launch": [
+      "roslaunch",
+      "handarm_moveit_demo",
+      "shared_teleop_safe_demo.launch",
+      "gazebo_gui:=false",
+      "input_source:=external",
+      "enable_logger:=false",
+      "enable_gesture_demo:=false",
+      "mapping_profile:=camera_ground_axis_decoupled",
+      "live_human_velocity_profile:=true",
+      "world_name:=<REPOSITORY>/src/handarm_sim_demo/worlds/handarm_ground_grasp.world"
+    ],
+    "record": [
+      "rosbag",
+      "record",
+      "-O",
+      "<RUN_DIRECTORY>/ry_stage0_causal.bag",
+      "/shared_teleop/hamer_pose",
+      "/shared_teleop/trend_diagnostics",
+      "/shared_teleop/safe_twist",
+      "/joint_states",
+      "/gazebo/model_states",
+      "/handarm_sim_demo/target_contacts",
+      "/controller_gazebo_hand/command",
+      "/controller_gazebo_hand/follow_joint_trajectory/goal",
+      "/shared_teleop/hand_action",
+      "/servo_server/status"
+    ],
+    "confirm_reference": [
+      "rosservice",
+      "call",
+      "/shared_teleop/confirm_hand_reference",
+      "{}"
+    ],
+    "replay": [
+      "rosrun",
+      "handarm_moveit_demo",
+      "teleop_pose_replay.py",
+      "_input_csv:=<REPOSITORY>/research/teleop_academic/evidence/m1/ry_stage0_labelled_wrist_input.csv",
+      "_speed:=1.0",
+      "_loop:=false",
+      "_start_delay_s:=1.0"
+    ],
+    "analyze": [
+      "python3",
+      "research/teleop_academic/scripts/analyze_m1_causal_bag.py",
+      "<RUN_DIRECTORY>/ry_stage0_causal.bag",
+      "--labelled-input-csv",
+      "research/teleop_academic/evidence/m1/ry_stage0_labelled_wrist_input.csv",
+      "--endpoint-window-size",
+      "6",
+      "--output",
+      "research/teleop_academic/evidence/m1/ry_stage0_gazebo_causal_summary.json"
+    ]
+  },
+  "pose_only_input": {
+    "path": "research/teleop_academic/evidence/m1/ry_stage0_labelled_wrist_input.csv",
+    "sha256": "2b07ea3c60cdf25df45f4667db369f69084b230eee19358758dff4261aa7e823",
+    "original_run_sha256": "bda021cd7e7e5315784c64202881423c9ba5ff249af3f8f612a4f31d52bcc7b7",
+    "normalization_note": "The published CSV differs from the original run input only by canonical LF instead of CSV-writer CRLF line endings; parsed field values are unchanged.",
+    "records": 96,
+    "source_duration_s": 15.846602201,
+    "task_label": "ROTATION",
+    "primary_axis_label": "RY",
+    "task_label_semantics": "The operator was instructed to primarily express the named axis; this is not neural-intent ground truth.",
+    "contains_rgb_depth_or_identity": false,
+    "control_authorized": false
+  },
+  "original_bag": {
+    "published_in_git": false,
+    "omission_reason": "The 47.6 MiB bag can be regenerated from the published pose-only input and runtime; the hash is retained to bind every reported number to the original observation.",
+    "sha256": "8d94190f2f04b3651f3778b9e57fdee55ba63a6f7fb439034f4b1fdcf5364dbf",
+    "size_bytes": 49883589,
+    "duration_s": 31.673,
+    "messages": 40662,
+    "topics": {
+      "/gazebo/model_states": 31661,
+      "/handarm_sim_demo/target_contacts": 3165,
+      "/joint_states": 1584,
+      "/servo_server/status": 1584,
+      "/shared_teleop/hamer_pose": 96,
+      "/shared_teleop/safe_twist": 1584,
+      "/shared_teleop/trend_diagnostics": 988
+    }
+  },
+  "reported_summary": {
+    "path": "research/teleop_academic/evidence/m1/ry_stage0_gazebo_causal_summary.json",
+    "sha256": "34892cdd54b1bf3e555812696ab4f19558c8b7b1d39fefe39161a59a1dc66931"
+  },
+  "independent_reproduction": {
+    "recorded_at_local": "2026-08-30T01:40:55+08:00",
+    "ros_log_run_id": "bd9acb9c-a3d0-11f1-9a41-23810455516e",
+    "bag_sha256": "1043724aef78eb18552cae46f5bd87352b1facfb955e27a204e00f7b1c8d4f79",
+    "bag_published_in_git": false,
+    "summary_path": "research/teleop_academic/evidence/m1/ry_stage0_gazebo_reproduction_summary.json",
+    "summary_sha256": "8846eb65551db990b4c74f78ad93b7fc21902cddd8940e04a07313dd17b9b1f4",
+    "input_messages": 96,
+    "valid_input_messages": 96,
+    "mapping_target_translation_magnitude_m": 0.06564856922534295,
+    "mapping_target_rotation_magnitude_deg": 13.215351637248634,
+    "robot_actual_translation_magnitude_m": 0.06983414031898772,
+    "robot_actual_rotation_magnitude_deg": 13.300648237622788,
+    "difference_from_original_robot_actual": {
+      "translation_magnitude_m": 0.00009439975783042,
+      "rotation_magnitude_deg": 0.013760753755902
+    },
+    "servo_status_histogram": {
+      "0": 1247
+    },
+    "interpretation": "A fresh Gazebo process reproduced the same input and target endpoints and nearly the same actual tool endpoint. Gazebo timing changed message counts and bag bytes, so reproducibility is judged on the frozen endpoint definition rather than byte identity."
+  },
+  "runtime_source_sha256": {
+    "src/handarm_moveit_demo/config/shared_teleop.yaml": "a55ee80751a2760f821380e8ca1908ff45a75708155fe8f184830c66e63714ab",
+    "src/handarm_moveit_demo/launch/shared_teleop_core.launch": "0e7bbd98c8f4a9d3fe55992d07c153267b7e6f5649e4eb9534500fd7206f4f70",
+    "src/handarm_moveit_demo/launch/shared_teleop_safe_demo.launch": "68e3393cc8c344fc838ff5847b7b410c3ceaca3f7ce6c89667479a12022685b2",
+    "src/handarm_moveit_demo/scripts/six_dof_trend_node.py": "252ad82ea689fdf75e1fbe6dedb88bbe7c798595a8dbce01ea079da95e62c69e",
+    "src/handarm_moveit_demo/scripts/teleop_pose_replay.py": "8eaef27e0ad53a28bb34f54a9adda818a90849d3b217e95c829fb97a0676bcc2",
+    "src/handarm_moveit_demo/src/full_robot_self_collision_guard.cpp": "5231ee72b6b60a7a8e6fe57957a98e579e692067fc854e59f1c528c129665a38",
+    "src/handarm_sim_demo/worlds/handarm_ground_grasp.world": "b79f09263402d0268cb9dab177bf1f88813fb98416ed948532c20d646cb67e73"
+  },
+  "compiled_runtime_sha256": {
+    "devel/lib/handarm_moveit_demo/full_robot_self_collision_guard": "3eaf2737f6ce272bce6df458a689868257a5e2e54b7012cb87ea9d61f6bdffa0"
+  },
+  "safety_observation": {
+    "ros_log_run_id": "5f95f738-a3cb-11f1-9a41-23810455516e",
+    "full_robot_collision_contract_active_at_sim_time_s": 0.484,
+    "servo_status_histogram": {
+      "0": 1584
+    },
+    "interpretation": "The collision contract became active and no nonzero MoveIt Servo status was recorded. This is one replay observation, not a safety certification."
+  },
+  "edge_probe_artifacts": {
+    "frame145": {
+      "path": "research/teleop_academic/evidence/m1/frame145_edge_presence_probe.json",
+      "sha256": "f95646be7ce6d2d5ffcae23b20bbe69d32b6e01515dee3ae5952a0f088b3ad0f"
+    },
+    "frame295": {
+      "path": "research/teleop_academic/evidence/m1/frame295_edge_presence_probe.json",
+      "sha256": "26955ab911f77cf2063737a17e797b16030b0edef150d7b1d786e45363e72c73"
+    },
+    "live_helper_sha256": "f05822ca35944139a60d9c7135366b15bdf5b846da65beda615473e8ee01048f"
+  },
+  "evidence_boundary": [
+    "This is one task-labelled RY session, not a participant population or neural-intent measurement.",
+    "The replay isolates arm motion; it issues no finger command and performs no grasp, lift, move, or place.",
+    "The edge evidence is a two-frame synthetic image translation probe, not live edge-view validation at the user's approximately one-metre camera distance.",
+    "A regenerated Gazebo run need not be byte-identical to the original bag; claims must be based on the same observable endpoint definition and reported with new raw evidence."
+  ]
+}

@@ -330,11 +330,11 @@ control:
   rotation_feedforward_gain: [0.75, 0.75, 0.75]
   target_linear_speed_limit_mps: 1.00
   target_angular_speed_limit_radps: 10.00
-  # Match V3 publish_repeated/HOLD_LAST in Gazebo.  Zero means hold the latest
-  # target until a new valid MANO pose arrives.  This is simulation-only; the
-  # real output path retains its fail-closed input watchdog.
+  # Bridge normal 0.19--0.30 s HaMeR inference gaps, but never refresh a dead
+  # camera target indefinitely.  At 0.40 s the old header is exposed to the
+  # downstream watchdog and the UDP adapter independently locks the C gate.
   repeat_last_target_pose: true
-  target_hold_timeout_s: 0.0
+  target_hold_timeout_s: 0.40
   # Prevent MoveIt Servo's direction-independent collision scalar from being
   # driven to ~0 by a persistent unsafe hand target.  Once scale <= 0.20, only
   # measured tool velocities that reduce the robot's C-zero pose error pass

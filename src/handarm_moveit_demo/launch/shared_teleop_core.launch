@@ -17,6 +17,9 @@
   <!-- Opt-in response shaping for the EGM position-reference plant.  The
        established velocity profile deliberately keeps the YAML values. -->
   <arg name="stable_position_reference_profile" default="false" />
+  <!-- Low-speed, finite-acceleration profile for a live human driving the
+       collision-checked Gazebo velocity controller. -->
+  <arg name="live_human_velocity_profile" default="false" />
   <arg name="require_scene_ready" default="false" />
   <arg name="camera_workspace_calibration_file"
        default="$(find handarm_moveit_demo)/config/camera_workspace_calibration.yaml" />
@@ -87,6 +90,26 @@
     <param if="$(arg stable_position_reference_profile)"
            name="position_hold_topic"
            value="/shared_teleop/egm_position_hold" />
+    <param if="$(arg live_human_velocity_profile)"
+           name="translation_error_gain_per_s" value="3.0" />
+    <param if="$(arg live_human_velocity_profile)"
+           name="rotation_error_gain_per_s" value="3.0" />
+    <param if="$(arg live_human_velocity_profile)"
+           name="translation_feedforward_gain" value="0.15" />
+    <param if="$(arg live_human_velocity_profile)"
+           name="rotation_feedforward_gain" value="0.15" />
+    <param if="$(arg live_human_velocity_profile)"
+           name="maximum_linear_velocity_mps" value="0.12" />
+    <param if="$(arg live_human_velocity_profile)"
+           name="maximum_angular_velocity_radps" value="0.8" />
+    <param if="$(arg live_human_velocity_profile)"
+           name="maximum_linear_speed_norm_mps" value="0.12" />
+    <param if="$(arg live_human_velocity_profile)"
+           name="maximum_angular_speed_norm_radps" value="0.8" />
+    <param if="$(arg live_human_velocity_profile)"
+           name="target_linear_speed_limit_mps" value="0.12" />
+    <param if="$(arg live_human_velocity_profile)"
+           name="target_angular_speed_limit_radps" value="0.8" />
   </node>
   <node pkg="handarm_moveit_demo" type="gesture_isolation_node.py"
         name="gesture_isolation" output="screen" />
@@ -109,6 +132,14 @@
            name="maximum_linear_acceleration_mps2" value="1.5" />
     <param if="$(arg stable_position_reference_profile)"
            name="maximum_angular_acceleration_radps2" value="10.0" />
+    <param if="$(arg live_human_velocity_profile)"
+           name="maximum_linear_velocity_mps" value="0.12" />
+    <param if="$(arg live_human_velocity_profile)"
+           name="maximum_angular_velocity_radps" value="0.8" />
+    <param if="$(arg live_human_velocity_profile)"
+           name="maximum_linear_acceleration_mps2" value="0.60" />
+    <param if="$(arg live_human_velocity_profile)"
+           name="maximum_angular_acceleration_radps2" value="4.0" />
   </node>
   <node pkg="handarm_moveit_demo" type="mock_three_finger_hand_adapter.py"
         name="mock_three_finger_hand_adapter" output="screen" />

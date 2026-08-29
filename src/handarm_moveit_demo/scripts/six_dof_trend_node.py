@@ -932,9 +932,14 @@ class SixDofTrendNode:
         token = str(message.control_reference_token)
         enabled = bool(message.control_enabled and token)
         if not enabled:
+            udp_timeout = message.invalid_reason == "UDP_INPUT_TIMEOUT"
             with self.lock:
-                self.startup_c_gate_satisfied = True
-                self.startup_blocked_reference_token = None
+                # A real camera/UDP loss must block the old C token.  Otherwise
+                # a late packet can silently re-enable motion after the hand
+                # has moved while tracking was unavailable.
+                self.startup_c_gate_satisfied = not udp_timeout
+                self.startup_blocked_reference_token = (
+                    token if udp_timeout and token else None)
                 state_changed = bool(
                     self.reference_armed or self.reference_ready or
                     self.active_reference_token is not None or

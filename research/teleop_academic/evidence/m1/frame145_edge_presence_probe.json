@@ -1,0 +1,1884 @@
+{
+  "base_hand_bbox_xyxy": [
+    256.1883239746094,
+    197.62815856933594,
+    352.9569091796875,
+    314.1426696777344
+  ],
+  "detector_edge_margin_px": 8.0,
+  "evidence_boundary": "This isolates the current image-plane presence gate on one recorded pose. It does not reproduce real edge-view biomechanics, lighting, depth loss, temporal KLT behavior, or live control recovery.",
+  "image_size_px": [
+    640,
+    480
+  ],
+  "live_detector_command": [
+    "${MEDIAPIPE_PYTHON}",
+    "perception_hamer/scripts/mediapipe_detect_roi_once.py",
+    "--width",
+    "640",
+    "--height",
+    "480",
+    "--stream"
+  ],
+  "live_detector_runtime_note": "Set MEDIAPIPE_PYTHON to the Python interpreter containing the project's MediaPipe dependencies.",
+  "physical_pose_transform": "2D translation only; no rotation or rescaling",
+  "retained_output": "detector metadata only; no translated RGB retained",
+  "schema": "handarm_m1_frame_edge_presence_probe_v1",
+  "source_frame_index": 145,
+  "source_observer_records": ".runtime/robotics_30day_training_20260826/research_track/human_pose_coupling_e0_20260827/data/E0_ROTATION_Y_continuous_rgbd_natural_validation_r06_20260828T233935/offline_observer_v2_prospective_v1/OBSERVER_V2_PROSPECTIVE_RECORDS.jsonl",
+  "source_observer_records_sha256": "054450bd706f6d1802d1e1ac46b529fdd34b13e09d5182c7069e3490f408816c",
+  "source_rgb_relative_path": "rgb/000145.png",
+  "source_rgb_sha256": "c849522c0f4a5777b20cf254631af3c5e4a8e241a70c964a38eff3ef21a0435e",
+  "source_session": ".runtime/robotics_30day_training_20260826/research_track/human_pose_coupling_e0_20260827/data/E0_ROTATION_Y_continuous_rgbd_natural_validation_r06_20260828T233935",
+  "status": "CONTROLLED_SYNTHETIC_REPLAY_NOT_LIVE_EDGE_VALIDATION",
+  "summary_by_direction": {
+    "bottom": {
+      "invalid_reasons": [
+        "hand_bbox_touches_image_edge",
+        "hand_bbox_touches_image_edge",
+        "hand_bbox_touches_image_edge",
+        "hand_bbox_touches_image_edge"
+      ],
+      "invalid_requested_margins_px": [
+        10.0,
+        5.0,
+        0.0,
+        -20.0
+      ],
+      "valid_requested_margins_px": [
+        40.0,
+        20.0
+      ]
+    },
+    "left": {
+      "invalid_reasons": [
+        "hand_bbox_touches_image_edge",
+        "hand_bbox_touches_image_edge",
+        "hand_bbox_touches_image_edge"
+      ],
+      "invalid_requested_margins_px": [
+        5.0,
+        0.0,
+        -20.0
+      ],
+      "valid_requested_margins_px": [
+        40.0,
+        20.0,
+        10.0
+      ]
+    },
+    "right": {
+      "invalid_reasons": [
+        "hand_bbox_touches_image_edge",
+        "hand_bbox_touches_image_edge",
+        "hand_bbox_touches_image_edge"
+      ],
+      "invalid_requested_margins_px": [
+        5.0,
+        0.0,
+        -20.0
+      ],
+      "valid_requested_margins_px": [
+        40.0,
+        20.0,
+        10.0
+      ]
+    },
+    "top": {
+      "invalid_reasons": [
+        "hand_bbox_touches_image_edge",
+        "hand_bbox_touches_image_edge",
+        "hand_bbox_touches_image_edge",
+        "hand_bbox_touches_image_edge"
+      ],
+      "invalid_requested_margins_px": [
+        10.0,
+        5.0,
+        0.0,
+        -20.0
+      ],
+      "valid_requested_margins_px": [
+        40.0,
+        20.0
+      ]
+    }
+  },
+  "variants": [
+    {
+      "detector": {
+        "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+        "bbox": [
+          257.05378646850585,
+          194.9393606185913,
+          352.09145431518556,
+          316.83146953582764
+        ],
+        "bbox_area_fraction": 0.037709445834660196,
+        "confidence": 0.9818076491355896,
+        "detected_hand_count": 1,
+        "detections": [
+          {
+            "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+            "bbox": [
+              257.05378646850585,
+              194.9393606185913,
+              352.09145431518556,
+              316.83146953582764
+            ],
+            "bbox_area_fraction": 0.037709445834660196,
+            "confidence": 0.9818076491355896,
+            "handedness_label_exchanged_for_unmirrored_d455": true,
+            "input_mirrored": false,
+            "is_right": false,
+            "mediapipe_selfie_label": "right",
+            "palm_mcp_pixels": [
+              [
+                299.7816848754883,
+                262.06738471984863
+              ],
+              [
+                310.39939880371094,
+                258.49671363830566
+              ],
+              [
+                321.3431167602539,
+                259.94147300720215
+              ],
+              [
+                331.8135452270508,
+                265.05560874938965
+              ]
+            ],
+            "valid": true,
+            "wrist_pixel": [
+              321.7144775390625,
+              300.6986904144287
+            ]
+          }
+        ],
+        "handedness_label_exchanged_for_unmirrored_d455": true,
+        "input_mirrored": false,
+        "is_right": false,
+        "mediapipe_selfie_label": "right",
+        "palm_mcp_pixels": [
+          [
+            299.7816848754883,
+            262.06738471984863
+          ],
+          [
+            310.39939880371094,
+            258.49671363830566
+          ],
+          [
+            321.3431167602539,
+            259.94147300720215
+          ],
+          [
+            331.8135452270508,
+            265.05560874938965
+          ]
+        ],
+        "rejected_detections": [],
+        "valid": true,
+        "wrist_pixel": [
+          321.7144775390625,
+          300.6986904144287
+        ]
+      },
+      "direction": "center",
+      "dx_px": 0.0,
+      "dy_px": 0.0,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        256.1883239746094,
+        197.62815856933594,
+        352.9569091796875,
+        314.1426696777344
+      ],
+      "name": "nominal",
+      "requested_margin_px": null
+    },
+    {
+      "detector": {
+        "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+        "bbox": [
+          40.722503662109375,
+          194.42095556259156,
+          135.82740783691406,
+          318.56250486373904
+        ],
+        "bbox_area_fraction": 0.038432520020824944,
+        "confidence": 0.9753463268280029,
+        "detected_hand_count": 1,
+        "detections": [
+          {
+            "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+            "bbox": [
+              40.722503662109375,
+              194.42095556259156,
+              135.82740783691406,
+              318.56250486373904
+            ],
+            "bbox_area_fraction": 0.038432520020824944,
+            "confidence": 0.9753463268280029,
+            "handedness_label_exchanged_for_unmirrored_d455": true,
+            "input_mirrored": false,
+            "is_right": false,
+            "mediapipe_selfie_label": "right",
+            "palm_mcp_pixels": [
+              [
+                83.62789154052734,
+                261.9533443450928
+              ],
+              [
+                94.3272876739502,
+                258.616361618042
+              ],
+              [
+                105.2381420135498,
+                260.2482318878174
+              ],
+              [
+                115.61258316040039,
+                265.4398727416992
+              ]
+            ],
+            "valid": true,
+            "wrist_pixel": [
+              105.7553768157959,
+              302.1320056915283
+            ]
+          }
+        ],
+        "handedness_label_exchanged_for_unmirrored_d455": true,
+        "input_mirrored": false,
+        "is_right": false,
+        "mediapipe_selfie_label": "right",
+        "palm_mcp_pixels": [
+          [
+            83.62789154052734,
+            261.9533443450928
+          ],
+          [
+            94.3272876739502,
+            258.616361618042
+          ],
+          [
+            105.2381420135498,
+            260.2482318878174
+          ],
+          [
+            115.61258316040039,
+            265.4398727416992
+          ]
+        ],
+        "rejected_detections": [],
+        "valid": true,
+        "wrist_pixel": [
+          105.7553768157959,
+          302.1320056915283
+        ]
+      },
+      "direction": "left",
+      "dx_px": -216.18832397460938,
+      "dy_px": 0.0,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        40.0,
+        197.62815856933594,
+        136.76858520507812,
+        314.1426696777344
+      ],
+      "name": "left_margin_40px",
+      "requested_margin_px": 40.0
+    },
+    {
+      "detector": {
+        "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+        "bbox": [
+          20.590088176727296,
+          194.67225923538209,
+          116.08151693344116,
+          318.1478653907776
+        ],
+        "bbox_area_fraction": 0.038381712397070354,
+        "confidence": 0.9743974208831787,
+        "detected_hand_count": 1,
+        "detections": [
+          {
+            "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+            "bbox": [
+              20.590088176727296,
+              194.67225923538209,
+              116.08151693344116,
+              318.1478653907776
+            ],
+            "bbox_area_fraction": 0.038381712397070354,
+            "confidence": 0.9743974208831787,
+            "handedness_label_exchanged_for_unmirrored_d455": true,
+            "input_mirrored": false,
+            "is_right": false,
+            "mediapipe_selfie_label": "right",
+            "palm_mcp_pixels": [
+              [
+                63.81644248962402,
+                262.28668212890625
+              ],
+              [
+                74.35522079467773,
+                258.93030166625977
+              ],
+              [
+                85.19680976867676,
+                260.511474609375
+              ],
+              [
+                95.63652038574219,
+                265.57382583618164
+              ]
+            ],
+            "valid": true,
+            "wrist_pixel": [
+              85.61762809753418,
+              301.8055057525635
+            ]
+          }
+        ],
+        "handedness_label_exchanged_for_unmirrored_d455": true,
+        "input_mirrored": false,
+        "is_right": false,
+        "mediapipe_selfie_label": "right",
+        "palm_mcp_pixels": [
+          [
+            63.81644248962402,
+            262.28668212890625
+          ],
+          [
+            74.35522079467773,
+            258.93030166625977
+          ],
+          [
+            85.19680976867676,
+            260.511474609375
+          ],
+          [
+            95.63652038574219,
+            265.57382583618164
+          ]
+        ],
+        "rejected_detections": [],
+        "valid": true,
+        "wrist_pixel": [
+          85.61762809753418,
+          301.8055057525635
+        ]
+      },
+      "direction": "left",
+      "dx_px": -236.18832397460938,
+      "dy_px": 0.0,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        20.0,
+        197.62815856933594,
+        116.76858520507812,
+        314.1426696777344
+      ],
+      "name": "left_margin_20px",
+      "requested_margin_px": 20.0
+    },
+    {
+      "detector": {
+        "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+        "bbox": [
+          10.37075080871582,
+          194.1224515914917,
+          106.80147132873535,
+          319.007822227478
+        ],
+        "bbox_area_fraction": 0.03920177823189404,
+        "confidence": 0.9745163321495056,
+        "detected_hand_count": 1,
+        "detections": [
+          {
+            "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+            "bbox": [
+              10.37075080871582,
+              194.1224515914917,
+              106.80147132873535,
+              319.007822227478
+            ],
+            "bbox_area_fraction": 0.03920177823189404,
+            "confidence": 0.9745163321495056,
+            "handedness_label_exchanged_for_unmirrored_d455": true,
+            "input_mirrored": false,
+            "is_right": false,
+            "mediapipe_selfie_label": "right",
+            "palm_mcp_pixels": [
+              [
+                53.718061447143555,
+                262.18963623046875
+              ],
+              [
+                64.22395706176758,
+                258.9467525482178
+              ],
+              [
+                75.01038551330566,
+                260.49994468688965
+              ],
+              [
+                85.53028106689453,
+                265.68002700805664
+              ]
+            ],
+            "valid": true,
+            "wrist_pixel": [
+              76.09537601470947,
+              302.4788761138916
+            ]
+          }
+        ],
+        "handedness_label_exchanged_for_unmirrored_d455": true,
+        "input_mirrored": false,
+        "is_right": false,
+        "mediapipe_selfie_label": "right",
+        "palm_mcp_pixels": [
+          [
+            53.718061447143555,
+            262.18963623046875
+          ],
+          [
+            64.22395706176758,
+            258.9467525482178
+          ],
+          [
+            75.01038551330566,
+            260.49994468688965
+          ],
+          [
+            85.53028106689453,
+            265.68002700805664
+          ]
+        ],
+        "rejected_detections": [],
+        "valid": true,
+        "wrist_pixel": [
+          76.09537601470947,
+          302.4788761138916
+        ]
+      },
+      "direction": "left",
+      "dx_px": -246.18832397460938,
+      "dy_px": 0.0,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        10.0,
+        197.62815856933594,
+        106.76858520507812,
+        314.1426696777344
+      ],
+      "name": "left_margin_10px",
+      "requested_margin_px": 10.0
+    },
+    {
+      "detector": {
+        "reason": "hand_bbox_touches_image_edge",
+        "rejected_detections": [
+          {
+            "bbox": [
+              5.240507888793946,
+              194.53543024063111,
+              101.26101417541504,
+              319.04463930130004
+            ],
+            "bbox_area_fraction": 0.038917439099453714,
+            "palm_mcp_pixels": [
+              [
+                48.724398612976074,
+                261.94104194641113
+              ],
+              [
+                59.2496395111084,
+                258.8100528717041
+              ],
+              [
+                69.98895168304443,
+                260.43580055236816
+              ],
+              [
+                80.38472175598145,
+                265.66311836242676
+              ]
+            ],
+            "reason": "hand_bbox_touches_image_edge",
+            "valid": false,
+            "wrist_pixel": [
+              71.09952926635742,
+              302.56547927856445
+            ]
+          }
+        ],
+        "valid": false
+      },
+      "direction": "left",
+      "dx_px": -251.18832397460938,
+      "dy_px": 0.0,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        5.0,
+        197.62815856933594,
+        101.76858520507812,
+        314.1426696777344
+      ],
+      "name": "left_margin_5px",
+      "requested_margin_px": 5.0
+    },
+    {
+      "detector": {
+        "reason": "hand_bbox_touches_image_edge",
+        "rejected_detections": [
+          {
+            "bbox": [
+              0.0,
+              193.9016372680664,
+              95.85950813293456,
+              319.88189392089845
+            ],
+            "bbox_area_fraction": 0.03931121561588977,
+            "palm_mcp_pixels": [
+              [
+                43.99184226989746,
+                261.6471004486084
+              ],
+              [
+                54.627251625061035,
+                258.4039306640625
+              ],
+              [
+                65.3200912475586,
+                260.15642166137695
+              ],
+              [
+                75.58809280395508,
+                265.5747413635254
+              ]
+            ],
+            "reason": "hand_bbox_touches_image_edge",
+            "valid": false,
+            "wrist_pixel": [
+              66.16374015808105,
+              303.2080364227295
+            ]
+          }
+        ],
+        "valid": false
+      },
+      "direction": "left",
+      "dx_px": -256.1883239746094,
+      "dy_px": 0.0,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        0.0,
+        197.62815856933594,
+        96.76858520507812,
+        314.1426696777344
+      ],
+      "name": "left_margin_0px",
+      "requested_margin_px": 0.0
+    },
+    {
+      "detector": {
+        "reason": "hand_bbox_touches_image_edge",
+        "rejected_detections": [
+          {
+            "bbox": [
+              0.0,
+              194.82067909240723,
+              76.07726988792419,
+              319.3636814117432
+            ],
+            "bbox_area_fraction": 0.03084274609407711,
+            "palm_mcp_pixels": [
+              [
+                23.831517696380615,
+                262.5662899017334
+              ],
+              [
+                34.40968990325928,
+                259.36142921447754
+              ],
+              [
+                45.2998161315918,
+                260.9268379211426
+              ],
+              [
+                55.66786766052246,
+                265.89929580688477
+              ]
+            ],
+            "reason": "hand_bbox_touches_image_edge",
+            "valid": false,
+            "wrist_pixel": [
+              47.003326416015625,
+              302.88004875183105
+            ]
+          }
+        ],
+        "valid": false
+      },
+      "direction": "left",
+      "dx_px": -276.1883239746094,
+      "dy_px": 0.0,
+      "expected_bbox_visible_fraction": 0.7933213557104847,
+      "expected_shifted_bbox_xyxy": [
+        -20.0,
+        197.62815856933594,
+        76.76858520507812,
+        314.1426696777344
+      ],
+      "name": "left_margin_-20px",
+      "requested_margin_px": -20.0
+    },
+    {
+      "detector": {
+        "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+        "bbox": [
+          503.0634490966797,
+          195.15632743835448,
+          598.9848907470703,
+          317.13975791931153
+        ],
+        "bbox_area_fraction": 0.03808862795961458,
+        "confidence": 0.9779201149940491,
+        "detected_hand_count": 1,
+        "detections": [
+          {
+            "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+            "bbox": [
+              503.0634490966797,
+              195.15632743835448,
+              598.9848907470703,
+              317.13975791931153
+            ],
+            "bbox_area_fraction": 0.03808862795961458,
+            "confidence": 0.9779201149940491,
+            "handedness_label_exchanged_for_unmirrored_d455": true,
+            "input_mirrored": false,
+            "is_right": false,
+            "mediapipe_selfie_label": "right",
+            "palm_mcp_pixels": [
+              [
+                547.1426010131836,
+                261.79492950439453
+              ],
+              [
+                557.5991821289062,
+                258.76699447631836
+              ],
+              [
+                568.3657073974609,
+                260.5443477630615
+              ],
+              [
+                578.5941314697266,
+                265.82831382751465
+              ]
+            ],
+            "valid": true,
+            "wrist_pixel": [
+              568.5683441162109,
+              300.9948921203613
+            ]
+          }
+        ],
+        "handedness_label_exchanged_for_unmirrored_d455": true,
+        "input_mirrored": false,
+        "is_right": false,
+        "mediapipe_selfie_label": "right",
+        "palm_mcp_pixels": [
+          [
+            547.1426010131836,
+            261.79492950439453
+          ],
+          [
+            557.5991821289062,
+            258.76699447631836
+          ],
+          [
+            568.3657073974609,
+            260.5443477630615
+          ],
+          [
+            578.5941314697266,
+            265.82831382751465
+          ]
+        ],
+        "rejected_detections": [],
+        "valid": true,
+        "wrist_pixel": [
+          568.5683441162109,
+          300.9948921203613
+        ]
+      },
+      "direction": "right",
+      "dx_px": 247.0430908203125,
+      "dy_px": 0.0,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        503.2314147949219,
+        197.62815856933594,
+        600.0,
+        314.1426696777344
+      ],
+      "name": "right_margin_40px",
+      "requested_margin_px": 40.0
+    },
+    {
+      "detector": {
+        "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+        "bbox": [
+          522.6779197692871,
+          194.77678985595702,
+          619.0698600769043,
+          318.0913284301758
+        ],
+        "bbox_area_fraction": 0.03869312383238105,
+        "confidence": 0.9796906113624573,
+        "detected_hand_count": 1,
+        "detections": [
+          {
+            "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+            "bbox": [
+              522.6779197692871,
+              194.77678985595702,
+              619.0698600769043,
+              318.0913284301758
+            ],
+            "bbox_area_fraction": 0.03869312383238105,
+            "confidence": 0.9796906113624573,
+            "handedness_label_exchanged_for_unmirrored_d455": true,
+            "input_mirrored": false,
+            "is_right": false,
+            "mediapipe_selfie_label": "right",
+            "palm_mcp_pixels": [
+              [
+                567.0456314086914,
+                261.8199062347412
+              ],
+              [
+                577.7280807495117,
+                258.5816287994385
+              ],
+              [
+                588.4159851074219,
+                260.13550758361816
+              ],
+              [
+                598.4116744995117,
+                265.4266834259033
+              ]
+            ],
+            "valid": true,
+            "wrist_pixel": [
+              588.6053466796875,
+              301.7702865600586
+            ]
+          }
+        ],
+        "handedness_label_exchanged_for_unmirrored_d455": true,
+        "input_mirrored": false,
+        "is_right": false,
+        "mediapipe_selfie_label": "right",
+        "palm_mcp_pixels": [
+          [
+            567.0456314086914,
+            261.8199062347412
+          ],
+          [
+            577.7280807495117,
+            258.5816287994385
+          ],
+          [
+            588.4159851074219,
+            260.13550758361816
+          ],
+          [
+            598.4116744995117,
+            265.4266834259033
+          ]
+        ],
+        "rejected_detections": [],
+        "valid": true,
+        "wrist_pixel": [
+          588.6053466796875,
+          301.7702865600586
+        ]
+      },
+      "direction": "right",
+      "dx_px": 267.0430908203125,
+      "dy_px": 0.0,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        523.2314147949219,
+        197.62815856933594,
+        620.0,
+        314.1426696777344
+      ],
+      "name": "right_margin_20px",
+      "requested_margin_px": 20.0
+    },
+    {
+      "detector": {
+        "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+        "bbox": [
+          532.6277488708496,
+          194.69010314941406,
+          629.56390914917,
+          317.3215393066406
+        ],
+        "bbox_area_fraction": 0.03869603043781746,
+        "confidence": 0.9704177975654602,
+        "detected_hand_count": 1,
+        "detections": [
+          {
+            "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+            "bbox": [
+              532.6277488708496,
+              194.69010314941406,
+              629.56390914917,
+              317.3215393066406
+            ],
+            "bbox_area_fraction": 0.03869603043781746,
+            "confidence": 0.9704177975654602,
+            "handedness_label_exchanged_for_unmirrored_d455": true,
+            "input_mirrored": false,
+            "is_right": false,
+            "mediapipe_selfie_label": "right",
+            "palm_mcp_pixels": [
+              [
+                576.8871688842773,
+                261.4551258087158
+              ],
+              [
+                587.4968719482422,
+                258.4024429321289
+              ],
+              [
+                598.2273864746094,
+                260.1451778411865
+              ],
+              [
+                608.3244323730469,
+                265.4033946990967
+              ]
+            ],
+            "valid": true,
+            "wrist_pixel": [
+              597.7225875854492,
+              301.0909080505371
+            ]
+          }
+        ],
+        "handedness_label_exchanged_for_unmirrored_d455": true,
+        "input_mirrored": false,
+        "is_right": false,
+        "mediapipe_selfie_label": "right",
+        "palm_mcp_pixels": [
+          [
+            576.8871688842773,
+            261.4551258087158
+          ],
+          [
+            587.4968719482422,
+            258.4024429321289
+          ],
+          [
+            598.2273864746094,
+            260.1451778411865
+          ],
+          [
+            608.3244323730469,
+            265.4033946990967
+          ]
+        ],
+        "rejected_detections": [],
+        "valid": true,
+        "wrist_pixel": [
+          597.7225875854492,
+          301.0909080505371
+        ]
+      },
+      "direction": "right",
+      "dx_px": 277.0430908203125,
+      "dy_px": 0.0,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        533.2314147949219,
+        197.62815856933594,
+        630.0,
+        314.1426696777344
+      ],
+      "name": "right_margin_10px",
+      "requested_margin_px": 10.0
+    },
+    {
+      "detector": {
+        "reason": "hand_bbox_touches_image_edge",
+        "rejected_detections": [
+          {
+            "bbox": [
+              537.6884567260743,
+              194.39447422027587,
+              633.586033630371,
+              317.8823564529419
+            ],
+            "bbox_area_fraction": 0.038548791286314575,
+            "palm_mcp_pixels": [
+              [
+                581.9925689697266,
+                261.6470432281494
+              ],
+              [
+                592.591552734375,
+                258.5003471374512
+              ],
+              [
+                603.1976699829102,
+                260.3301429748535
+              ],
+              [
+                613.2673645019531,
+                265.6827735900879
+              ]
+            ],
+            "reason": "hand_bbox_touches_image_edge",
+            "valid": false,
+            "wrist_pixel": [
+              602.9717636108398,
+              301.5383720397949
+            ]
+          }
+        ],
+        "valid": false
+      },
+      "direction": "right",
+      "dx_px": 282.0430908203125,
+      "dy_px": 0.0,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        538.2314147949219,
+        197.62815856933594,
+        635.0,
+        314.1426696777344
+      ],
+      "name": "right_margin_5px",
+      "requested_margin_px": 5.0
+    },
+    {
+      "detector": {
+        "reason": "hand_bbox_touches_image_edge",
+        "rejected_detections": [
+          {
+            "bbox": [
+              542.8676704406738,
+              194.76948280334472,
+              639.6129127502442,
+              317.30115394592286
+            ],
+            "bbox_area_fraction": 0.03858839913829854,
+            "palm_mcp_pixels": [
+              [
+                586.7630386352539,
+                261.42308235168457
+              ],
+              [
+                597.4214172363281,
+                258.1094455718994
+              ],
+              [
+                608.1336212158203,
+                259.8262310028076
+              ],
+              [
+                618.2060623168945,
+                265.07065773010254
+              ]
+            ],
+            "reason": "hand_bbox_touches_image_edge",
+            "valid": false,
+            "wrist_pixel": [
+              607.6792144775391,
+              301.08372688293457
+            ]
+          }
+        ],
+        "valid": false
+      },
+      "direction": "right",
+      "dx_px": 287.0430908203125,
+      "dy_px": 0.0,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        543.2314147949219,
+        197.62815856933594,
+        640.0,
+        314.1426696777344
+      ],
+      "name": "right_margin_0px",
+      "requested_margin_px": 0.0
+    },
+    {
+      "detector": {
+        "reason": "hand_bbox_touches_image_edge",
+        "rejected_detections": [
+          {
+            "bbox": [
+              562.1814079284668,
+              193.2223794937134,
+              640.0,
+              321.99523944854735
+            ],
+            "bbox_area_fraction": 0.032620190946321286,
+            "palm_mcp_pixels": [
+              [
+                607.2845840454102,
+                261.2985420227051
+              ],
+              [
+                617.5655364990234,
+                257.9260540008545
+              ],
+              [
+                628.2464218139648,
+                259.98390197753906
+              ],
+              [
+                638.6275863647461,
+                266.02352142333984
+              ]
+            ],
+            "reason": "hand_bbox_touches_image_edge",
+            "valid": false,
+            "wrist_pixel": [
+              630.3903961181641,
+              304.95177268981934
+            ]
+          }
+        ],
+        "valid": false
+      },
+      "direction": "right",
+      "dx_px": 307.0430908203125,
+      "dy_px": 0.0,
+      "expected_bbox_visible_fraction": 0.7933213557104847,
+      "expected_shifted_bbox_xyxy": [
+        563.2314147949219,
+        197.62815856933594,
+        660.0,
+        314.1426696777344
+      ],
+      "name": "right_margin_-20px",
+      "requested_margin_px": -20.0
+    },
+    {
+      "detector": {
+        "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+        "bbox": [
+          256.00810356140136,
+          37.09890418052673,
+          352.25470237731935,
+          161.8066997051239
+        ],
+        "bbox_area_fraction": 0.03907129285505676,
+        "confidence": 0.9859511256217957,
+        "detected_hand_count": 1,
+        "detections": [
+          {
+            "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+            "bbox": [
+              256.00810356140136,
+              37.09890418052673,
+              352.25470237731935,
+              161.8066997051239
+            ],
+            "bbox_area_fraction": 0.03907129285505676,
+            "confidence": 0.9859511256217957,
+            "handedness_label_exchanged_for_unmirrored_d455": true,
+            "input_mirrored": false,
+            "is_right": false,
+            "mediapipe_selfie_label": "right",
+            "palm_mcp_pixels": [
+              [
+                300.34656524658203,
+                103.78561019897461
+              ],
+              [
+                310.812931060791,
+                100.78917503356934
+              ],
+              [
+                321.5437316894531,
+                102.63622999191284
+              ],
+              [
+                331.8409729003906,
+                108.1731390953064
+              ]
+            ],
+            "valid": true,
+            "wrist_pixel": [
+              322.96131134033203,
+              145.30125617980957
+            ]
+          }
+        ],
+        "handedness_label_exchanged_for_unmirrored_d455": true,
+        "input_mirrored": false,
+        "is_right": false,
+        "mediapipe_selfie_label": "right",
+        "palm_mcp_pixels": [
+          [
+            300.34656524658203,
+            103.78561019897461
+          ],
+          [
+            310.812931060791,
+            100.78917503356934
+          ],
+          [
+            321.5437316894531,
+            102.63622999191284
+          ],
+          [
+            331.8409729003906,
+            108.1731390953064
+          ]
+        ],
+        "rejected_detections": [],
+        "valid": true,
+        "wrist_pixel": [
+          322.96131134033203,
+          145.30125617980957
+        ]
+      },
+      "direction": "top",
+      "dx_px": 0.0,
+      "dy_px": -157.62815856933594,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        256.1883239746094,
+        40.0,
+        352.9569091796875,
+        156.51451110839844
+      ],
+      "name": "top_margin_40px",
+      "requested_margin_px": 40.0
+    },
+    {
+      "detector": {
+        "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+        "bbox": [
+          255.83792457580566,
+          16.718877482414246,
+          352.09090461730955,
+          140.05157239437102
+        ],
+        "bbox_area_fraction": 0.0386430319720881,
+        "confidence": 0.9845587015151978,
+        "detected_hand_count": 1,
+        "detections": [
+          {
+            "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+            "bbox": [
+              255.83792457580566,
+              16.718877482414246,
+              352.09090461730955,
+              140.05157239437102
+            ],
+            "bbox_area_fraction": 0.0386430319720881,
+            "confidence": 0.9845587015151978,
+            "handedness_label_exchanged_for_unmirrored_d455": true,
+            "input_mirrored": false,
+            "is_right": false,
+            "mediapipe_selfie_label": "right",
+            "palm_mcp_pixels": [
+              [
+                300.0634002685547,
+                83.40738773345947
+              ],
+              [
+                310.60546875,
+                80.53153038024902
+              ],
+              [
+                321.40201568603516,
+                82.56872177124023
+              ],
+              [
+                331.6594696044922,
+                88.12186002731323
+              ]
+            ],
+            "valid": true,
+            "wrist_pixel": [
+              321.2104034423828,
+              123.72812747955322
+            ]
+          }
+        ],
+        "handedness_label_exchanged_for_unmirrored_d455": true,
+        "input_mirrored": false,
+        "is_right": false,
+        "mediapipe_selfie_label": "right",
+        "palm_mcp_pixels": [
+          [
+            300.0634002685547,
+            83.40738773345947
+          ],
+          [
+            310.60546875,
+            80.53153038024902
+          ],
+          [
+            321.40201568603516,
+            82.56872177124023
+          ],
+          [
+            331.6594696044922,
+            88.12186002731323
+          ]
+        ],
+        "rejected_detections": [],
+        "valid": true,
+        "wrist_pixel": [
+          321.2104034423828,
+          123.72812747955322
+        ]
+      },
+      "direction": "top",
+      "dx_px": 0.0,
+      "dy_px": -177.62815856933594,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        256.1883239746094,
+        20.0,
+        352.9569091796875,
+        136.51451110839844
+      ],
+      "name": "top_margin_20px",
+      "requested_margin_px": 20.0
+    },
+    {
+      "detector": {
+        "reason": "hand_bbox_touches_image_edge",
+        "rejected_detections": [
+          {
+            "bbox": [
+              256.6148651123047,
+              6.644787168502809,
+              352.3174774169922,
+              129.97917952537537
+            ],
+            "bbox_area_fraction": 0.03842260265483068,
+            "palm_mcp_pixels": [
+              [
+                299.61965560913086,
+                73.79013061523438
+              ],
+              [
+                310.1936340332031,
+                70.63485860824585
+              ],
+              [
+                321.0676956176758,
+                72.53448486328125
+              ],
+              [
+                331.43524169921875,
+                78.06799650192261
+              ]
+            ],
+            "reason": "hand_bbox_touches_image_edge",
+            "valid": false,
+            "wrist_pixel": [
+              321.4436340332031,
+              113.65550994873047
+            ]
+          }
+        ],
+        "valid": false
+      },
+      "direction": "top",
+      "dx_px": 0.0,
+      "dy_px": -187.62815856933594,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        256.1883239746094,
+        10.0,
+        352.9569091796875,
+        126.51451110839844
+      ],
+      "name": "top_margin_10px",
+      "requested_margin_px": 10.0
+    },
+    {
+      "detector": {
+        "reason": "hand_bbox_touches_image_edge",
+        "rejected_detections": [
+          {
+            "bbox": [
+              256.3871337890625,
+              2.4995486497879043,
+              352.083935546875,
+              125.93493654727936
+            ],
+            "bbox_area_fraction": 0.038451731267984804,
+            "palm_mcp_pixels": [
+              [
+                300.1810836791992,
+                68.5917592048645
+              ],
+              [
+                310.62198638916016,
+                65.76687097549438
+              ],
+              [
+                321.3603210449219,
+                67.64053344726562
+              ],
+              [
+                331.76624298095703,
+                73.1526517868042
+              ]
+            ],
+            "reason": "hand_bbox_touches_image_edge",
+            "valid": false,
+            "wrist_pixel": [
+              321.8162155151367,
+              109.59789991378784
+            ]
+          }
+        ],
+        "valid": false
+      },
+      "direction": "top",
+      "dx_px": 0.0,
+      "dy_px": -192.62815856933594,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        256.1883239746094,
+        5.0,
+        352.9569091796875,
+        121.51451110839844
+      ],
+      "name": "top_margin_5px",
+      "requested_margin_px": 5.0
+    },
+    {
+      "detector": {
+        "reason": "hand_bbox_touches_image_edge",
+        "rejected_detections": [
+          {
+            "bbox": [
+              256.33668212890626,
+              0.0,
+              352.0927307128906,
+              120.8840062379837
+            ],
+            "bbox_area_fraction": 0.037680256426923936,
+            "palm_mcp_pixels": [
+              [
+                299.970645904541,
+                63.46769571304321
+              ],
+              [
+                310.5078125,
+                60.77610969543457
+              ],
+              [
+                321.2736511230469,
+                62.75047302246094
+              ],
+              [
+                331.70677185058594,
+                68.26903581619263
+              ]
+            ],
+            "reason": "hand_bbox_touches_image_edge",
+            "valid": false,
+            "wrist_pixel": [
+              321.6970443725586,
+              104.53070640563965
+            ]
+          }
+        ],
+        "valid": false
+      },
+      "direction": "top",
+      "dx_px": 0.0,
+      "dy_px": -197.62815856933594,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        256.1883239746094,
+        0.0,
+        352.9569091796875,
+        116.51451110839844
+      ],
+      "name": "top_margin_0px",
+      "requested_margin_px": 0.0
+    },
+    {
+      "detector": {
+        "reason": "hand_bbox_touches_image_edge",
+        "rejected_detections": [
+          {
+            "bbox": [
+              256.56449432373046,
+              0.0,
+              352.17932586669923,
+              99.05006375312806
+            ],
+            "bbox_area_fraction": 0.030828955599204608,
+            "palm_mcp_pixels": [
+              [
+                299.5140266418457,
+                43.777220249176025
+              ],
+              [
+                310.2417182922363,
+                40.74132442474365
+              ],
+              [
+                321.2659454345703,
+                42.17589855194092
+              ],
+              [
+                331.7643356323242,
+                47.121169567108154
+              ]
+            ],
+            "reason": "hand_bbox_touches_image_edge",
+            "valid": false,
+            "wrist_pixel": [
+              321.9130325317383,
+              83.88904809951782
+            ]
+          }
+        ],
+        "valid": false
+      },
+      "direction": "top",
+      "dx_px": 0.0,
+      "dy_px": -217.62815856933594,
+      "expected_bbox_visible_fraction": 0.828347561091398,
+      "expected_shifted_bbox_xyxy": [
+        256.1883239746094,
+        -20.0,
+        352.9569091796875,
+        96.51451110839844
+      ],
+      "name": "top_margin_-20px",
+      "requested_margin_px": -20.0
+    },
+    {
+      "detector": {
+        "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+        "bbox": [
+          255.94895515441894,
+          320.94391651153563,
+          351.2385257720947,
+          442.78902225494386
+        ],
+        "bbox_area_fraction": 0.037794817083836814,
+        "confidence": 0.9814411997795105,
+        "detected_hand_count": 1,
+        "detections": [
+          {
+            "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+            "bbox": [
+              255.94895515441894,
+              320.94391651153563,
+              351.2385257720947,
+              442.78902225494386
+            ],
+            "bbox_area_fraction": 0.037794817083836814,
+            "confidence": 0.9814411997795105,
+            "handedness_label_exchanged_for_unmirrored_d455": true,
+            "input_mirrored": false,
+            "is_right": false,
+            "mediapipe_selfie_label": "right",
+            "palm_mcp_pixels": [
+              [
+                299.74924087524414,
+                387.7397918701172
+              ],
+              [
+                310.5415153503418,
+                384.49049949645996
+              ],
+              [
+                321.3599395751953,
+                386.29194259643555
+              ],
+              [
+                331.35257720947266,
+                391.6588497161865
+              ]
+            ],
+            "valid": true,
+            "wrist_pixel": [
+              320.7637023925781,
+              426.6624641418457
+            ]
+          }
+        ],
+        "handedness_label_exchanged_for_unmirrored_d455": true,
+        "input_mirrored": false,
+        "is_right": false,
+        "mediapipe_selfie_label": "right",
+        "palm_mcp_pixels": [
+          [
+            299.74924087524414,
+            387.7397918701172
+          ],
+          [
+            310.5415153503418,
+            384.49049949645996
+          ],
+          [
+            321.3599395751953,
+            386.29194259643555
+          ],
+          [
+            331.35257720947266,
+            391.6588497161865
+          ]
+        ],
+        "rejected_detections": [],
+        "valid": true,
+        "wrist_pixel": [
+          320.7637023925781,
+          426.6624641418457
+        ]
+      },
+      "direction": "bottom",
+      "dx_px": 0.0,
+      "dy_px": 125.85733032226562,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        256.1883239746094,
+        323.48548889160156,
+        352.9569091796875,
+        440.0
+      ],
+      "name": "bottom_margin_40px",
+      "requested_margin_px": 40.0
+    },
+    {
+      "detector": {
+        "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+        "bbox": [
+          256.1093128204346,
+          341.44573402404785,
+          351.1692630767822,
+          461.977746963501
+        ],
+        "bbox_area_fraction": 0.03729741912214148,
+        "confidence": 0.9829991459846497,
+        "detected_hand_count": 1,
+        "detections": [
+          {
+            "allowed_usage": "presence_2d_bbox_coarse_handedness_and_rgbd_forearm_roi_seed_only",
+            "bbox": [
+              256.1093128204346,
+              341.44573402404785,
+              351.1692630767822,
+              461.977746963501
+            ],
+            "bbox_area_fraction": 0.03729741912214148,
+            "confidence": 0.9829991459846497,
+            "handedness_label_exchanged_for_unmirrored_d455": true,
+            "input_mirrored": false,
+            "is_right": false,
+            "mediapipe_selfie_label": "right",
+            "palm_mcp_pixels": [
+              [
+                299.55820083618164,
+                407.66366958618164
+              ],
+              [
+                310.3402328491211,
+                404.45677757263184
+              ],
+              [
+                321.3199996948242,
+                406.16472244262695
+              ],
+              [
+                331.56707763671875,
+                411.45835876464844
+              ]
+            ],
+            "valid": true,
+            "wrist_pixel": [
+              320.79845428466797,
+              446.02498054504395
+            ]
+          }
+        ],
+        "handedness_label_exchanged_for_unmirrored_d455": true,
+        "input_mirrored": false,
+        "is_right": false,
+        "mediapipe_selfie_label": "right",
+        "palm_mcp_pixels": [
+          [
+            299.55820083618164,
+            407.66366958618164
+          ],
+          [
+            310.3402328491211,
+            404.45677757263184
+          ],
+          [
+            321.3199996948242,
+            406.16472244262695
+          ],
+          [
+            331.56707763671875,
+            411.45835876464844
+          ]
+        ],
+        "rejected_detections": [],
+        "valid": true,
+        "wrist_pixel": [
+          320.79845428466797,
+          446.02498054504395
+        ]
+      },
+      "direction": "bottom",
+      "dx_px": 0.0,
+      "dy_px": 145.85733032226562,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        256.1883239746094,
+        343.48548889160156,
+        352.9569091796875,
+        460.0
+      ],
+      "name": "bottom_margin_20px",
+      "requested_margin_px": 20.0
+    },
+    {
+      "detector": {
+        "reason": "hand_bbox_touches_image_edge",
+        "rejected_detections": [
+          {
+            "bbox": [
+              256.0763847351074,
+              350.9447765350342,
+              351.5083396911621,
+              472.4370861053467
+            ],
+            "bbox_area_fraction": 0.03774169470840208,
+            "palm_mcp_pixels": [
+              [
+                299.52484130859375,
+                417.57659912109375
+              ],
+              [
+                310.30628204345703,
+                414.4655227661133
+              ],
+              [
+                321.1222457885742,
+                416.25237464904785
+              ],
+              [
+                331.1494445800781,
+                421.65435791015625
+              ]
+            ],
+            "reason": "hand_bbox_touches_image_edge",
+            "valid": false,
+            "wrist_pixel": [
+              320.95279693603516,
+              456.35722160339355
+            ]
+          }
+        ],
+        "valid": false
+      },
+      "direction": "bottom",
+      "dx_px": 0.0,
+      "dy_px": 155.85733032226562,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        256.1883239746094,
+        353.48548889160156,
+        352.9569091796875,
+        470.0
+      ],
+      "name": "bottom_margin_10px",
+      "requested_margin_px": 10.0
+    },
+    {
+      "detector": {
+        "reason": "hand_bbox_touches_image_edge",
+        "rejected_detections": [
+          {
+            "bbox": [
+              256.2406776428223,
+              356.8463413238525,
+              351.03772659301757,
+              477.9496295928955
+            ],
+            "bbox_area_fraction": 0.037370554511946874,
+            "palm_mcp_pixels": [
+              [
+                299.8089790344238,
+                422.24613189697266
+              ],
+              [
+                310.5124092102051,
+                419.0262508392334
+              ],
+              [
+                321.2805938720703,
+                420.7016372680664
+              ],
+              [
+                331.2885284423828,
+                426.1911106109619
+              ]
+            ],
+            "reason": "hand_bbox_touches_image_edge",
+            "valid": false,
+            "wrist_pixel": [
+              321.27281188964844,
+              461.9212532043457
+            ]
+          }
+        ],
+        "valid": false
+      },
+      "direction": "bottom",
+      "dx_px": 0.0,
+      "dy_px": 160.85733032226562,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        256.1883239746094,
+        358.48548889160156,
+        352.9569091796875,
+        475.0
+      ],
+      "name": "bottom_margin_5px",
+      "requested_margin_px": 5.0
+    },
+    {
+      "detector": {
+        "reason": "hand_bbox_touches_image_edge",
+        "rejected_detections": [
+          {
+            "bbox": [
+              255.75357360839843,
+              360.69543743133545,
+              351.41302185058595,
+              480.0
+            ],
+            "bbox_area_fraction": 0.03715041871124345,
+            "palm_mcp_pixels": [
+              [
+                300.1782989501953,
+                427.5905513763428
+              ],
+              [
+                310.6775665283203,
+                424.40428733825684
+              ],
+              [
+                321.29589080810547,
+                426.11775398254395
+              ],
+              [
+                331.34593963623047,
+                431.431360244751
+              ]
+            ],
+            "reason": "hand_bbox_touches_image_edge",
+            "valid": false,
+            "wrist_pixel": [
+              321.7253875732422,
+              467.88079261779785
+            ]
+          }
+        ],
+        "valid": false
+      },
+      "direction": "bottom",
+      "dx_px": 0.0,
+      "dy_px": 165.85733032226562,
+      "expected_bbox_visible_fraction": 1.0,
+      "expected_shifted_bbox_xyxy": [
+        256.1883239746094,
+        363.48548889160156,
+        352.9569091796875,
+        480.0
+      ],
+      "name": "bottom_margin_0px",
+      "requested_margin_px": 0.0
+    },
+    {
+      "detector": {
+        "reason": "hand_bbox_touches_image_edge",
+        "rejected_detections": [
+          {
+            "bbox": [
+              256.87204399108884,
+              381.83517837524414,
+              351.58164939880373,
+              480.0
+            ],
+            "bbox_area_fraction": 0.030264165107419742,
+            "palm_mcp_pixels": [
+              [
+                300.00110626220703,
+                447.1356010437012
+              ],
+              [
+                310.7827568054199,
+                443.78923416137695
+              ],
+              [
+                321.5892791748047,
+                445.41337966918945
+              ],
+              [
+                331.9160461425781,
+                450.34801483154297
+              ]
+            ],
+            "reason": "hand_bbox_touches_image_edge",
+            "valid": false,
+            "wrist_pixel": [
+              322.67566680908203,
+              481.5131378173828
+            ]
+          }
+        ],
+        "valid": false
+      },
+      "direction": "bottom",
+      "dx_px": 0.0,
+      "dy_px": 185.85733032226562,
+      "expected_bbox_visible_fraction": 0.828347561091398,
+      "expected_shifted_bbox_xyxy": [
+        256.1883239746094,
+        383.48548889160156,
+        352.9569091796875,
+        500.0
+      ],
+      "name": "bottom_margin_-20px",
+      "requested_margin_px": -20.0
+    }
+  ]
+}

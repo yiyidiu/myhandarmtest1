@@ -74,6 +74,8 @@ public:
     private_nh_.param("prediction_horizon_s", prediction_horizon_s_, 0.20);
     private_nh_.param("maximum_prediction_step_rad",
                       maximum_prediction_step_rad_, 0.01);
+    private_nh_.param("measured_joint_limit_tolerance_rad",
+                      measured_joint_limit_tolerance_rad_, 0.0);
     if (!private_nh_.getParam("required_joint_names", required_joint_names_))
       required_joint_names_ = kDefaultRequiredJointNames;
     if (!private_nh_.getParam("arm_joint_names", arm_joint_names_))
@@ -84,7 +86,10 @@ public:
           std::isfinite(prediction_horizon_s_) && prediction_horizon_s_ >= 0.10 &&
           std::isfinite(maximum_prediction_step_rad_) &&
           maximum_prediction_step_rad_ > 0.0 &&
-          maximum_prediction_step_rad_ <= 0.02))
+          maximum_prediction_step_rad_ <= 0.02 &&
+          std::isfinite(measured_joint_limit_tolerance_rad_) &&
+          measured_joint_limit_tolerance_rad_ >= 0.0 &&
+          measured_joint_limit_tolerance_rad_ <= 0.02))
       throw std::runtime_error("invalid guard timing parameters");
 
     validateRequiredJoints();
@@ -245,6 +250,7 @@ private:
   bool applyIndependentPositions(const sensor_msgs::JointState& message,
                                  moveit::core::RobotState& state,
                                  bool require_complete,
+                                 double bounds_tolerance_rad,
                                  std::string& error) const
   {
     if (message.name.size() != message.position.size())
@@ -310,7 +316,7 @@ private:
       return false;
     }
     state.update();
-    if (!state.satisfiesBounds(0.0))
+    if (!state.satisfiesBounds(bounds_tolerance_rad))
     {
       std::ostringstream details;
       details << "joint limit violation";
@@ -318,7 +324,7 @@ private:
       {
         if (joint->satisfiesPositionBounds(
                 state.getVariablePositions() + joint->getFirstVariableIndex(),
-                0.0))
+                bounds_tolerance_rad))
           continue;
         const std::vector<std::string>& names = joint->getVariableNames();
         const std::vector<moveit::core::VariableBounds>& bounds =
@@ -327,8 +333,8 @@ private:
         {
           const double value = state.getVariablePosition(names[index]);
           if ((bounds[index].position_bounded_ &&
-               (value < bounds[index].min_position_ ||
-                value > bounds[index].max_position_)))
+               (value < bounds[index].min_position_ - bounds_tolerance_rad ||
+                value > bounds[index].max_position_ + bounds_tolerance_rad)))
           {
             details << ":" << names[index] << "=" << value
                     << " not_in[" << bounds[index].min_position_
@@ -512,19 +518,72 @@ private:
 
   void stateCallback(const sensor_msgs::JointStateConstPtr& message)
   {
+    // /joint_states may be split across several publishers.  The physical
+    // grasp hand, for example, publishes its eight joints independently from
+    // gazebo_ros_control's six arm joints.  Validate each fragment first, then
+    // merge only independent variables into a short-lived snapshot.  A
+    // complete state is accepted only while every required fragment is fresh;
+    // statusTimer still latches a fault if either publisher disappears.
+    if (message->name.size() != message->position.size())
+    {
+      latchFault("INVALID_JOINT_STATE:joint name/position length mismatch");
+      return;
+    }
+    std::map<std::string, double> updates;
+    for (std::size_t index = 0; index < message->name.size(); ++index)
+    {
+      const std::string& name = message->name[index];
+      const double value = message->position[index];
+      if (!updates.emplace(name, value).second)
+      {
+        latchFault("INVALID_JOINT_STATE:duplicate joint variable: " + name);
+        return;
+      }
+      if (!std::isfinite(value))
+      {
+        latchFault("INVALID_JOINT_STATE:non-finite joint position: " + name);
+        return;
+      }
+      if (std::find(model_->getVariableNames().begin(),
+                    model_->getVariableNames().end(), name) ==
+          model_->getVariableNames().end())
+      {
+        latchFault("INVALID_JOINT_STATE:unknown joint variable: " + name);
+        return;
+      }
+    }
+
+    const ros::WallTime received_at = ros::WallTime::now();
+    sensor_msgs::JointState merged;
     moveit::core::RobotState candidate(model_);
     {
       std::lock_guard<std::mutex> lock(mutex_);
       candidate = *latest_state_;
+      for (const auto& item : updates)
+      {
+        const moveit::core::JointModel* joint =
+            model_->getJointOfVariable(item.first);
+        if (!joint || joint->getMimic())
+          continue;
+        latest_independent_positions_[item.first] = item.second;
+        latest_joint_wall_times_[item.first] = received_at;
+      }
+      for (const std::string& name : required_joint_names_)
+      {
+        const auto position = latest_independent_positions_.find(name);
+        const auto stamp = latest_joint_wall_times_.find(name);
+        if (position == latest_independent_positions_.end() ||
+            stamp == latest_joint_wall_times_.end() ||
+            (received_at - stamp->second).toSec() > state_timeout_s_)
+          return;
+        merged.name.push_back(name);
+        merged.position.push_back(position->second);
+      }
     }
     std::string error;
-    if (!applyIndependentPositions(*message, candidate, true, error))
+    if (!applyIndependentPositions(
+            merged, candidate, true, measured_joint_limit_tolerance_rad_, error))
     {
-      // JointState topics may legally be split across publishers. Ignore an
-      // incomplete sample; the wall-clock watchdog fails closed if complete
-      // states cease to arrive. Any malformed complete state is latched.
-      if (error.find("incomplete joint state") == 0)
-        return;
       latchFault("INVALID_JOINT_STATE:" + error);
       return;
     }
@@ -538,7 +597,7 @@ private:
     {
       std::lock_guard<std::mutex> lock(mutex_);
       *latest_state_ = candidate;
-      latest_state_wall_time_ = ros::WallTime::now();
+      latest_state_wall_time_ = received_at;
       have_complete_state_ = true;
     }
   }
@@ -564,7 +623,7 @@ private:
     if (!overrides.name.empty() || !overrides.position.empty())
     {
       std::string error;
-      if (!applyIndependentPositions(overrides, candidate, false, error))
+      if (!applyIndependentPositions(overrides, candidate, false, 0.0, error))
       {
         ROS_WARN_STREAM_THROTTLE(1.0, "Rejected strict collision query: " << error);
         response.valid = false;
@@ -655,6 +714,8 @@ private:
   std::unique_ptr<collision_detection::AllowedCollisionMatrix> strict_acm_;
   moveit::core::RobotStatePtr latest_state_;
   std::mutex mutex_;
+  std::map<std::string, double> latest_independent_positions_;
+  std::map<std::string, ros::WallTime> latest_joint_wall_times_;
   ros::WallTime latest_state_wall_time_;
   bool have_complete_state_{ false };
   bool fault_latched_{ false };
@@ -671,6 +732,7 @@ private:
   double command_timeout_s_{ 0.10 };
   double prediction_horizon_s_{ 0.20 };
   double maximum_prediction_step_rad_{ 0.01 };
+  double measured_joint_limit_tolerance_rad_{ 0.0 };
   ros::WallTime last_raw_command_wall_time_;
   bool have_raw_command_{ false };
   bool hand_motion_active_{ false };
