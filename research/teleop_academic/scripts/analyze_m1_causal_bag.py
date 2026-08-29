@@ -105,7 +105,9 @@ def component_median(samples):
     return [median(sample[index] for sample in samples) for index in range(len(samples[0]))]
 
 
-def pose_transition_summary(positions, quaternions, baseline_indices, outbound_indices):
+def pose_transition_summary(
+        positions, quaternions, baseline_indices, outbound_indices,
+        outbound_excursion_indices=None):
     baseline_positions = [positions[index] for index in baseline_indices if index in positions]
     outbound_positions = [positions[index] for index in outbound_indices if index in positions]
     baseline_quaternions = [
@@ -130,6 +132,31 @@ def pose_transition_summary(positions, quaternions, baseline_indices, outbound_i
         if baseline_quaternion is not None and outbound_quaternion is not None
         else None
     )
+    excursion_indices = outbound_excursion_indices or outbound_indices
+    outbound_translation_excursions = [
+        (
+            index,
+            displacement(baseline_position, positions[index]),
+        )
+        for index in excursion_indices
+        if baseline_position is not None and index in positions
+    ]
+    outbound_rotation_excursions = [
+        (
+            index,
+            quaternion_angle_deg(baseline_quaternion, quaternions[index]),
+        )
+        for index in excursion_indices
+        if baseline_quaternion is not None and index in quaternions
+    ]
+    maximum_translation = (
+        max(outbound_translation_excursions, key=lambda item: item[1])
+        if outbound_translation_excursions else None
+    )
+    maximum_rotation = (
+        max(outbound_rotation_excursions, key=lambda item: item[1])
+        if outbound_rotation_excursions else None
+    )
     return {
         "baseline_position_samples": len(baseline_positions),
         "outbound_position_samples": len(outbound_positions),
@@ -148,6 +175,18 @@ def pose_transition_summary(positions, quaternions, baseline_indices, outbound_i
         "rotation_magnitude_deg": (
             math.sqrt(sum(value * value for value in rotation_vector))
             if rotation_vector is not None else None
+        ),
+        "outbound_max_translation_excursion_m": (
+            maximum_translation[1] if maximum_translation is not None else None
+        ),
+        "outbound_max_translation_source_index": (
+            maximum_translation[0] if maximum_translation is not None else None
+        ),
+        "outbound_max_rotation_excursion_deg": (
+            maximum_rotation[1] if maximum_rotation is not None else None
+        ),
+        "outbound_max_rotation_source_index": (
+            maximum_rotation[0] if maximum_rotation is not None else None
         ),
     }
 
@@ -184,6 +223,9 @@ def load_labelled_input(path, window_size):
         },
         "baseline_indices": [row["source_index"] for row in baseline_rows],
         "outbound_indices": [row["source_index"] for row in outbound_rows],
+        "outbound_excursion_indices": [
+            rows[offset]["source_index"] for offset in outbound_offsets
+        ],
         "intent_label": rows[0].get("intent_label"),
         "primary_axis": rows[0].get("primary_axis"),
         "cue_stage_index": outbound_rows[0].get("cue_stage_index"),
@@ -249,6 +291,7 @@ def main():
     contact_pairs = Counter()
     hand_action_messages = 0
     hand_trajectory_commands = 0
+    servo_status_counts = Counter()
     start_time = None
     end_time = None
 
@@ -358,6 +401,8 @@ def main():
                 "/controller_gazebo_hand/follow_joint_trajectory/goal",
             ):
                 hand_trajectory_commands += 1
+            elif topic == "/servo_server/status":
+                servo_status_counts[str(int(message.data))] += 1
 
     input_duration = (
         input_source_times[-1] - input_source_times[0]
@@ -386,6 +431,7 @@ def main():
     if labelled_input is not None:
         baseline_indices = labelled_input["baseline_indices"]
         outbound_indices = labelled_input["outbound_indices"]
+        outbound_excursion_indices = labelled_input["outbound_excursion_indices"]
         labelled_transition = {
             "intent_label": labelled_input["intent_label"],
             "primary_axis": labelled_input["primary_axis"],
@@ -395,37 +441,46 @@ def main():
                 "mean over the final labelled samples in the pre-cue baseline "
                 "and OUTBOUND phase"
             ),
+            "outbound_excursion_definition": (
+                "maximum discrete pose-sample deviation from the pre-cue "
+                "baseline pose over every labelled OUTBOUND source index"
+            ),
             "endpoint_window_size": args.endpoint_window_size,
             "baseline_source_indices": baseline_indices,
             "outbound_source_indices": outbound_indices,
+            "outbound_excursion_source_indices": outbound_excursion_indices,
             "input_observed": pose_transition_summary(
                 input_positions_by_index,
                 input_quaternions_by_index,
                 baseline_indices,
                 outbound_indices,
+                outbound_excursion_indices,
             ),
             "mapping_relative": pose_transition_summary(
                 relative_positions_by_index,
                 relative_quaternions_by_index,
                 baseline_indices,
                 outbound_indices,
+                outbound_excursion_indices,
             ),
             "mapping_target": pose_transition_summary(
                 target_positions_by_index,
                 target_quaternions_by_index,
                 baseline_indices,
                 outbound_indices,
+                outbound_excursion_indices,
             ),
             "robot_actual": pose_transition_summary(
                 actual_tool_positions_by_index,
                 actual_tool_quaternions_by_index,
                 baseline_indices,
                 outbound_indices,
+                outbound_excursion_indices,
             ),
         }
 
     result = {
-        "schema_version": 2,
+        "schema_version": 4,
         "bag_duration_s": (
             end_time - start_time if start_time is not None and end_time is not None else None
         ),
@@ -457,6 +512,13 @@ def main():
             "samples": len(command_samples),
             "nonzero_samples": nonzero_commands,
             "component_span": axis_span(command_samples),
+        },
+        "servo_status_observation": {
+            "histogram": dict(sorted(servo_status_counts.items())),
+            "nonzero_samples": sum(
+                count for status, count in servo_status_counts.items()
+                if status != "0"
+            ),
         },
         "robot_actual": {
             "tool_position_span_m": axis_span(actual_tool_positions),

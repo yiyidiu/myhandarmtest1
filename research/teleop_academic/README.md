@@ -1,12 +1,17 @@
 # Teleoperation academic track
 
-本目录保存“单手腕 6D 位姿到机械臂末端”的学术主线。当前完成的是里程碑 1：确认位置—姿态串扰的第一处实际传播链并选择研究问题；尚未证明解决方法，也尚未完成抓取、抬升、移动和放置。
+本目录保存“单手腕 6D 位姿到机械臂末端”的学术主线。当前完成了里程碑 1 的故障传播定位，以及里程碑 2 的文献对照、已发表基线负结果和冻结反证协议；尚未证明解决方法，也尚未完成抓取、抬升、移动和放置。
 
 - `M1_BASELINE_AND_DECISION_ZH.md`：实际结果、证据边界与路线选择。
+- `M2_FROZEN_PROTOCOL_ZH.md`：位置—姿态子空间问题的冻结假设、指标、数据划分和停止规则。
+- `M2_BASELINES_AND_FROZEN_DECISION_ZH.md`：直接 6D 与 AMP-IT 功能重建的 Gazebo 实际对照及 M2 决策。
 - `LITERATURE_EVIDENCE_MATRIX.md`：一次统一文献证据矩阵。
 - `references.bib`：矩阵对应的唯一 BibTeX 库。
 - `evidence/m1/`：pose-only 输入、Gazebo 数值摘要、边缘门控元数据和运行清单。
-- `scripts/`：从已有记录生成 pose-only 输入、分析 ROS bag、探测边缘门控。
+- `evidence/m2/`：开发可分性、直接映射轨迹重算、AMP-IT pose-only 功能重建和 Gazebo 负结果。
+- `scripts/`：从已有记录生成 pose-only 输入、分析 ROS bag、探测边缘门控和构造发表基线回放。
+
+三指手映射不属于当前方法变量。这里的任务标签只表示操作者被要求主要平移或主要转腕，不是神经意图真值。
 
 ## 复现 M1 Gazebo 因果回放
 
@@ -80,3 +85,18 @@ python3 research/teleop_academic/scripts/analyze_m1_causal_bag.py \
 提交的 `ry_stage0_labelled_wrist_input.csv` 不含 RGB、depth、MANO 网格或身份字段，且清单明确写有 `control_authorized=false`。任务标签表示操作者被要求主要完成某类运动，不表示系统读取了脑内意图。
 
 边缘探针需要本机已有的两帧 RGB 和离线 observer 记录，因此 Git 中只发布检测元数据、源文件哈希和探针脚本，不发布真人图像。它只能复现图像平移条件下的 presence 门控，不能替代新的真人边缘实验。没有冻结实验卡和操作者明确同意前，不采集新的真人数据。
+
+## 复现 M2 的 AMP-IT 功能重建
+
+先从同一 M1 pose-only 输入生成逐轴速度缩放结果：
+
+```bash
+python3 research/teleop_academic/scripts/build_amp_it_replay.py \
+  --input research/teleop_academic/evidence/m1/ry_stage0_labelled_wrist_input.csv \
+  --output research/teleop_academic/evidence/m2/ry_stage0_amp_it_functional_replay.csv \
+  --report research/teleop_academic/evidence/m2/ry_stage0_amp_it_functional_replay_report.json
+```
+
+然后复用上面的 Gazebo 启动、rosbag 话题和参考确认步骤，只把回放 CSV 替换为 `evidence/m2/ry_stage0_amp_it_functional_replay.csv`。分析时也必须把 `--labelled-input-csv` 指向该转换 CSV。完整命令、bag 哈希和证据边界见 `evidence/m2/m2_baseline_run_manifest.json`。
+
+该实现只是在论文未公开代码且印刷公式端点不一致时所作的、预先标明差异的功能重建。它在本段约 6 Hz 慢速腕部数据上把主运动也清零；这不等于精确复现原 VR 实验，也不能外推为 AMP-IT 在原设备上的一般表现。

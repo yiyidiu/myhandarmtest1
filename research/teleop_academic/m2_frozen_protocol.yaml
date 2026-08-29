@@ -1,0 +1,86 @@
+schema_version: 1
+frozen_at_local: "2026-08-30"
+status: FROZEN_BEFORE_AUTOMATIC_CANDIDATE_IMPLEMENTATION
+post_freeze_factual_amendment:
+  recorded_before_automatic_candidate_implementation: true
+  change_to_hypothesis_or_candidate_constants: false
+  reason: OUTBOUND_MAXIMUM_MUST_USE_ALL_OUTBOUND_SAMPLES_NOT_ONLY_ENDPOINT_WINDOW
+  b0_existing_bag_pairwise_primary_metric_difference_mm: 0.032945
+  b0_existing_bag_pairwise_maximum_rotation_difference_deg: 0.010984
+scope: HUMAN_WRIST_6D_TO_ROBOT_EE_6D_POSITION_ORIENTATION_SUBSPACE_ONLY
+excluded_method_variables:
+  - THREE_FINGER_MAPPING
+condition:
+  sensor: FIXED_D435I_APPROXIMATELY_ONE_METRE
+  input: ONE_BARE_HAND_CAUSAL_WRIST_POSE
+  operator_explicit_position_orientation_switch_for_candidate: false
+  robot: ABB_IRB120_WITH_THREE_FINGER_HAND_IN_GAZEBO
+hypothesis:
+  primary_comparator: DIRECT_6D_MAPPING
+  primary_outcome: TOOL0_MAXIMUM_TRANSLATION_EXCURSION_DURING_ROTATION_OUTBOUND_MM
+  minimum_relative_reduction: 0.50
+  minimum_primary_rotation_retention: 0.90
+  maximum_state_lock_p95_s: 0.75
+candidate:
+  name: CAUSAL_NORMALIZED_SUBSPACE_ENERGY_SCHMITT_PROJECTION
+  causal_window_s: 0.50
+  translation_axis_scale_m: [0.05, 0.05, 0.05]
+  rotation_axis_scale_deg: [15.0, 15.0, 15.0]
+  enter_position_energy_ratio: 2.0
+  enter_orientation_energy_ratio: 2.0
+  ambiguous_policy: RETAIN_PREVIOUS_STATE_OR_HOLD_IF_UNDECIDED
+  position_state_output: PRESERVE_TRANSLATION_ZERO_ROTATION_INCREMENT
+  orientation_state_output: ZERO_TRANSLATION_PRESERVE_ROTATION_INCREMENT
+  future_frames_allowed: false
+  learned_coupling_matrix_allowed: false
+  invalid_or_edge_policy: HOLD_RESET_UNDECIDED_REQUIRE_NEW_C_REFERENCE
+published_baseline:
+  name: AMP_IT_ENDPOINT_ANCHORED_FUNCTIONAL_RECONSTRUCTION
+  exact_reproduction_claimed: false
+  causal_window_s: 0.50
+  translation_minimum_speed_m_s: 0.02
+  translation_full_speed_m_s: 0.90
+  rotation_minimum_speed_deg_s: 5.0
+  rotation_full_speed_deg_s: 50.0
+  local_axis_processing: true
+  interpolation: "K=(4^xi-1)/3, xi=(s-s_min)/(s_full-s_min)"
+  provenance_limit: PRINTED_PAPER_FORMULA_IS_ENDPOINT_INCONSISTENT_AND_NO_CODE_WAS_FOUND
+manual_upper_bound:
+  name: TASK_CUED_POSITION_OR_ORIENTATION_ONLY_WITH_CLUTCH_RECENTER
+  automatic: false
+development_falsification:
+  input: research/teleop_academic/evidence/m1/ry_stage0_labelled_wrist_input.csv
+  maximum_runs: 1
+  second_run_only_if_within_known_gazebo_variation_of_threshold: true
+  known_gazebo_endpoint_variation_mm: 0.0944
+  known_gazebo_endpoint_variation_deg: 0.013761
+  known_gazebo_primary_metric_pairwise_difference_mm: 0.032945
+  known_gazebo_maximum_rotation_pairwise_difference_deg: 0.010984
+  stop_if_relative_translation_reduction_below: 0.50
+  stop_if_rotation_retention_below: 0.90
+  stop_if_state_lock_exceeds_s: 0.75
+independent_evaluation:
+  existing_data_role: DEVELOPMENT_ONLY
+  future_consent_required: true
+  position_segments: 12
+  rotation_segments: 12
+  axes_per_subspace: 3
+  directions_per_axis: 2
+  repeats_per_axis_direction: 2
+  position_target_m: 0.05
+  rotation_target_deg: 15.0
+  segment_timing_s:
+    neutral_hold: 1.0
+    outbound: 2.0
+    outbound_hold: 1.0
+    return: 2.0
+    final_hold: 1.0
+  paired_same_input_across_methods: true
+  report_all_failures: true
+  bootstrap_resamples: 10000
+  bootstrap_seed: 20260830
+claim_limits:
+  neural_intent_ground_truth: false
+  participant_population_inference: false
+  edge_recovery_claim_requires_observed_live_edge_event: true
+  complete_grasp_lift_move_place_claimed: false

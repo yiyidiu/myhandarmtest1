@@ -1,0 +1,151 @@
+{
+  "causal_history": {
+    "future_frames_used": false,
+    "records_without_complete_window": 3
+  },
+  "claim_limit": "This file reports only a pose-input functional reconstruction. A Gazebo run is required before making any robot end-effector claim.",
+  "dataset_role": "DEVELOPMENT_ONLY",
+  "exact_reproduction_claimed": false,
+  "implementation_choices_required_by_missing_reference_code": {
+    "formula_difference": "uses the frozen endpoint-continuous (4^xi-1)/3 curve because the printed paper expression is endpoint-inconsistent",
+    "integration": "scaled local pose increments integrated causally",
+    "local_axes": "current reconstructed output-pose axes",
+    "rotation_components": "SO(3) logarithm components expressed in current output-pose axes",
+    "window_sampling": "latest recorded sample at or before t-0.5s; output is held until a complete 0.5s history exists"
+  },
+  "input": {
+    "duration_s": 15.846602201,
+    "path": "research/teleop_academic/evidence/m1/ry_stage0_labelled_wrist_input.csv",
+    "records": 96,
+    "sha256": "2b07ea3c60cdf25df45f4667db369f69084b230eee19358758dff4261aa7e823"
+  },
+  "input_labelled_transition": {
+    "baseline_source_indices": [
+      120,
+      125,
+      130,
+      135,
+      140,
+      145
+    ],
+    "endpoint_rotation_magnitude_deg": 13.176471660837421,
+    "endpoint_translation_magnitude_m": 0.03457592429924435,
+    "endpoint_window_size": 6,
+    "outbound_endpoint_source_indices": [
+      270,
+      275,
+      280,
+      285,
+      290,
+      295
+    ],
+    "outbound_max_rotation_excursion_deg": 13.68935602707178,
+    "outbound_max_translation_excursion_m": 0.03700934337932275
+  },
+  "input_pose_motion": {
+    "first_to_last_rotation_deg": 1.790996044728944,
+    "first_to_last_translation_m": 0.010834744980725532,
+    "rotation_path_deg": 99.65406332035539,
+    "translation_path_m": 0.3893604136932599
+  },
+  "method": "AMP_IT_ENDPOINT_ANCHORED_FUNCTIONAL_RECONSTRUCTION",
+  "neural_intent_claimed": false,
+  "output": {
+    "path": "research/teleop_academic/evidence/m2/ry_stage0_amp_it_functional_replay.csv",
+    "records": 96,
+    "sha256": "327581ac083cb255ecf5aa4f02a04cb3a19e3e460e903414eb465d941296b586",
+    "timestamps_source_indices_and_labels_preserved": true
+  },
+  "output_labelled_transition": {
+    "baseline_source_indices": [
+      120,
+      125,
+      130,
+      135,
+      140,
+      145
+    ],
+    "endpoint_rotation_magnitude_deg": 0.44865540536370235,
+    "endpoint_translation_magnitude_m": 3.650091352437075e-05,
+    "endpoint_window_size": 6,
+    "outbound_endpoint_source_indices": [
+      270,
+      275,
+      280,
+      285,
+      290,
+      295
+    ],
+    "outbound_max_rotation_excursion_deg": 0.448655405363693,
+    "outbound_max_translation_excursion_m": 3.650091352437075e-05
+  },
+  "output_pose_motion": {
+    "first_to_last_rotation_deg": 0.740925112209754,
+    "first_to_last_translation_m": 1.7080701988708542e-05,
+    "rotation_path_deg": 1.640218344463548,
+    "translation_path_m": 9.006831213987445e-05
+  },
+  "protocol": {
+    "path": "/home/dongtian/myhandarmtest1-v1.0.1-ubuntu2004/research/teleop_academic/m2_frozen_protocol.yaml",
+    "published_baseline": {
+      "causal_window_s": 0.5,
+      "exact_reproduction_claimed": false,
+      "interpolation": "K=(4^xi-1)/3, xi=(s-s_min)/(s_full-s_min)",
+      "local_axis_processing": true,
+      "name": "AMP_IT_ENDPOINT_ANCHORED_FUNCTIONAL_RECONSTRUCTION",
+      "provenance_limit": "PRINTED_PAPER_FORMULA_IS_ENDPOINT_INCONSISTENT_AND_NO_CODE_WAS_FOUND",
+      "rotation_full_speed_deg_s": 50.0,
+      "rotation_minimum_speed_deg_s": 5.0,
+      "translation_full_speed_m_s": 0.9,
+      "translation_minimum_speed_m_s": 0.02
+    },
+    "sha256": "65e0ca95aaf2632f8b199d938d2f25598d9ae6850d13c867fd2f2adecdbd7997"
+  },
+  "rotation_gain_by_local_axis": [
+    {
+      "maximum": 0.0,
+      "median": 0.0,
+      "minimum": 0.0,
+      "one_fraction": 0.0,
+      "zero_fraction": 1.0
+    },
+    {
+      "maximum": 0.19090360183663355,
+      "median": 0.0,
+      "minimum": 0.0,
+      "one_fraction": 0.0,
+      "zero_fraction": 0.8736842105263158
+    },
+    {
+      "maximum": 0.004815254502239889,
+      "median": 0.0,
+      "minimum": 0.0,
+      "one_fraction": 0.0,
+      "zero_fraction": 0.9789473684210527
+    }
+  ],
+  "schema": "handarm_m2_amp_it_functional_reconstruction_v1",
+  "translation_gain_by_local_axis": [
+    {
+      "maximum": 0.004448786052804854,
+      "median": 0.0,
+      "minimum": 0.0,
+      "one_fraction": 0.0,
+      "zero_fraction": 0.9578947368421052
+    },
+    {
+      "maximum": 0.0,
+      "median": 0.0,
+      "minimum": 0.0,
+      "one_fraction": 0.0,
+      "zero_fraction": 1.0
+    },
+    {
+      "maximum": 0.0,
+      "median": 0.0,
+      "minimum": 0.0,
+      "one_fraction": 0.0,
+      "zero_fraction": 1.0
+    }
+  ]
+}

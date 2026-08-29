@@ -1,0 +1,397 @@
+{
+  "bag_duration_s": 38.584,
+  "controller_command": {
+    "component_span": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "nonzero_samples": 0,
+    "samples": 1929
+  },
+  "hand_command_observation": {
+    "hand_action_messages": 0,
+    "hand_trajectory_commands": 0
+  },
+  "input": {
+    "gesture_histogram": {
+      "0": 96
+    },
+    "mean_rate_hz": 5.994976007790807,
+    "messages": 96,
+    "orientation_excursion_from_first_deg": 0.740925112265941,
+    "position_span_m": [
+      5.336148999999721e-06,
+      1.8499845999997433e-05,
+      4.998746200002291e-05
+    ],
+    "source_duration_s": 15.846602201,
+    "valid_messages": 96
+  },
+  "labelled_transition": {
+    "baseline_source_indices": [
+      120,
+      125,
+      130,
+      135,
+      140,
+      145
+    ],
+    "cue_stage_index": "0",
+    "endpoint_definition": "coordinate-wise position median and sign-aligned quaternion mean over the final labelled samples in the pre-cue baseline and OUTBOUND phase",
+    "endpoint_window_size": 6,
+    "input_observed": {
+      "baseline_orientation_samples": 6,
+      "baseline_position_m": [
+        -0.010668845866,
+        0.050414450147,
+        0.996000047307
+      ],
+      "baseline_position_samples": 6,
+      "baseline_quaternion_xyzw": [
+        0.5454802001149809,
+        -0.6019695583199788,
+        0.2993139679129895,
+        0.5004949058189824
+      ],
+      "delta_position_m": [
+        -3.478744999998659e-06,
+        1.3128629999997754e-05,
+        -3.387999600001912e-05
+      ],
+      "delta_rotation_vector_deg": [
+        0.428509578185648,
+        -0.10307622700624262,
+        -0.08394346631005203
+      ],
+      "outbound_max_rotation_excursion_deg": 0.4486554053021458,
+      "outbound_max_rotation_source_index": 255,
+      "outbound_max_translation_excursion_m": 3.650091398051792e-05,
+      "outbound_max_translation_source_index": 215,
+      "outbound_orientation_samples": 6,
+      "outbound_position_m": [
+        -0.010672324611,
+        0.050427578777,
+        0.995966167311
+      ],
+      "outbound_position_samples": 6,
+      "outbound_quaternion_xyzw": [
+        0.5466373870951592,
+        -0.6039339983131758,
+        0.29718467301108653,
+        0.49812906243114513
+      ],
+      "rotation_magnitude_deg": 0.4486554053021442,
+      "translation_magnitude_m": 3.650091398051792e-05
+    },
+    "intent_label": "ROTATION",
+    "mapping_relative": {
+      "baseline_orientation_samples": 6,
+      "baseline_position_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "baseline_position_samples": 6,
+      "baseline_quaternion_xyzw": [
+        -1.8041124150158794e-16,
+        5.551115123125782e-17,
+        -4.163336342344335e-17,
+        1.0
+      ],
+      "delta_position_m": [
+        -3.454914030543918e-06,
+        1.3038637258051822e-05,
+        -3.3647835028571826e-05
+      ],
+      "delta_rotation_vector_deg": [
+        -6.948069123379056e-06,
+        -0.4454374835743038,
+        0.0017746147028146696
+      ],
+      "outbound_max_rotation_excursion_deg": 0.4475532986024951,
+      "outbound_max_rotation_source_index": 295,
+      "outbound_max_translation_excursion_m": 3.6392354966846654e-05,
+      "outbound_max_translation_source_index": 295,
+      "outbound_orientation_samples": 6,
+      "outbound_position_m": [
+        -3.454914030543918e-06,
+        1.3038637258051822e-05,
+        -3.3647835028571826e-05
+      ],
+      "outbound_position_samples": 6,
+      "outbound_quaternion_xyzw": [
+        -6.063318891120012e-08,
+        -0.0038871655606479358,
+        1.5486395758230343e-05,
+        0.9999924448234956
+      ],
+      "rotation_magnitude_deg": 0.4454410186305559,
+      "translation_magnitude_m": 3.6250783365542485e-05
+    },
+    "mapping_target": {
+      "baseline_orientation_samples": 6,
+      "baseline_position_m": [
+        0.30200000002259053,
+        -6.040478056007511e-10,
+        0.38800000008532876
+      ],
+      "baseline_position_samples": 6,
+      "baseline_quaternion_xyzw": [
+        5.986295903416816e-10,
+        1.0,
+        8.595435432688242e-11,
+        2.7156593653729083e-10
+      ],
+      "delta_position_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "delta_rotation_vector_deg": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "outbound_max_rotation_excursion_deg": 0.0,
+      "outbound_max_rotation_source_index": 150,
+      "outbound_max_translation_excursion_m": 0.0,
+      "outbound_max_translation_source_index": 150,
+      "outbound_orientation_samples": 6,
+      "outbound_position_m": [
+        0.30200000002259053,
+        -6.040478056007511e-10,
+        0.38800000008532876
+      ],
+      "outbound_position_samples": 6,
+      "outbound_quaternion_xyzw": [
+        5.986295903416816e-10,
+        1.0,
+        8.595435432688242e-11,
+        2.7156593653729083e-10
+      ],
+      "rotation_magnitude_deg": 0.0,
+      "translation_magnitude_m": 0.0
+    },
+    "outbound_excursion_definition": "maximum discrete pose-sample deviation from the pre-cue baseline pose over every labelled OUTBOUND source index",
+    "outbound_excursion_source_indices": [
+      150,
+      155,
+      160,
+      165,
+      170,
+      175,
+      180,
+      185,
+      190,
+      195,
+      200,
+      205,
+      210,
+      215,
+      220,
+      225,
+      230,
+      235,
+      240,
+      245,
+      250,
+      255,
+      260,
+      265,
+      270,
+      275,
+      280,
+      285,
+      290,
+      295
+    ],
+    "outbound_source_indices": [
+      270,
+      275,
+      280,
+      285,
+      290,
+      295
+    ],
+    "primary_axis": "RY",
+    "robot_actual": {
+      "baseline_orientation_samples": 6,
+      "baseline_position_m": [
+        0.30200000002259053,
+        -6.040478056007511e-10,
+        0.38800000008532876
+      ],
+      "baseline_position_samples": 6,
+      "baseline_quaternion_xyzw": [
+        5.986295903416816e-10,
+        1.0,
+        8.595435432688242e-11,
+        2.7156593653729083e-10
+      ],
+      "delta_position_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "delta_rotation_vector_deg": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "outbound_max_rotation_excursion_deg": 0.0,
+      "outbound_max_rotation_source_index": 150,
+      "outbound_max_translation_excursion_m": 0.0,
+      "outbound_max_translation_source_index": 150,
+      "outbound_orientation_samples": 6,
+      "outbound_position_m": [
+        0.30200000002259053,
+        -6.040478056007511e-10,
+        0.38800000008532876
+      ],
+      "outbound_position_samples": 6,
+      "outbound_quaternion_xyzw": [
+        5.986295903416816e-10,
+        1.0,
+        8.595435432688242e-11,
+        2.7156593653729083e-10
+      ],
+      "rotation_magnitude_deg": 0.0,
+      "translation_magnitude_m": 0.0
+    }
+  },
+  "mapping": {
+    "diagnostic_messages": 1450,
+    "reason_histogram": {
+      "NONE": 1441,
+      "REFERENCE_CAPTURE_ARMED": 1,
+      "ZERO_INITIALIZED": 8
+    },
+    "relative_orientation_excursion_from_first_deg": 0.7408885378249537,
+    "relative_position_span_m": [
+      5.272729527480702e-06,
+      1.827997531720499e-05,
+      4.9393364414895835e-05
+    ],
+    "target_orientation_excursion_from_first_deg": 0.0,
+    "target_position_span_m": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "valid_messages": 1449
+  },
+  "object_actual": {
+    "contact_pairs": [
+      {
+        "collisions": [
+          "ground_plane::link::collision",
+          "target_object::object_link::collision"
+        ],
+        "state_samples": 38583
+      }
+    ],
+    "first_position_m": [
+      0.48000000074065735,
+      5.931639548728758e-10,
+      0.0489975502126966
+    ],
+    "first_to_last_displacement_m": 7.850342561333065e-13,
+    "ground_contact_state_samples": 38583,
+    "last_position_m": [
+      0.48000000074141974,
+      5.933511447151364e-10,
+      0.048997550212696535
+    ],
+    "model": "target_object",
+    "position_span_m": [
+      1.4112599977522677e-12,
+      1.6158944868385048e-12,
+      7.632783294297951e-17
+    ],
+    "robot_contact_state_samples": 0,
+    "samples": 38582
+  },
+  "robot_actual": {
+    "arm_joints": {
+      "joint_1": {
+        "first_rad": -2.1379129577780986e-09,
+        "last_minus_first_rad": 0.0,
+        "last_rad": -2.1379129577780986e-09,
+        "observed_span_rad": 0.0
+      },
+      "joint_2": {
+        "first_rad": -3.298854522881811e-10,
+        "last_minus_first_rad": 0.0,
+        "last_rad": -3.298854522881811e-10,
+        "observed_span_rad": 0.0
+      },
+      "joint_3": {
+        "first_rad": 4.7339909770016675e-11,
+        "last_minus_first_rad": 0.0,
+        "last_rad": 4.7339909770016675e-11,
+        "observed_span_rad": 0.0
+      },
+      "joint_4": {
+        "first_rad": 1.7190870948979864e-10,
+        "last_minus_first_rad": 0.0,
+        "last_rad": 1.7190870948979864e-10,
+        "observed_span_rad": 0.0
+      },
+      "joint_5": {
+        "first_rad": 1.5707963265343103,
+        "last_minus_first_rad": 0.0,
+        "last_rad": 1.5707963265343103,
+        "observed_span_rad": 0.0
+      },
+      "joint_6": {
+        "first_rad": -9.40653777092848e-10,
+        "last_minus_first_rad": 0.0,
+        "last_rad": -9.40653777092848e-10,
+        "observed_span_rad": 0.0
+      }
+    },
+    "hand_active_joints": {
+      "f1j1": {
+        "first_rad": 0.17928953603451525,
+        "last_minus_first_rad": 0.0,
+        "last_rad": 0.17928953603451525,
+        "observed_span_rad": 1.7763568394002505e-15
+      },
+      "f1j2": {
+        "first_rad": 0.1990078956462602,
+        "last_minus_first_rad": 0.0,
+        "last_rad": 0.1990078956462602,
+        "observed_span_rad": 1.7763568394002505e-15
+      },
+      "f2j1": {
+        "first_rad": 0.1990273678036827,
+        "last_minus_first_rad": 8.881784197001252e-16,
+        "last_rad": 0.19902736780368357,
+        "observed_span_rad": 1.7763568394002505e-15
+      },
+      "f3j2": {
+        "first_rad": 0.19902100944047518,
+        "last_minus_first_rad": 0.0,
+        "last_rad": 0.19902100944047518,
+        "observed_span_rad": 1.7763568394002505e-15
+      }
+    },
+    "tool_orientation_excursion_from_first_deg": 0.0,
+    "tool_position_span_m": [
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "schema_version": 4,
+  "servo_status_observation": {
+    "histogram": {
+      "0": 1929
+    },
+    "nonzero_samples": 0
+  }
+}

@@ -1,0 +1,168 @@
+{
+  "schema": "handarm_m2_development_subspace_separability_v1",
+  "inputs": {
+    "stage_clusters": {
+      "path": ".runtime/robotics_30day_training_20260826/research_track/human_pose_coupling_e0_20260827/calibration/continuous_twist_development_v1/TWIST_STAGE_CLUSTERS.jsonl",
+      "sha256": "cb9f60e5c99022fb42af49a5764ce04f50150751908b4618352de9fa86e131d6"
+    },
+    "coupling_candidate_used_only_for_channel_scales": {
+      "path": ".runtime/robotics_30day_training_20260826/research_track/human_pose_coupling_e0_20260827/calibration/continuous_twist_development_v1/TWIST_COUPLING_CANDIDATE.json",
+      "sha256": "ff228a1b2b02b9b6262b4494b3dfc11104b8e9ccfdcfc58bccdfbc438b458770"
+    }
+  },
+  "channel_scales": [
+    0.05,
+    0.05,
+    0.05,
+    0.2617993877991494,
+    0.2617993877991494,
+    0.2617993877991494
+  ],
+  "score_definition": "log(norm(normalized translation increment) / norm(normalized rotation increment)); positive favors POSITION",
+  "step_equal": {
+    "count": 401,
+    "position": {
+      "count": 175,
+      "median_log_translation_rotation_energy_ratio": 0.9839707865418068,
+      "q05": -0.15031792911507255,
+      "q25": 0.5304090823760266,
+      "q75": 1.4877871722232658,
+      "q95": 2.3964395963969602,
+      "zero_threshold_correct_fraction": 0.9314285714285714
+    },
+    "rotation": {
+      "count": 226,
+      "median_log_translation_rotation_energy_ratio": -0.8602165328284388,
+      "q05": -2.2410553762963445,
+      "q25": -1.388836703801868,
+      "q75": -0.2783341359526286,
+      "q95": 0.6666815918884771,
+      "zero_threshold_correct_fraction": 0.827433628318584
+    },
+    "auc_position_score_higher": 0.9453603034134007,
+    "zero_threshold_accuracy": 0.8728179551122195,
+    "exploratory_best_threshold_not_frozen": {
+      "balanced_accuracy": 0.8882806573957016,
+      "log_energy_ratio_threshold": 0.023544771756649922,
+      "position_sensitivity": 0.9314285714285714,
+      "rotation_specificity": 0.8451327433628318
+    },
+    "zero_threshold_misclassified_ids": [
+      "E0_PX_continuous_rgbd_natural_calibration_r03_20260829T024928:stage_01:step_03",
+      "E0_PX_continuous_rgbd_natural_calibration_r03_20260829T024928:stage_02:step_01",
+      "E0_PX_continuous_rgbd_natural_calibration_r03_20260829T024928:stage_03:step_00",
+      "E0_PY_continuous_rgbd_natural_calibration_r08_20260829T205429:stage_01:step_03",
+      "E0_PY_continuous_rgbd_natural_calibration_r08_20260829T205429:stage_03:step_02",
+      "E0_PY_continuous_rgbd_natural_calibration_r08_20260829T205429:stage_03:step_04",
+      "E0_PY_continuous_rgbd_natural_calibration_r08_20260829T205429:stage_04:step_01",
+      "E0_PY_continuous_rgbd_natural_calibration_r08_20260829T205429:stage_05:step_00",
+      "E0_PY_continuous_rgbd_natural_calibration_r08_20260829T205429:stage_05:step_05",
+      "E0_PY_continuous_rgbd_natural_calibration_r08_20260829T205429:stage_06:step_00",
+      "E0_PY_continuous_rgbd_natural_calibration_r08_20260829T205429:stage_06:step_02",
+      "E0_PZ_continuous_rgbd_natural_calibration_r01_20260829T034721:stage_03:step_06",
+      "E0_RX_continuous_rgbd_natural_calibration_r01_20260829T035356:stage_04:step_00",
+      "E0_RX_continuous_rgbd_natural_calibration_r01_20260829T035356:stage_04:step_02",
+      "E0_RX_continuous_rgbd_natural_calibration_r02_20260829T044334:stage_05:step_00",
+      "E0_RX_continuous_rgbd_natural_calibration_r02_20260829T044334:stage_05:step_01",
+      "E0_RX_continuous_rgbd_natural_calibration_r02_20260829T044334:stage_05:step_02",
+      "E0_RX_continuous_rgbd_natural_calibration_r02_20260829T044334:stage_05:step_03",
+      "E0_RX_continuous_rgbd_natural_calibration_r02_20260829T044334:stage_05:step_04",
+      "E0_ROTATION_Y_continuous_rgbd_natural_validation_r06_20260828T233935:stage_00:step_02",
+      "E0_ROTATION_Y_continuous_rgbd_natural_validation_r06_20260828T233935:stage_00:step_03",
+      "E0_ROTATION_Y_continuous_rgbd_natural_validation_r06_20260828T233935:stage_01:step_00",
+      "E0_ROTATION_Y_continuous_rgbd_natural_validation_r06_20260828T233935:stage_01:step_04",
+      "E0_ROTATION_Y_continuous_rgbd_natural_validation_r06_20260828T233935:stage_01:step_05",
+      "E0_ROTATION_Y_continuous_rgbd_natural_validation_r06_20260828T233935:stage_01:step_06",
+      "E0_ROTATION_Y_continuous_rgbd_natural_validation_r06_20260828T233935:stage_02:step_02",
+      "E0_ROTATION_Y_continuous_rgbd_natural_validation_r06_20260828T233935:stage_05:step_00",
+      "E0_ROTATION_Y_continuous_rgbd_natural_validation_r06_20260828T233935:stage_05:step_01",
+      "E0_ROTATION_Y_continuous_rgbd_natural_validation_r06_20260828T233935:stage_05:step_03",
+      "E0_ROTATION_Y_continuous_rgbd_natural_validation_r06_20260828T233935:stage_05:step_04",
+      "E0_ROTATION_Y_continuous_rgbd_natural_validation_r06_20260828T233935:stage_06:step_03",
+      "E0_RZ_continuous_rgbd_natural_calibration_r01_20260829T035638:stage_00:step_00",
+      "E0_RZ_continuous_rgbd_natural_calibration_r01_20260829T035638:stage_00:step_01",
+      "E0_RZ_continuous_rgbd_natural_calibration_r01_20260829T035638:stage_00:step_02",
+      "E0_RZ_continuous_rgbd_natural_calibration_r01_20260829T035638:stage_01:step_00",
+      "E0_RZ_continuous_rgbd_natural_calibration_r01_20260829T035638:stage_01:step_01",
+      "E0_RZ_continuous_rgbd_natural_calibration_r01_20260829T035638:stage_01:step_02",
+      "E0_RZ_continuous_rgbd_natural_calibration_r01_20260829T035638:stage_01:step_03",
+      "E0_RZ_continuous_rgbd_natural_calibration_r01_20260829T035638:stage_03:step_02",
+      "E0_RZ_continuous_rgbd_natural_calibration_r02_20260829T044656:stage_00:step_00",
+      "E0_RZ_continuous_rgbd_natural_calibration_r02_20260829T044656:stage_00:step_03",
+      "E0_RZ_continuous_rgbd_natural_calibration_r02_20260829T044656:stage_03:step_00",
+      "E0_RZ_continuous_rgbd_natural_calibration_r02_20260829T044656:stage_03:step_01",
+      "E0_RZ_continuous_rgbd_natural_calibration_r02_20260829T044656:stage_03:step_02",
+      "E0_RZ_continuous_rgbd_natural_calibration_r02_20260829T044656:stage_03:step_03",
+      "E0_RZ_continuous_rgbd_natural_calibration_r02_20260829T044656:stage_03:step_04",
+      "E0_RZ_continuous_rgbd_natural_calibration_r02_20260829T044656:stage_04:step_02",
+      "E0_RZ_continuous_rgbd_natural_calibration_r02_20260829T044656:stage_06:step_02",
+      "E0_RZ_continuous_rgbd_natural_calibration_r02_20260829T044656:stage_06:step_03",
+      "E0_RZ_continuous_rgbd_natural_calibration_r02_20260829T044656:stage_07:step_00",
+      "E0_RZ_continuous_rgbd_natural_calibration_r03_20260829T193811:stage_00:step_00"
+    ]
+  },
+  "stage_cluster_equal": {
+    "count": 78,
+    "position": {
+      "count": 32,
+      "median_log_translation_rotation_energy_ratio": 1.0368009476539957,
+      "q05": 0.5072439151803982,
+      "q25": 0.6961782542550061,
+      "q75": 1.3339101113812113,
+      "q95": 1.7896387564664402,
+      "zero_threshold_correct_fraction": 1.0
+    },
+    "rotation": {
+      "count": 46,
+      "median_log_translation_rotation_energy_ratio": -0.9074358900461319,
+      "q05": -1.9159337145064521,
+      "q25": -1.4278390893082875,
+      "q75": -0.4276125616456352,
+      "q95": 0.2510515883929071,
+      "zero_threshold_correct_fraction": 0.8695652173913043
+    },
+    "auc_position_score_higher": 0.9938858695652174,
+    "zero_threshold_accuracy": 0.9230769230769231,
+    "exploratory_best_threshold_not_frozen": {
+      "balanced_accuracy": 0.9735054347826086,
+      "log_energy_ratio_threshold": 0.2845871735397537,
+      "position_sensitivity": 0.96875,
+      "rotation_specificity": 0.9782608695652174
+    },
+    "zero_threshold_misclassified_ids": [
+      "E0_RX_continuous_rgbd_natural_calibration_r02_20260829T044334:stage_05",
+      "E0_ROTATION_Y_continuous_rgbd_natural_validation_r06_20260828T233935:stage_01",
+      "E0_ROTATION_Y_continuous_rgbd_natural_validation_r06_20260828T233935:stage_05",
+      "E0_RZ_continuous_rgbd_natural_calibration_r01_20260829T035638:stage_01",
+      "E0_RZ_continuous_rgbd_natural_calibration_r02_20260829T044656:stage_03",
+      "E0_RZ_continuous_rgbd_natural_calibration_r02_20260829T044656:stage_06"
+    ]
+  },
+  "pilot_endpoint_off_task_distributions": {
+    "rotation_task_translation_mm": {
+      "count": 46,
+      "mean": 11.733266423571006,
+      "sample_standard_deviation": 9.840641423984701,
+      "median": 8.230074305130179,
+      "q25": 4.599191352203536,
+      "q75": 16.232782657288006,
+      "minimum": 1.0460010907081836,
+      "maximum": 38.55543137021424
+    },
+    "position_task_rotation_deg": {
+      "count": 32,
+      "mean": 3.1133469927400856,
+      "sample_standard_deviation": 1.747179059003998,
+      "median": 2.744993158338575,
+      "q25": 1.7364900371741676,
+      "q75": 4.3443489726398425,
+      "minimum": 0.7570048942122686,
+      "maximum": 6.83856298132476
+    },
+    "interpretation": "sums only admitted local tangent increments; these are input-side development proxies, not robot end-effector outcomes"
+  },
+  "dataset_role": "DEVELOPMENT_ONLY",
+  "independent_validation_claimed": false,
+  "neural_intent_claimed": false,
+  "decision": "The development signal is separable enough to justify one frozen causal candidate falsification, but overlap forbids treating energy dominance as observed task intent or deploying it without validation."
+}
