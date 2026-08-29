@@ -1,0 +1,237 @@
+{
+  "schema": "handarm_m3_negative_mechanism_run_manifest_v1",
+  "recorded_at_local": "2026-08-30T02:32:28+08:00",
+  "milestone_scope": "FROZEN_CAUSAL_WRIST_POSITION_ORIENTATION_SUBSPACE_CANDIDATE_FALSIFICATION",
+  "git": {
+    "branch": "research/teleop-academic",
+    "base_commit_before_milestone": "53d6e089476383a732bd449d51932a5ecc14df0a",
+    "remote": "https://github.com/yiyidiu/myhandarmtest1.git",
+    "worktree_state_at_run": "DIRTY"
+  },
+  "protocol": {
+    "at_candidate_output_generation": {
+      "path_at_time": "research/teleop_academic/m2_frozen_protocol.yaml",
+      "sha256_at_time": "9819198befc9c44e41466594e01de191ffc73f88a3f7dafae22eabbb59bdcb2c",
+      "published_at_that_path": false,
+      "reconstruction_verified_from_pushed_m2_plus_recorded_clarification_block": true
+    },
+    "published_archival_normalization": {
+      "path": "research/teleop_academic/m3_frozen_candidate_protocol.yaml",
+      "sha256": "9f10017537a3378b88729663dd89806f3e29b01bc9f5560dbb90c778e9324140",
+      "created_after_single_gazebo_run": true,
+      "reason": "restore the already-pushed M2 protocol bytes without changing the M3 candidate definition",
+      "reconstructed_replay_sha256_matches_run_input": true
+    },
+    "candidate_constants_changed_after_output_observation": false,
+    "energy_definition_clarified_before_candidate_output_generation": true
+  },
+  "method": {
+    "name": "CAUSAL_NORMALIZED_SUBSPACE_ENERGY_SCHMITT_PROJECTION",
+    "causal_window_s": 0.5,
+    "translation_axis_scale_m": [0.05, 0.05, 0.05],
+    "rotation_axis_scale_deg": [15.0, 15.0, 15.0],
+    "enter_position_energy_ratio": 2.0,
+    "enter_orientation_energy_ratio": 2.0,
+    "future_frames_used": false,
+    "task_labels_used_for_state_decision": false,
+    "learned_matrix_used": false,
+    "three_finger_mapping_used_as_method_variable": false
+  },
+  "commands": {
+    "build_replay_at_candidate_generation": [
+      "python3",
+      "research/teleop_academic/scripts/build_subspace_projection_replay.py",
+      "--input",
+      "research/teleop_academic/evidence/m1/ry_stage0_labelled_wrist_input.csv",
+      "--output",
+      "research/teleop_academic/evidence/m3/ry_stage0_subspace_projection_replay.csv",
+      "--report",
+      "research/teleop_academic/evidence/m3/ry_stage0_subspace_projection_replay_report.json"
+    ],
+    "rebuild_replay_from_published_archival_protocol": [
+      "python3",
+      "research/teleop_academic/scripts/build_subspace_projection_replay.py",
+      "--input",
+      "research/teleop_academic/evidence/m1/ry_stage0_labelled_wrist_input.csv",
+      "--output",
+      "research/teleop_academic/evidence/m3/ry_stage0_subspace_projection_replay.csv",
+      "--report",
+      "research/teleop_academic/evidence/m3/ry_stage0_subspace_projection_replay_report.json",
+      "--protocol",
+      "research/teleop_academic/m3_frozen_candidate_protocol.yaml"
+    ],
+    "launch": [
+      "roslaunch",
+      "handarm_moveit_demo",
+      "shared_teleop_safe_demo.launch",
+      "gazebo_gui:=false",
+      "input_source:=external",
+      "enable_logger:=false",
+      "enable_gesture_demo:=false",
+      "mapping_profile:=camera_ground_axis_decoupled",
+      "live_human_velocity_profile:=true",
+      "world_name:=<REPOSITORY>/src/handarm_sim_demo/worlds/handarm_ground_grasp.world"
+    ],
+    "confirm_reference": [
+      "rosservice",
+      "call",
+      "/shared_teleop/confirm_hand_reference",
+      "{}"
+    ],
+    "replay": [
+      "rosrun",
+      "handarm_moveit_demo",
+      "teleop_pose_replay.py",
+      "_input_csv:=<REPOSITORY>/research/teleop_academic/evidence/m3/ry_stage0_subspace_projection_replay.csv",
+      "_speed:=1.0",
+      "_loop:=false",
+      "_start_delay_s:=1.0"
+    ],
+    "analyze": [
+      "python3",
+      "research/teleop_academic/scripts/analyze_m1_causal_bag.py",
+      "<RUN_DIRECTORY>/ry_stage0_subspace_projection_causal.bag",
+      "--labelled-input-csv",
+      "research/teleop_academic/evidence/m3/ry_stage0_subspace_projection_replay.csv",
+      "--endpoint-window-size",
+      "6",
+      "--output",
+      "research/teleop_academic/evidence/m3/ry_stage0_subspace_projection_gazebo_summary.json"
+    ]
+  },
+  "artifacts": {
+    "source_pose_only_input": {
+      "path": "research/teleop_academic/evidence/m1/ry_stage0_labelled_wrist_input.csv",
+      "sha256": "2b07ea3c60cdf25df45f4667db369f69084b230eee19358758dff4261aa7e823",
+      "records": 96,
+      "dataset_role": "DEVELOPMENT_ONLY"
+    },
+    "candidate_script_at_generation": {
+      "path_at_time": "research/teleop_academic/scripts/build_subspace_projection_replay.py",
+      "sha256_at_time": "777d91524678d2276dba7759541a740ac776ddedcefae75cfeda85b303bf4b97",
+      "published_exact_bytes": false,
+      "reconstruction_verified_by_restoring_original_m2_default_protocol_line": true
+    },
+    "candidate_script_archival": {
+      "path": "research/teleop_academic/scripts/build_subspace_projection_replay.py",
+      "sha256": "25db79a4c812e8dab57e3381975f1a45f1221259e222b95459899fa5d7194d50",
+      "semantic_change_from_generation": "default protocol path only"
+    },
+    "candidate_replay": {
+      "path": "research/teleop_academic/evidence/m3/ry_stage0_subspace_projection_replay.csv",
+      "sha256": "c80e545d52ddce2e9207282e4b7f9381e14bb55b4d3d8157abbb294815e4e664",
+      "contains_rgb_depth_mesh_or_identity": false
+    },
+    "candidate_replay_report_at_generation": {
+      "path_at_time": "research/teleop_academic/evidence/m3/ry_stage0_subspace_projection_replay_report.json",
+      "sha256_at_time": "9dc626cba79cc4f945fd29a830d77fb77f488acc122119086bc941ebd104d3b2",
+      "published_exact_bytes": false,
+      "reconstruction_verified_by_restoring_original_protocol_path_and_hash": true
+    },
+    "candidate_replay_report_archival": {
+      "path": "research/teleop_academic/evidence/m3/ry_stage0_subspace_projection_replay_report.json",
+      "sha256": "9f96f078772575e4e8c6e9c7ed2153a5b2725fe7b5d56a76eac22bbd32405ce6",
+      "candidate_replay_sha256_changed_from_run": false
+    },
+    "gazebo_summary": {
+      "path": "research/teleop_academic/evidence/m3/ry_stage0_subspace_projection_gazebo_summary.json",
+      "sha256": "de7654e8e77bb39e5d2c3366bb4d810388d7d9870402e9b71d418a5e5408b1a1"
+    },
+    "direct_baseline_summary": {
+      "path": "research/teleop_academic/evidence/m2/b0_direct_original_gazebo_trajectory_summary.json",
+      "sha256": "514e1c04e186f9034f56be12a624418324b60e4d6a1fbd2d8c417af2f116cca0"
+    }
+  },
+  "bag": {
+    "path_at_run": "/tmp/handarm_m3_projection.5RmTNi/ry_stage0_subspace_projection_causal.bag",
+    "published_in_git": false,
+    "omission_reason": "The 58.9 MB bag remained at its local run path when this manifest was finalized rather than being added to ordinary Git. The published pose-only replay and commands permit a rerun but do not guarantee a byte-identical bag; this hash and the topic counts bind the reported result to that run.",
+    "local_file_verified_present_at_manifest_finalization": true,
+    "long_term_local_persistence_claimed": false,
+    "sha256": "d1baa527339f9e5ee519bdc60cc81b807de530d4aba156f9d260ac6346935d69",
+    "size_bytes": 58909919,
+    "duration_s": 36.435,
+    "messages": 47081,
+    "topics": {
+      "/gazebo/model_states": 36438,
+      "/handarm_sim_demo/target_contacts": 3642,
+      "/joint_states": 1823,
+      "/servo_server/status": 1822,
+      "/shared_teleop/hamer_pose": 96,
+      "/shared_teleop/safe_twist": 1822,
+      "/shared_teleop/trend_diagnostics": 1438
+    }
+  },
+  "state_mechanism_observation": {
+    "histogram": {
+      "ORIENTATION": 26,
+      "POSITION": 66,
+      "UNDECIDED": 4
+    },
+    "first_position_lock_source_index": 20,
+    "first_orientation_lock_source_index": 235,
+    "rotation_outbound_start_source_index": 150,
+    "stable_orientation_lock_latency_s": 2.8337993620000006,
+    "rotation_outbound_correct_state_fraction": 0.43333333333333335,
+    "invalid_or_edge_events_exercised": 0
+  },
+  "observable_chain": {
+    "candidate_input_outbound_max_translation_mm": 29.017873877269423,
+    "candidate_input_outbound_max_rotation_deg": 2.227138380360992,
+    "mapping_relative_outbound_max_translation_mm": 27.963264572747452,
+    "mapping_relative_outbound_max_rotation_deg": 1.3589709747224301,
+    "mapping_target_outbound_max_translation_mm": 55.61420854043225,
+    "mapping_target_outbound_max_rotation_deg": 0.0,
+    "tool0_outbound_max_translation_mm": 60.35966797715773,
+    "tool0_outbound_max_rotation_deg": 0.3646573303097821,
+    "object_first_to_last_displacement_m": 1.0746008952135842e-12,
+    "robot_object_contact_state_samples": 0,
+    "hand_action_messages": 0,
+    "hand_trajectory_commands": 0
+  },
+  "frozen_comparison": {
+    "b0_tool0_outbound_max_translation_mm": 70.4780126360746,
+    "b0_tool0_outbound_max_rotation_deg": 13.372891885422993,
+    "candidate_relative_translation_reduction": 0.14356739471591917,
+    "candidate_primary_rotation_retention": 0.027268397399314484,
+    "required_relative_translation_reduction": 0.5,
+    "required_primary_rotation_retention": 0.9,
+    "maximum_lock_latency_s": 0.75,
+    "hypothesis_supported": false
+  },
+  "safety_observation": {
+    "ros_log_run_id": "78ac0404-a3d7-11f1-9a41-23810455516e",
+    "full_robot_collision_contract_active_at_sim_time_s": 0.524,
+    "servo_status_histogram": {
+      "0": 954,
+      "3": 868
+    },
+    "status_code_3_definition": "DECELERATE_FOR_COLLISION",
+    "status_code_source": "/opt/ros/noetic/include/moveit_servo/status_codes.h",
+    "status_code_source_sha256": "f62cde315f1bfc1eec3d9718ca44c2d7b8a3330811d307991cff705af0a4194d",
+    "rosout_path_at_run": "/home/dongtian/.ros/log/78ac0404-a3d7-11f1-9a41-23810455516e/rosout.log",
+    "rosout_sha256": "d7eb46c2ef9d2d8b7f0a29e48edbe7f451a2c4d8831fc0c912e236990cfc48e2",
+    "collision_deceleration_warning_sim_time_s": 38.046,
+    "singularity_deceleration_warning_sim_time_s": 38.105,
+    "safety_certification_claimed": false
+  },
+  "stop_decision": {
+    "candidate_stopped": true,
+    "second_run_allowed": false,
+    "reasons": [
+      "translation reduction 14.36% is below 50%",
+      "rotation retention 2.73% is below 90%",
+      "stable lock latency 2.834s exceeds 0.75s",
+      "Servo collision deceleration status was observed"
+    ],
+    "threshold_retuning_allowed": false,
+    "second_automatic_candidate_allowed": false,
+    "next_engineering_route": "EXPLICIT_POSITION_OR_ORIENTATION_MODE_WITH_CLUTCH_RECENTER"
+  },
+  "evidence_boundary": [
+    "This falsifies one frozen mechanism on one reused RY development segment; it is not an impossibility theorem for all automatic methods.",
+    "The task label is an instruction, not neural-intent ground truth.",
+    "No invalid or live image-edge event occurred, so the coded reset policy was not experimentally validated.",
+    "No independent input, participant-population inference, complete grasp task, or publication-level contribution is claimed."
+  ]
+}

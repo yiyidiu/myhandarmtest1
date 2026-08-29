@@ -1,0 +1,59 @@
+schema_version: 1
+frozen_at_local: "2026-08-30"
+status: ARCHIVAL_CONTAINER_FOR_PRE_OUTPUT_FROZEN_CONTENT
+provenance:
+  candidate_definition_recorded_before_output_generation_or_observation: true
+  original_worktree_protocol_path_at_generation: research/teleop_academic/m2_frozen_protocol.yaml
+  original_worktree_protocol_sha256_at_generation: 9819198befc9c44e41466594e01de191ffc73f88a3f7dafae22eabbb59bdcb2c
+  original_sha256_reconstruction_verified: true
+  archival_container_created_after_single_gazebo_run: true
+  archival_reason: RESTORE_ALREADY_PUSHED_M2_PROTOCOL_BYTES
+  candidate_constants_or_energy_definition_changed_during_archival: false
+  replay_sha256_at_run: c80e545d52ddce2e9207282e4b7f9381e14bb55b4d3d8157abbb294815e4e664
+  replay_sha256_after_archival_regeneration: c80e545d52ddce2e9207282e4b7f9381e14bb55b4d3d8157abbb294815e4e664
+inherits_m2_protocol:
+  path: research/teleop_academic/m2_frozen_protocol.yaml
+  sha256: 65e0ca95aaf2632f8b199d938d2f25598d9ae6850d13c867fd2f2adecdbd7997
+  hypothesis_or_candidate_constant_changed: false
+pre_m3_implementation_clarification:
+  recorded_before_candidate_output_generation_or_observation: true
+  change_to_thresholds_or_mechanism_count: false
+  translation_increment: P_K_MINUS_P_K_MINUS_1
+  rotation_increment: SO3_LOG_OF_R_K_MINUS_1_TRANSPOSE_R_K
+  energy: L2_NORM_OVER_ALL_AXIS_NORMALIZED_INCREMENTS_ENDING_IN_OPEN_CLOSED_WINDOW
+  increment_end_time_window: "(t-0.5s,t]"
+  full_window_required_before_state_decision: true
+  both_energies_zero_policy: HOLD_UNDECIDED
+  task_labels_used_by_method: false
+hypothesis:
+  primary_comparator: DIRECT_6D_MAPPING
+  primary_outcome: TOOL0_MAXIMUM_TRANSLATION_EXCURSION_DURING_ROTATION_OUTBOUND_MM
+  minimum_relative_reduction: 0.50
+  minimum_primary_rotation_retention: 0.90
+  maximum_state_lock_p95_s: 0.75
+candidate:
+  name: CAUSAL_NORMALIZED_SUBSPACE_ENERGY_SCHMITT_PROJECTION
+  causal_window_s: 0.50
+  translation_axis_scale_m: [0.05, 0.05, 0.05]
+  rotation_axis_scale_deg: [15.0, 15.0, 15.0]
+  enter_position_energy_ratio: 2.0
+  enter_orientation_energy_ratio: 2.0
+  ambiguous_policy: RETAIN_PREVIOUS_STATE_OR_HOLD_IF_UNDECIDED
+  position_state_output: PRESERVE_TRANSLATION_ZERO_ROTATION_INCREMENT
+  orientation_state_output: ZERO_TRANSLATION_PRESERVE_ROTATION_INCREMENT
+  future_frames_allowed: false
+  learned_coupling_matrix_allowed: false
+  invalid_or_edge_policy: HOLD_RESET_UNDECIDED_REQUIRE_NEW_C_REFERENCE
+development_falsification:
+  input: research/teleop_academic/evidence/m1/ry_stage0_labelled_wrist_input.csv
+  maximum_runs: 1
+  stop_if_relative_translation_reduction_below: 0.50
+  stop_if_rotation_retention_below: 0.90
+  stop_if_state_lock_exceeds_s: 0.75
+  stop_on_any_new_servo_or_safety_fault: true
+claim_limits:
+  dataset_role: DEVELOPMENT_ONLY
+  neural_intent_ground_truth: false
+  participant_population_inference: false
+  edge_recovery_claim_requires_observed_live_edge_event: true
+  complete_grasp_lift_move_place_claimed: false

@@ -1,0 +1,224 @@
+{
+  "causal_implementation": {
+    "first_pose_assumption": "the external confirm_hand_reference service is armed before replay; the first valid pose is the common C reference",
+    "future_frames_used": false,
+    "increment_end_time_window": "(t-0.5s,t]",
+    "invalid_or_edge_policy": "hold pose, mark output invalid, clear state/history, and require a candidate_reference_confirmed marker before resuming",
+    "task_labels_used_for_state_decision": false,
+    "window_not_full_policy": "HOLD_UNDECIDED"
+  },
+  "claim_limit": "This is a causal transformation of one reused development input. Gazebo tool0 evidence is required for the frozen mechanism decision; live edge recovery and independent performance remain untested.",
+  "dataset_role": "DEVELOPMENT_ONLY",
+  "input": {
+    "duration_s": 15.846602201,
+    "path": "research/teleop_academic/evidence/m1/ry_stage0_labelled_wrist_input.csv",
+    "records": 96,
+    "sha256": "2b07ea3c60cdf25df45f4667db369f69084b230eee19358758dff4261aa7e823"
+  },
+  "input_labelled_transition": {
+    "baseline_source_indices": [
+      120,
+      125,
+      130,
+      135,
+      140,
+      145
+    ],
+    "endpoint_rotation_magnitude_deg": 13.176471660837436,
+    "endpoint_source_indices": [
+      270,
+      275,
+      280,
+      285,
+      290,
+      295
+    ],
+    "endpoint_translation_magnitude_m": 0.03457592429924435,
+    "outbound_max_rotation_excursion_deg": 13.68935602707179,
+    "outbound_max_translation_excursion_m": 0.03700934337932275,
+    "outbound_source_indices": [
+      150,
+      155,
+      160,
+      165,
+      170,
+      175,
+      180,
+      185,
+      190,
+      195,
+      200,
+      205,
+      210,
+      215,
+      220,
+      225,
+      230,
+      235,
+      240,
+      245,
+      250,
+      255,
+      260,
+      265,
+      270,
+      275,
+      280,
+      285,
+      290,
+      295
+    ]
+  },
+  "labelled_state_evaluation": {
+    "correct_state_fraction": 0.43333333333333335,
+    "expected_state": "ORIENTATION",
+    "first_correct_state_latency_from_outbound_start_s": 2.8337993620000006,
+    "first_correct_state_source_index": 235,
+    "outbound_samples": 30,
+    "stable_correct_state_source_index": 235,
+    "stable_lock_definition": "first expected-state sample after which every remaining labelled OUTBOUND sample stays in the expected state",
+    "stable_lock_latency_from_outbound_start_s": 2.8337993620000006,
+    "state_at_first_outbound_sample": "POSITION",
+    "task_label_used_only_for_post_hoc_evaluation": "ROTATION",
+    "undecided_fraction": 0.0
+  },
+  "method": "CAUSAL_NORMALIZED_SUBSPACE_ENERGY_SCHMITT_PROJECTION",
+  "neural_intent_claimed": false,
+  "output": {
+    "path": "research/teleop_academic/evidence/m3/ry_stage0_subspace_projection_replay.csv",
+    "records": 96,
+    "sha256": "c80e545d52ddce2e9207282e4b7f9381e14bb55b4d3d8157abbb294815e4e664",
+    "timestamps_source_indices_and_task_labels_preserved": true
+  },
+  "output_labelled_transition": {
+    "baseline_source_indices": [
+      120,
+      125,
+      130,
+      135,
+      140,
+      145
+    ],
+    "endpoint_rotation_magnitude_deg": 0.9882180652754854,
+    "endpoint_source_indices": [
+      270,
+      275,
+      280,
+      285,
+      290,
+      295
+    ],
+    "endpoint_translation_magnitude_m": 0.02901787387726942,
+    "outbound_max_rotation_excursion_deg": 2.2271383803411613,
+    "outbound_max_translation_excursion_m": 0.02901787387726942,
+    "outbound_source_indices": [
+      150,
+      155,
+      160,
+      165,
+      170,
+      175,
+      180,
+      185,
+      190,
+      195,
+      200,
+      205,
+      210,
+      215,
+      220,
+      225,
+      230,
+      235,
+      240,
+      245,
+      250,
+      255,
+      260,
+      265,
+      270,
+      275,
+      280,
+      285,
+      290,
+      295
+    ]
+  },
+  "protocol": {
+    "candidate": {
+      "ambiguous_policy": "RETAIN_PREVIOUS_STATE_OR_HOLD_IF_UNDECIDED",
+      "causal_window_s": 0.5,
+      "enter_orientation_energy_ratio": 2.0,
+      "enter_position_energy_ratio": 2.0,
+      "future_frames_allowed": false,
+      "invalid_or_edge_policy": "HOLD_RESET_UNDECIDED_REQUIRE_NEW_C_REFERENCE",
+      "learned_coupling_matrix_allowed": false,
+      "name": "CAUSAL_NORMALIZED_SUBSPACE_ENERGY_SCHMITT_PROJECTION",
+      "orientation_state_output": "ZERO_TRANSLATION_PRESERVE_ROTATION_INCREMENT",
+      "position_state_output": "PRESERVE_TRANSLATION_ZERO_ROTATION_INCREMENT",
+      "rotation_axis_scale_deg": [
+        15.0,
+        15.0,
+        15.0
+      ],
+      "translation_axis_scale_m": [
+        0.05,
+        0.05,
+        0.05
+      ]
+    },
+    "implementation_clarification": {
+      "both_energies_zero_policy": "HOLD_UNDECIDED",
+      "change_to_thresholds_or_mechanism_count": false,
+      "energy": "L2_NORM_OVER_ALL_AXIS_NORMALIZED_INCREMENTS_ENDING_IN_OPEN_CLOSED_WINDOW",
+      "full_window_required_before_state_decision": true,
+      "increment_end_time_window": "(t-0.5s,t]",
+      "recorded_before_candidate_output_generation_or_observation": true,
+      "rotation_increment": "SO3_LOG_OF_R_K_MINUS_1_TRANSPOSE_R_K",
+      "task_labels_used_by_method": false,
+      "translation_increment": "P_K_MINUS_P_K_MINUS_1"
+    },
+    "path": "research/teleop_academic/m3_frozen_candidate_protocol.yaml",
+    "sha256": "9f10017537a3378b88729663dd89806f3e29b01bc9f5560dbb90c778e9324140"
+  },
+  "schema": "handarm_m3_subspace_projection_development_replay_v1",
+  "state_observation": {
+    "histogram": {
+      "ORIENTATION": 26,
+      "POSITION": 66,
+      "UNDECIDED": 4
+    },
+    "invalid_resets": 0,
+    "records_before_full_window": 3,
+    "reference_required_records": 0,
+    "transitions": [
+      {
+        "from": "UNDECIDED",
+        "reason": "POSITION_RATIO_ENTERED",
+        "rotation_energy": 0.06045957202245662,
+        "source_index": 20,
+        "timestamp_s": 1.667420149,
+        "to": "POSITION",
+        "translation_energy": 0.1380627208121735
+      },
+      {
+        "from": "POSITION",
+        "reason": "ORIENTATION_RATIO_ENTERED",
+        "rotation_energy": 0.1756067324896384,
+        "source_index": 235,
+        "timestamp_s": 8.839032888,
+        "to": "ORIENTATION",
+        "translation_energy": 0.08069354665472221
+      },
+      {
+        "from": "ORIENTATION",
+        "reason": "POSITION_RATIO_ENTERED",
+        "rotation_energy": 0.06773298199446409,
+        "source_index": 365,
+        "timestamp_s": 13.173717976,
+        "to": "POSITION",
+        "translation_energy": 0.15412841745571448
+      }
+    ]
+  }
+}
