@@ -18,6 +18,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass, replace
 import math
+import multiprocessing
 import threading
 import time
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
@@ -132,6 +133,49 @@ class _CompletedForearmJob:
     input_version: int
 
 
+def _estimate_job(estimator, previous_identity, job, version):
+    started = time.monotonic()
+    error = ""
+    try:
+        if job.identity != previous_identity:
+            estimator.reset()
+        observation = estimator.update(
+            job.aligned_depth_raw, job.depth_scale_m_per_unit,
+            job.color_intrinsics, job.wrist_center_m, job.hand_detection,
+            detection_age_s=(job.detection_age_s + max(
+                0.0, started - job.submitted_monotonic_s)),
+            now_monotonic=started,
+        )
+    except Exception as exc:
+        error = "{}:{}".format(type(exc).__name__, exc)
+        observation = _invalid(
+            "async forearm worker:" + error, started,
+            status="mano_only_fallback")
+    return _CompletedForearmJob(
+        observation, job.identity, job.source_capture_sequence,
+        job.source_monotonic_s, job.submitted_monotonic_s,
+        started, time.monotonic(), version), error
+
+
+def _forearm_process_main(connection, config):
+    """Keep the causal filter in a separate interpreter, without CUDA fork."""
+    estimator = CausalForearmEstimator(config)
+    identity = None
+    try:
+        while True:
+            request = connection.recv()
+            if request is None:
+                return
+            job, version = request
+            result = _estimate_job(estimator, identity, job, version)
+            identity = job.identity
+            connection.send(result)
+    except (EOFError, BrokenPipeError):
+        pass
+    finally:
+        connection.close()
+
+
 class LatestOnlyForearmEstimator:
     """Run the optional RGB-D forearm anchor outside the HaMeR control path.
 
@@ -139,7 +183,9 @@ class LatestOnlyForearmEstimator:
     depth fit can therefore never build a latency queue behind the camera. A
     result is usable only by the exact hand/presence/context identity that
     submitted it, and its confidence decays with source-frame age before it is
-    allowed to perturb the MANO wrist orientation.
+    allowed to perturb the MANO wrist orientation. Live HaMeR uses a spawned
+    process to avoid Python/CPU contention; the thread backend supports local
+    injected estimators and the performance comparison.
     """
 
     def __init__(
@@ -147,6 +193,7 @@ class LatestOnlyForearmEstimator:
         config: Optional["ForearmFusionConfig"] = None,
         estimator: Optional["CausalForearmEstimator"] = None,
         maximum_rate_hz: float = 0.0,
+        use_process: bool = False,
     ) -> None:
         self.config = config or ForearmFusionConfig()
         self._estimator = estimator or CausalForearmEstimator(self.config)
@@ -166,6 +213,19 @@ class LatestOnlyForearmEstimator:
         self._errors = 0
         self._last_error = ""
         self._stopping = False
+        self._process = None
+        self._connection = None
+        if use_process:
+            if estimator is not None:
+                raise ValueError("process worker uses its own causal estimator")
+            context = multiprocessing.get_context("spawn")
+            self._connection, child_connection = context.Pipe()
+            self._process = context.Process(
+                target=_forearm_process_main,
+                args=(child_connection, self.config),
+                name="rgbd-forearm", daemon=True)
+            self._process.start()
+            child_connection.close()
         self._thread = threading.Thread(
             target=self._run,
             name="rgbd-forearm-latest-only",
@@ -347,42 +407,33 @@ class LatestOnlyForearmEstimator:
                 continue
             started = time.monotonic()
             next_start_monotonic = started + self._minimum_period_s
-            if job.identity != self._worker_identity:
-                self._estimator.reset()
-                self._worker_identity = job.identity
-            queued_age = max(0.0, started - job.submitted_monotonic_s)
             try:
-                observation = self._estimator.update(
-                    job.aligned_depth_raw,
-                    job.depth_scale_m_per_unit,
-                    job.color_intrinsics,
-                    job.wrist_center_m,
-                    job.hand_detection,
-                    detection_age_s=job.detection_age_s + queued_age,
-                    now_monotonic=started,
-                )
+                if self._connection is None:
+                    completed, error = _estimate_job(
+                        self._estimator, self._worker_identity, job, version)
+                    self._worker_identity = job.identity
+                else:
+                    # Only one job can be in flight. Camera submissions still
+                    # overwrite the parent mailbox while this fit is running.
+                    self._connection.send((job, version))
+                    while not self._connection.poll(0.05):
+                        if self._stopping:
+                            return
+                        if not self._process.is_alive():
+                            raise RuntimeError("forearm process exited")
+                    completed, error = self._connection.recv()
             except Exception as exc:
                 error = "{}:{}".format(type(exc).__name__, exc)
-                observation = _invalid(
-                    "async forearm worker:" + error,
-                    started,
-                    status="mano_only_fallback",
-                )
-                with self._condition:
+                completed = _CompletedForearmJob(
+                    _invalid("async forearm worker:" + error, started,
+                             status="mano_only_fallback"),
+                    job.identity, job.source_capture_sequence,
+                    job.source_monotonic_s, job.submitted_monotonic_s,
+                    started, time.monotonic(), version)
+            with self._condition:
+                if error:
                     self._errors += 1
                     self._last_error = error
-            completed_at = time.monotonic()
-            completed = _CompletedForearmJob(
-                observation=observation,
-                identity=job.identity,
-                source_capture_sequence=job.source_capture_sequence,
-                source_monotonic_s=job.source_monotonic_s,
-                submitted_monotonic_s=job.submitted_monotonic_s,
-                started_monotonic_s=started,
-                completed_monotonic_s=completed_at,
-                input_version=version,
-            )
-            with self._condition:
                 self._completed = completed
                 self._completed_count += 1
 
@@ -400,6 +451,7 @@ class LatestOnlyForearmEstimator:
             ),
             "capacity": 1,
             "policy": "overwrite_old_keep_latest",
+            "execution": "process" if self._process is not None else "thread",
         }
 
     @property
@@ -412,6 +464,16 @@ class LatestOnlyForearmEstimator:
             self._stopping = True
             self._condition.notify_all()
         self._thread.join(timeout=3.0)
+        if self._process is not None:
+            try:
+                self._connection.send(None)
+            except (BrokenPipeError, EOFError, OSError):
+                pass
+            self._process.join(timeout=1.0)
+            if self._process.is_alive():
+                self._process.terminate()
+                self._process.join(timeout=1.0)
+            self._connection.close()
 
 
 def _invalid(

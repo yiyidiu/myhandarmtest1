@@ -1588,6 +1588,7 @@ def main() -> int:
         else LatestOnlyForearmEstimator(
             forearm_fusion_config,
             maximum_rate_hz=args.forearm_rate_hz,
+            use_process=True,
         )
     )
     forearm_context_generation = 0

@@ -16,6 +16,7 @@ sys.path.insert(0, str(PACKAGE / "src"))
 
 from handarm_moveit_demo.shared_teleop_core import (  # noqa: E402
     AprilTagV3PoseContinuityFilter,
+    BlockedPoseTarget,
     CollisionRetreatGuard,
     CoordinateVelocityMapper,
     CameraRangeWorkspaceMapper,
@@ -53,6 +54,28 @@ def sample(stamp, velocity, quaternion=None, confidence=None):
                 quaternion_xyzw_to_matrix(quaternion))
     return PoseSample(stamp, velocity[:3] * stamp, rotation,
                       np.ones(6) if confidence is None else confidence)
+
+
+class BlockedPoseTargetTest(unittest.TestCase):
+    def test_upward_stop_discards_debt_and_accepts_first_reversal(self):
+        target = BlockedPoseTarget()
+        actual = np.asarray([0.30, 0.0, 0.448])
+        requested = np.asarray([0.30, 0.0, 0.588])
+        np.testing.assert_allclose(target.apply(requested, np.eye(3))[0], requested)
+        target.discard(requested, np.eye(3), actual, np.eye(3), True, False)
+        reversed_target, _ = target.apply(requested - [0, 0, .005], np.eye(3))
+        self.assertAlmostEqual(reversed_target[2], actual[2] - .005)
+        target.reset()
+        np.testing.assert_allclose(target.apply(requested, np.eye(3))[0], requested)
+
+    def test_rotation_stop_preserves_translation_and_reverse_axis(self):
+        target = BlockedPoseTarget()
+        requested = so3_exp([0, 0, 1.0])
+        actual = so3_exp([0, 0, .4])
+        target.discard([.3, .1, .4], requested, [.2, .1, .3], actual, False, True)
+        position, reversed_rotation = target.apply([.3, .1, .4], so3_exp([0, 0, .95]))
+        np.testing.assert_allclose(position, [.3, .1, .4])
+        np.testing.assert_allclose(so3_log(reversed_rotation), [0, 0, .35], atol=1e-10)
 
 
 class AprilTagV3PoseContinuityTest(unittest.TestCase):

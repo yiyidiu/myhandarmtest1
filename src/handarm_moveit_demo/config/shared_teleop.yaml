@@ -50,7 +50,9 @@ mapping:
   rotation_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
   # Mapped robot axes are base X/Y/Z: camera depth (forward/back), image
   # left/right, and image up/down respectively.
-  translation_gain: [0.8, 0.8, 1.2]
+  # Base Y is the camera left/right axis. A 23.3 cm hand displacement can
+  # now request the side objects at +/-28 cm instead of requiring 35 cm.
+  translation_gain: [0.8, 1.2, 1.2]
   # q_target = q_robot_zero * q_hand_delta: 20 deg hand -> 20 deg tool target.
   rotation_gain: [1.0, 1.0, 1.0]
 
@@ -253,7 +255,9 @@ finger_retargeting:
   joint_names: [f1j1, f1j2, f2j1, f3j2]
   source_mixing_matrix:
     - [0.0, 1.0, 0.0, 0.0, 0.0]  # human index -> robot outer finger f1
-    - [1.0, 0.0, 0.0, 0.0, 0.0]  # human thumb -> opposed robot finger f2
+    # The opposed finger completes a power grasp. The recorded thumb flexion
+    # barely changes during closure, so use the four-finger grasp excursion.
+    - [0.0, 0.25, 0.25, 0.25, 0.25]
     - [0.0, 0.0, 0.5, 0.3, 0.2]  # remaining fingers -> robot outer f3
   minimum_confidence: 0.55
   calibration_samples: 4
@@ -310,7 +314,7 @@ control:
   rotation_tolerance_deg: 0.0572957795  # 0.001 rad
   maximum_linear_speed_norm_mps: 1.00
   maximum_angular_speed_norm_radps: 10.00
-  maximum_relative_translation_m: [0.25, 0.25, 0.25]
+  maximum_relative_translation_m: [0.25, 0.32, 0.25]
   maximum_relative_rotation_deg: 179.0
   # A full-pose IK query is not a valid per-frame gate for local Cartesian
   # Servo tracking: real HaMeR orientation noise made it reject every target
@@ -329,9 +333,13 @@ control:
   servo_interlock_statuses: []
   # A hard singularity halt (2) or joint-bound halt (5) must not strand the
   # arm.  While either status is present, pass only motion that reduces the
-  # measured tool-pose error to the robot pose captured at C.  Returning the
-  # hand to C-zero therefore always commands a recoverable exit direction.
+  # measured tool-pose error to the robot pose captured at C. A recovery
+  # command must point toward that measured robot reference.
   servo_retreat_statuses: [2, 5]
+  # Discard rejected pose travel so reversing the hand immediately requests
+  # retreat. This shifts the mapping origin until the next operator C capture.
+  # Collision, joint and singularity protection remain in the output chain.
+  discard_blocked_target: true
   # MoveIt Servo retains a hard-stop status until its reset service is called.
   # Request that reset only when a new MANO target is fresh and the command has
   # already passed the measured C-zero retreat-direction guard.  This prevents

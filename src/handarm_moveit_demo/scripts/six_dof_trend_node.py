@@ -21,7 +21,7 @@ from handarm_moveit_demo.hamer_input_contract import (
     authoritative_camera_c_gate_lock,
 )
 from handarm_moveit_demo.shared_teleop_core import (
-    AprilTagV3PoseContinuityFilter, CollisionRetreatGuard, PoseSample,
+    AprilTagV3PoseContinuityFilter, BlockedPoseTarget, CollisionRetreatGuard, PoseSample,
     CameraRangeWorkspaceMapper, GroundSectorWorkspace,
     RelativePoseMapper, RelativePoseServoController,
     SixDofTrendEstimator, StationaryFeedforwardGate,
@@ -339,6 +339,9 @@ class SixDofTrendNode:
             rotation_progress_rad=math.radians(control.get(
                 "collision_guard_rotation_progress_deg", 1.0)),
         )
+        self.blocked_pose_target = BlockedPoseTarget()
+        self.discard_blocked_target = self.simulation and bool(
+            control.get("discard_blocked_target", True))
         topics = config.get("topics", {})
         self.publisher = rospy.Publisher(
             topics.get("raw_command", "/shared_teleop/raw_hand_command"),
@@ -631,6 +634,7 @@ class SixDofTrendNode:
         self.latest_target_update_ros = None
         self.target_hold_reason = None
         self.collision_retreat_guard.reset()
+        self.blocked_pose_target.reset()
         self.pose_reachability_cache = []
         self.pose_reachability_last = {
             "limit": 1.0, "cache_hit": False, "ik_calls": 0,
@@ -1204,7 +1208,20 @@ class SixDofTrendNode:
             return
         began = time.perf_counter()
         with self.lock:
-            state = self.latest_tracking
+            requested_state = self.latest_tracking
+            state = None if requested_state is None else dict(requested_state)
+            reference_revision = self.reference_revision
+            if state is not None and self.discard_blocked_target:
+                state["target_position"], state["target_rotation"] = (
+                    self.blocked_pose_target.apply(
+                        requested_state["target_position"],
+                        requested_state["target_rotation"]))
+                state["target_velocity"] = state["target_velocity"].copy()
+                state["target_velocity"][3:] = (
+                    self.blocked_pose_target.rotation_offset @
+                    state["target_velocity"][3:])
+            position_offset = self.blocked_pose_target.position_offset.copy()
+            rotation_offset = self.blocked_pose_target.rotation_offset.copy()
             latest_target_update_ros = self.latest_target_update_ros
             target_hold_reason = self.target_hold_reason
         if state is None:
@@ -1282,6 +1299,30 @@ class SixDofTrendNode:
                             state["robot_zero_rotation"], velocity,
                             active_reason=retreat_reason)
                     velocity = collision_retreat.velocity
+                    if (self.discard_blocked_target and
+                            collision_retreat.active and
+                            (not collision_retreat.linear_retreat_allowed or
+                             not collision_retreat.angular_retreat_allowed)):
+                        with self.lock:
+                            if reference_revision != self.reference_revision:
+                                return
+                            self.blocked_pose_target.discard(
+                                requested_state["target_position"],
+                                requested_state["target_rotation"],
+                                current_position, current_rotation,
+                                not collision_retreat.linear_retreat_allowed,
+                                not collision_retreat.angular_retreat_allowed)
+                            position_offset = (
+                                self.blocked_pose_target.position_offset.copy())
+                            rotation_offset = (
+                                self.blocked_pose_target.rotation_offset.copy())
+                            state["target_position"], state["target_rotation"] = (
+                                self.blocked_pose_target.apply(
+                                    requested_state["target_position"],
+                                    requested_state["target_rotation"]))
+                        position_error = state["target_position"] - current_position
+                        rotation_error = so3_log(
+                            state["target_rotation"] @ current_rotation.T)
                     (servo_reset_attempted, servo_reset_succeeded,
                      servo_recovery_reason) = (
                         self.maybe_reset_recoverable_servo_halt(
@@ -1320,6 +1361,9 @@ class SixDofTrendNode:
             "servo_auto_reset_count": self.servo_reset_count,
             "servo_recovery_reason": servo_recovery_reason,
             "target_input_age_s": target_age_s,
+            "blocked_target_position_offset_m": position_offset.tolist(),
+            "blocked_target_rotation_offset_deg": np.degrees(
+                so3_log(rotation_offset)).tolist(),
             "target_hold_active": holding_last_target,
             "position_reference_hold_active": position_reference_hold,
             "collision_retreat_guard_active": bool(

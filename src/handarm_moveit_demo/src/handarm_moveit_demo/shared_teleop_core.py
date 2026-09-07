@@ -496,6 +496,36 @@ class CollisionRetreatResult:
     angular_retreat_allowed: bool
 
 
+class BlockedPoseTarget:
+    """Discard unexecuted pose displacement when the safety guard rejects it.
+
+    Offsets persist until the next operator reference capture. A hand reversal
+    therefore starts from the stopped tool pose, without first cancelling a
+    distant, unreachable target. This does not authorize any robot motion.
+    """
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.position_offset = np.zeros(3)
+        self.rotation_offset = np.eye(3)
+
+    def apply(self, position, rotation):
+        return (np.asarray(position) + self.position_offset,
+                self.rotation_offset @ np.asarray(rotation))
+
+    def discard(self, requested_position, requested_rotation,
+                current_position, current_rotation,
+                linear_blocked, angular_blocked):
+        if linear_blocked:
+            self.position_offset = (
+                np.asarray(current_position) - np.asarray(requested_position))
+        if angular_blocked:
+            self.rotation_offset = project_to_so3(
+                np.asarray(current_rotation) @ np.asarray(requested_rotation).T)
+
+
 class CollisionRetreatGuard:
     """Stop motion deeper into proximity while preserving a C-zero retreat.
 

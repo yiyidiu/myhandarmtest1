@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from perception_hamer.src.forearm_fusion import (  # noqa: E402
+    CausalForearmEstimator,
     ForearmFusionConfig,
     ForearmObservation,
     LatestOnlyForearmEstimator,
@@ -97,6 +98,34 @@ def _wait_for_completed(worker, count, timeout_s=2.0):
 
 
 class LatestOnlyForearmEstimatorTest(unittest.TestCase):
+    def test_process_preserves_depth_axis_identity_and_freshness(self):
+        from perception_hamer.tests.test_forearm_fusion import (
+            INTRINSICS, _detection, _synthetic_forearm_depth)
+        worker = LatestOnlyForearmEstimator(use_process=True)
+        identity = (2, 3, True, 4)
+        depth = _synthetic_forearm_depth()
+        try:
+            # Warm the spawned interpreter; its initial input may expire.
+            for sequence in range(2):
+                worker.submit(depth, 0.001, INTRINSICS, [0.112, 0.0, 0.7],
+                              _detection(), 0.0, identity, sequence,
+                              time.monotonic())
+                _wait_for_completed(worker, sequence + 1, timeout_s=10.0)
+            result, diagnostic = worker.latest(identity, 1.0)
+            expected = CausalForearmEstimator().update(
+                depth, 0.001, INTRINSICS, [0.112, 0.0, 0.7], _detection(),
+                detection_age_s=0.0)
+            self.assertIsNotNone(result, diagnostic)
+            np.testing.assert_allclose(result.axis, expected.axis, atol=1e-10)
+            self.assertEqual(diagnostic['source_capture_sequence'], 1)
+            self.assertEqual(worker.statistics['errors'], 0)
+            self.assertIsNone(worker.latest((2, 3, True, 5), 1.0)[0])
+            self.assertIsNone(worker.latest(
+                identity, 0.20, now_monotonic=time.monotonic() + 1.0)[0])
+        finally:
+            worker.close()
+        self.assertFalse(worker._process.is_alive())
+
     def test_fresh_result_is_age_attenuated_and_identity_bound(self):
         fake = _FakeEstimator()
         worker = LatestOnlyForearmEstimator(
