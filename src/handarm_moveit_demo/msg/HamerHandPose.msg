@@ -33,9 +33,14 @@ uint32 presence_generation
 uint32 active_hand_generation
 # Live UDP operator gate.  The camera process sets gate_present=true on every
 # packet; control_enabled becomes true only after a valid C-key reference.
-# The token changes on every successful C press, allowing the ROS controller
-# to atomically re-capture both hand zero and the current robot tool pose.
+# The token changes on every successful C press. Use the camera-selected hand
+# zero when supplied and capture the current robot tool pose once per token.
 bool control_gate_present
 bool control_enabled
 uint32 control_reference_epoch
 string control_reference_token
+# Optional camera-selected C pose. Legacy input/replay without this field
+# retains the existing first-valid-frame capture behavior.
+bool control_reference_pose_present
+uint64 control_reference_sequence
+geometry_msgs/Pose control_reference_wrist_pose

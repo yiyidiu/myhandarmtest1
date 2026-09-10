@@ -158,6 +158,14 @@ class ContinuousHandPresenceGate:
 
         self.consecutive_negative_results = 0
         self.first_negative_monotonic = None
+        if (self.valid and self.confirmed_detection is not None and
+                detection.get("is_right") != self.confirmed_detection.get("is_right")):
+            # A newly selected opposite hand must invalidate the old confirmed
+            # crop. Otherwise valid stays true across the switch, HaMeR never
+            # sees a new presence interval and keeps the old reflection mode.
+            self._confirmation.reset()
+            self.confirmed_detection = None
+            self._set_valid(False)
         confirmed = self._confirmation.observe(detection)
         if confirmed is not None:
             self.confirmed_detection = confirmed

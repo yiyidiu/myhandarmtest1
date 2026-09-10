@@ -365,6 +365,17 @@ class HamerPacketContract:
                 "confidence": np.zeros(6, dtype=float),
             }
 
+        reference_pose = None
+        reference_sequence = 0
+        if control_enabled and packet.get("control_reference_pose") is not None:
+            reference = packet["control_reference_pose"]
+            if not isinstance(reference, Mapping):
+                raise ValueError("control reference pose must be a mapping")
+            reference_sequence = _nonnegative_int(reference.get("sequence"), "control_reference_sequence")
+            if reference_sequence > sequence:
+                raise ValueError("control reference cannot come from a future frame")
+            reference_pose = self._pose(dict(reference, confidence=[1.0] * 6))
+
         gesture = _nonnegative_int(packet.get("gesture", 0), "gesture")
         if gesture > 255:
             raise ValueError("gesture must fit uint8")
@@ -386,6 +397,8 @@ class HamerPacketContract:
             "control_enabled": control_enabled,
             "control_reference_epoch": reference_epoch,
             "control_reference_token": reference_token,
+            "control_reference_pose": reference_pose,
+            "control_reference_sequence": reference_sequence,
             **timing,
             **fingers,
             **identity,

@@ -37,11 +37,16 @@ catkin_package(
 
 include_directories(${catkin_INCLUDE_DIRS})
 
+file(GLOB HANDARM_QPOASES_SOURCES third_party/qpOASES/src/*.cpp)
+add_library(handarm_qpoases STATIC ${HANDARM_QPOASES_SOURCES})
+target_include_directories(handarm_qpoases PUBLIC third_party/qpOASES/include)
+target_compile_definitions(handarm_qpoases PRIVATE __NO_COPYRIGHT__ LINUX)
+
 add_executable(full_robot_self_collision_guard
   src/full_robot_self_collision_guard.cpp)
 add_dependencies(full_robot_self_collision_guard
   ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
-target_link_libraries(full_robot_self_collision_guard ${catkin_LIBRARIES})
+target_link_libraries(full_robot_self_collision_guard ${catkin_LIBRARIES} handarm_qpoases)
 
 catkin_install_python(PROGRAMS
   scripts/01_print_moveit_info.py

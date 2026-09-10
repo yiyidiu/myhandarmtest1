@@ -10,7 +10,7 @@
   <arg name="hand_stability_profile" default="physical_grasp"
        doc="physical_grasp, rigid_transport, or original" />
   <arg name="initial_joint_positions"
-       default=" -J f1j1 0.051 -J f1j2 0.0317 -J f2j1 0.0227 -J f3j2 0.0363 -J joint_1 0.0 -J joint_2 0.0 -J joint_3 0.0 -J joint_4 0.0 -J joint_5 1.5707963267948966 -J joint_6 0.0" />
+       default=" -J f1j1 0.18 -J f1j2 0.08726646259971647 -J f2j1 0.08726646259971647 -J f3j2 0.08726646259971647 -J joint_1 0.0 -J joint_2 0.0 -J joint_3 0.0 -J joint_4 0.0 -J joint_5 1.5707963267948966 -J joint_6 0.0" />
 
   <include file="$(find gazebo_ros)/launch/empty_world.launch" pass_all_args="true">
     <arg name="paused" value="true" />
@@ -22,6 +22,10 @@
   <param name="robot_description"
          command="$(find handarm_sim_demo)/scripts/render_teleop_hand_urdf.py --input $(find abb120_moveit_config1)/config/gazebo_handarm.urdf --profile $(arg hand_stability_profile)" />
   <rosparam file="$(find abb120_moveit_config1)/config/gazebo_controllers.yaml" />
+  <!-- Use the published 250 Hz reference velocity, not differences of
+       stepped position samples, in the 1 kHz physical arm PID. -->
+  <param name="/gazebo_ros_control/use_reference_velocity_derivative"
+         value="$(eval arg('hand_stability_profile') == 'physical_grasp')" />
   <!-- Keep the new arm tuning isolated from the established speed profile. -->
   <rosparam command="load"
             file="$(find handarm_sim_demo)/config/gazebo_arm_egm_position_pid.yaml"

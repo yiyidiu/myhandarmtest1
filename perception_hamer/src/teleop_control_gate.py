@@ -9,7 +9,10 @@ before it publishes the first enabled pose.
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any, Dict, Mapping, Optional, Tuple
+
+import numpy as np
 
 
 class TeleopControlGate:
@@ -26,6 +29,81 @@ class TeleopControlGate:
         self._reference_epoch = 0
         self._bound_identity: Optional[Tuple[int, int, bool]] = None
         self._lock_reason = "WAITING_FOR_OPERATOR_C_REFERENCE"
+        self._confirmation_request = None
+        self._confirmation_samples = []
+        self._reference_pose = None
+
+    @property
+    def confirmation_pending(self) -> bool:
+        with self._lock:
+            return self._confirmation_request is not None
+
+    def request_confirmation(self, after_sequence: int, now=None) -> None:
+        """The display requests C; only inference may choose its pose frame."""
+        with self._lock:
+            self.disable("OPERATOR_REQUESTED_NEW_C_REFERENCE")
+            self._confirmation_request = (
+                time.monotonic() if now is None else float(now),
+                int(after_sequence),
+            )
+            self._confirmation_samples = []
+
+    def confirm_packet(self, packet: Mapping[str, Any], calibrate_display, now=None):
+        """Bind display and outgoing first enabled packet to the SAME frame.
+
+        Four quiet observations reject a one-frame depth outlier as C-zero.
+        This runs in the inference thread immediately after updating the
+        display pose, before decorating/sending this very packet.
+        """
+        with self._lock:
+            if self._confirmation_request is None:
+                return None
+            began, after_sequence = self._confirmation_request
+            if (time.monotonic() if now is None else float(now)) - began > 2.0:
+                self._confirmation_request = None
+                self._confirmation_samples = []
+                self._lock_reason = "C_REFERENCE_NOT_STABLE_RETRY"
+                return None
+            position = np.asarray(packet.get("wrist_position_m", []), dtype=float)
+            rotation = np.asarray(packet.get("palm_rotation_row_major", []), dtype=float)
+            confidence = np.asarray(packet.get("confidence", []), dtype=float)
+            fingers = packet.get("finger_observation") or {}
+            flexion = np.asarray(fingers.get("flexion", []), dtype=float)
+            if (packet.get("valid") is not True or
+                    int(packet.get("sequence", -1)) <= after_sequence or
+                    position.shape != (3,) or rotation.size != 9 or
+                    confidence.shape != (6,) or not np.all(confidence > 0.0) or
+                    not np.all(np.isfinite(position)) or not np.all(np.isfinite(rotation)) or
+                    packet.get("orientation_held", False) or
+                    not packet.get("orientation_channel_valid", True) or
+                    fingers.get("valid") is not True or flexion.shape != (5,) or
+                    not np.all(np.isfinite(flexion)) or not np.all(flexion[1:] <= 0.40)):
+                self._confirmation_samples = []
+                return None
+            sequence = int(packet["sequence"])
+            if self._confirmation_samples and sequence <= self._confirmation_samples[-1][2]:
+                return None
+            self._confirmation_samples.append((position.copy(), rotation.reshape(3, 3).copy(), sequence))
+            self._confirmation_samples = self._confirmation_samples[-4:]
+            if len(self._confirmation_samples) < 4:
+                return None
+            positions = np.asarray([x[0] for x in self._confirmation_samples])
+            rotations = np.asarray([x[1] for x in self._confirmation_samples])
+            if (np.max(np.linalg.norm(positions - np.median(positions, axis=0), axis=1)) > 0.006 or
+                    np.max(np.linalg.norm(rotations - rotations[-1], axis=(1, 2))) > 0.074):
+                return None
+            if not calibrate_display():
+                return None
+            epoch = self.confirm(packet["presence_generation"],
+                                 packet["active_hand_generation"], packet["hand_is_right"])
+            self._reference_pose = {
+                "sequence": sequence, "stamp": float(packet["stamp"]),
+                "wrist_position_m": position.tolist(),
+                "palm_rotation_row_major": rotation.reshape(-1).tolist(),
+            }
+            self._confirmation_request = None
+            self._confirmation_samples = []
+            return epoch
 
     @property
     def enabled(self) -> bool:
@@ -100,6 +178,9 @@ class TeleopControlGate:
             self._enabled = False
             self._bound_identity = None
             self._lock_reason = str(reason or "CONTROL_GATE_DISABLED")
+            self._reference_pose = None
+            self._confirmation_request = None
+            self._confirmation_samples = []
 
     def confirm(
         self,
@@ -114,6 +195,7 @@ class TeleopControlGate:
         )
         with self._lock:
             self._reference_epoch += 1
+            self._reference_pose = None
             self._bound_identity = identity
             self._enabled = True
             self._lock_reason = ""
@@ -177,6 +259,7 @@ class TeleopControlGate:
             epoch = self._reference_epoch
             bound_identity = self._bound_identity
             lock_reason = self._lock_reason
+            reference_pose = self._reference_pose
         if (
             enabled
             and self._retain_reference_until_operator_action
@@ -226,6 +309,10 @@ class TeleopControlGate:
             else ""
         )
         output["control_gate_reason"] = str(lock_reason)
+        # Repeat the immutable C pose with its token. A dropped/rejected
+        # first enabled UDP packet must not make ROS choose a different zero.
+        if enabled and reference_pose is not None:
+            output["control_reference_pose"] = dict(reference_pose)
         return output
 
 

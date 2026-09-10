@@ -6,9 +6,11 @@ find_package(catkin REQUIRED COMPONENTS
   control_msgs
   controller_manager_msgs
   gazebo_msgs
+  gazebo_ros_control
   geometry_msgs
   moveit_commander
   moveit_msgs
+  pluginlib
   roscpp
   rospy
   sensor_msgs
@@ -37,6 +39,10 @@ add_library(handarm_stable_hand_spring_plugin
 target_link_libraries(handarm_stable_hand_spring_plugin
   ${catkin_LIBRARIES} ${GAZEBO_LIBRARIES})
 
+add_library(handarm_bounded_position_hw_sim src/bounded_position_hw_sim.cpp)
+target_link_libraries(handarm_bounded_position_hw_sim
+  ${catkin_LIBRARIES} ${GAZEBO_LIBRARIES})
+
 add_library(handarm_gui_render_rate_limiter_plugin
   src/gui_render_rate_limiter_plugin.cpp)
 target_link_libraries(handarm_gui_render_rate_limiter_plugin
@@ -46,6 +52,7 @@ catkin_install_python(PROGRAMS
   scripts/simulation_guard.py
   scripts/startup_coordinator.py
   scripts/scene_manager.py
+  scripts/grasp_alignment_views.py
   scripts/scripted_avoidance_demo.py
   scripts/multi_angle_avoidance_course.py
   scripts/hand_commander.py
@@ -67,17 +74,21 @@ catkin_install_python(PROGRAMS
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
-install(DIRECTORY config launch worlds
+install(DIRECTORY config launch worlds meshes
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
 
 install(TARGETS handarm_deterministic_attach_plugin
                 handarm_stable_hand_spring_plugin
+                handarm_bounded_position_hw_sim
                 handarm_gui_render_rate_limiter_plugin
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
+
+install(FILES robot_hw_sim_plugins.xml LICENSE.gazebo_ros_control
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
 
 if(CATKIN_ENABLE_TESTING)
   catkin_add_nosetests(test/test_ground_scene.py)

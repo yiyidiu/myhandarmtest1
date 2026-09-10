@@ -112,6 +112,8 @@ class LiveDisplay:
 
         if self._closed:
             return False
+        from .hand_pose_overlay import append_robot_feedback
+        bgr_frame = append_robot_feedback(bgr_frame)
         if self.backend == "local":
             cv2.imshow(self.title, bgr_frame)
             key = cv2.waitKey(1) & 0xFF

@@ -20,6 +20,7 @@
   <!-- Opt-in response shaping for the EGM position-reference plant.  The
        established velocity profile deliberately keeps the YAML values. -->
   <arg name="stable_position_reference_profile" default="false" />
+  <arg name="geometric_recovery_filter" default="false" />
   <arg name="camera_workspace_calibration_file"
        default="$(find handarm_moveit_demo)/config/camera_workspace_calibration.yaml" />
 
@@ -61,18 +62,25 @@
   <node pkg="handarm_moveit_demo" type="six_dof_trend_node.py"
         name="six_dof_trend" output="screen">
     <param name="simulation" value="$(arg simulation)" />
+    <param name="geometric_recovery_filter" value="$(arg geometric_recovery_filter)" />
     <param name="mapping_profile" value="$(arg mapping_profile)" />
     <param name="require_scene_ready" value="$(arg require_scene_ready)" />
     <param name="camera_workspace_calibration_file"
            value="$(arg camera_workspace_calibration_file)" />
+    <!-- Track a filtered pose goal continuously. A large camera innovation
+         must not automatically bypass smoothing or become a velocity burst. -->
+    <param if="$(arg stable_position_reference_profile)"
+           name="pose_position_lowpass_alpha_max" value="0.28" />
+    <param if="$(arg stable_position_reference_profile)"
+           name="pose_rotation_lowpass_alpha_max" value="0.30" />
     <param if="$(arg stable_position_reference_profile)"
            name="translation_error_gain_per_s" value="3.0" />
     <param if="$(arg stable_position_reference_profile)"
            name="rotation_error_gain_per_s" value="3.0" />
     <param if="$(arg stable_position_reference_profile)"
-           name="translation_feedforward_gain" value="0.20" />
+           name="translation_feedforward_gain" value="0.0" />
     <param if="$(arg stable_position_reference_profile)"
-           name="rotation_feedforward_gain" value="0.15" />
+           name="rotation_feedforward_gain" value="0.0" />
     <param if="$(arg stable_position_reference_profile)"
            name="maximum_linear_velocity_mps" value="0.30" />
     <param if="$(arg stable_position_reference_profile)"
@@ -97,6 +105,8 @@
         name="shared_control" output="screen" />
   <node pkg="handarm_moveit_demo" type="moveit_servo_output_adapter.py"
         name="moveit_servo_output_adapter" output="screen">
+    <param name="geometric_recovery_filter" value="$(arg geometric_recovery_filter)" />
+    <param name="command_input_topic" value="/shared_teleop/assisted_command" />
     <param name="enable_robot" value="$(arg enable_robot)" />
     <param name="simulation" value="$(arg simulation)" />
     <param name="robot_authorization" value="$(arg robot_authorization)" />

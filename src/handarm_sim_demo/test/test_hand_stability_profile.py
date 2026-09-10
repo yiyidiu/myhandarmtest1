@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 import unittest
+import math
 import xml.etree.ElementTree as ET
 
 
@@ -62,6 +63,18 @@ class HandStabilityProfileTest(unittest.TestCase):
     def setUpClass(cls):
         cls.original = URDF.read_text(encoding="utf-8")
 
+    def test_physical_profile_preserves_multiturn_wrist_range(self):
+        original = ET.fromstring(self.original)
+        rendered = ET.fromstring(render_physical_grasp_hand(self.original))
+        before = original.find("joint[@name='joint_6']")
+        after = rendered.find("joint[@name='joint_6']")
+        self.assertEqual(after.get("type"), "revolute")
+        self.assertEqual(before.find("limit").attrib, after.find("limit").attrib)
+        self.assertGreater(float(after.find("limit").get("upper")), 2*math.pi)
+        backend = rendered.find("gazebo/plugin[@name='gazebo_ros_control']")
+        self.assertEqual(backend.findtext("robotSimType"),
+                         "handarm_sim_demo/BoundedPositionHWSim")
+
     def test_physical_profile_has_one_owner_for_all_hand_joints(self):
         root = ET.fromstring(render_physical_grasp_hand(self.original))
         transmitted = {
@@ -82,10 +95,10 @@ class HandStabilityProfileTest(unittest.TestCase):
         expected_tuning = {
             "activeStiffness": "25.0 12.0 12.0 12.0",
             "activeDamping": "1.50 0.60 0.60 0.60",
-            "activeMaxEffort": "3.0 0.60 0.60 0.60",
+            "activeMaxEffort": "3.0 1.20 1.20 1.20",
             "mimicStiffness": "25.0 10.0 10.0 10.0",
             "mimicDamping": "1.50 0.50 0.50 0.50",
-            "mimicMaxEffort": "3.0 0.40 0.40 0.40",
+            "mimicMaxEffort": "3.0 0.80 0.80 0.80",
         }
         self.assertEqual(
             {name: plugin.findtext(name) for name in expected_tuning},

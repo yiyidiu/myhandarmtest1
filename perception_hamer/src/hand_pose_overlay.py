@@ -11,11 +11,55 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+import json
+import os
 import threading
+import time
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
+
+
+@lru_cache(maxsize=1)
+def _feedback_fonts():
+    from PIL import ImageFont
+    path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+    return ImageFont.truetype(path, 26), ImageFont.truetype(path, 21)
+
+
+def append_robot_feedback(image: np.ndarray) -> np.ndarray:
+    """Display-only feedback; never used to accept or change a hand command."""
+    path = os.environ.get("TELEOP_ROBOT_FEEDBACK_FILE")
+    if not path:
+        return image
+    from PIL import Image, ImageDraw
+    try:
+        state = json.loads(Path(path).read_text())
+        if time.monotonic() - float(state["monotonic_s"]) > 1.0:
+            raise ValueError("stale robot feedback")
+    except (OSError, ValueError, KeyError):
+        state = {"status_text": "等待机械臂状态", "level": "waiting"}
+    footer = Image.new("RGB", (image.shape[1], 78), (22, 22, 22))
+    draw = ImageDraw.Draw(footer)
+    large, small = _feedback_fonts()
+    color = (255, 195, 70) if state.get("level") != "normal" else (100, 240, 150)
+    draw.text((12, 3), "机械臂：" + state["status_text"], font=large, fill=color)
+    gap = state.get("target_gap_cm")
+    text = "偏航上限：左右各 90°；横滚可调整"
+    if gap is not None:
+        text += "    目标与实际相差：%.1f cm" % gap
+    closure = state.get("closure")
+    if closure is not None:
+        text += "    握拳输入：%d%%" % round(100*float(np.mean(closure)))
+    if state.get("release_phase"):
+        text += "（同步张开中）"
+    elif state.get("grip_latched"):
+        text += "（保持闭合）"
+    draw.text((12, 43), text, font=small, fill=(210, 210, 210))
+    return np.vstack((image, np.asarray(footer)[:, :, ::-1]))
 
 
 @dataclass(frozen=True)
@@ -112,6 +156,7 @@ class RelativeWristPoseDisplay:
         self._latest_frame: Optional[np.ndarray] = None
         self._latest_confidence: Optional[np.ndarray] = None
         self._latest_valid = False
+        self._latest_orientation_valid = False
         self._latest_reason = "waiting_for_metric_wrist_pose"
         self._sequence = -1
         self._stamp = float("nan")
@@ -141,6 +186,9 @@ class RelativeWristPoseDisplay:
         with self._lock:
             if (
                 not self._latest_valid
+                or not self._latest_orientation_valid
+                or self._latest_confidence is None
+                or not np.all(self._latest_confidence[3:] > 0.0)
                 or self._latest_center_m is None
                 or self._latest_frame is None
                 or (
@@ -208,6 +256,12 @@ class RelativeWristPoseDisplay:
             self._latest_frame = rotation.copy()
             self._latest_confidence = np.clip(confidence, 0.0, 1.0)
             self._latest_valid = True
+            # A held rotation is usable during an existing translation but
+            # is not a fresh orientation with which to establish a new C.
+            self._latest_orientation_valid = bool(
+                packet.get("orientation_channel_valid", True)
+                and not packet.get("orientation_held", False)
+            )
             self._latest_reason = "ok"
             self._sequence = sequence
             self._stamp = stamp

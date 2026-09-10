@@ -3,15 +3,62 @@
 from pathlib import Path
 import sys
 import unittest
+import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from perception_hamer.src.teleop_control_gate import TeleopControlGate  # noqa: E402
+from perception_hamer.src.hand_pose_overlay import RelativeWristPoseDisplay
 
 
 class TeleopControlGateTest(unittest.TestCase):
+    def test_c_rejects_depth_spike_and_uses_first_enabled_display_frame(self):
+        gate = TeleopControlGate()
+        display = RelativeWristPoseDisplay()
+        gate.request_confirmation(after_sequence=100, now=0.0)
+        first_enabled = None
+        for sequence, depth in enumerate([1.116, 1.002, 1.001, 1.002, 1.003], 101):
+            packet = {
+                "sequence": sequence, "stamp": sequence * 0.1,
+                "valid": True, "hand_identity_present": True,
+                "presence_generation": 3, "active_hand_generation": 1,
+                "hand_is_right": False, "wrist_position_m": [0, 0, depth],
+                "palm_rotation_row_major": np.eye(3).reshape(-1).tolist(),
+                "confidence": [0.8] * 6,
+                "finger_observation": {"valid": True, "flexion": [0.1] * 5},
+            }
+            display.update_from_packet(packet, 3)
+            gate.confirm_packet(packet, display.calibrate_from_latest, now=(sequence-100)*0.1)
+            outgoing = gate.decorate(packet, "same-frame-test")
+            if outgoing["control_enabled"]:
+                first_enabled = outgoing
+                np.testing.assert_allclose(display.snapshot().delta_m, [0, 0, 0])
+                self.assertEqual(display.snapshot().sequence, outgoing["sequence"])
+            else:
+                self.assertFalse(display.calibrated)
+        self.assertEqual(first_enabled["sequence"], 105)
+        self.assertEqual(first_enabled["wrist_position_m"][2], 1.003)
+        packet["sequence"] = 106
+        packet["wrist_position_m"] = [0, 0, 1.02]
+        later = gate.decorate(packet, "same-frame-test")
+        self.assertEqual(later["control_reference_pose"]["sequence"], 105)
+        self.assertEqual(later["control_reference_pose"]["wrist_position_m"][2], 1.003)
+
+    def test_repeated_frame_and_missing_hand_cannot_complete_c(self):
+        gate = TeleopControlGate()
+        gate.request_confirmation(0, now=0)
+        packet = {"sequence": 1, "valid": True, "wrist_position_m": [0,0,1],
+                  "palm_rotation_row_major": np.eye(3).reshape(-1).tolist(),
+                  "confidence": [1]*6, "finger_observation": {"valid": True, "flexion": [.1]*5}}
+        for _ in range(6):
+            self.assertIsNone(gate.confirm_packet(packet, lambda: True, now=.1))
+        self.assertFalse(gate.enabled)
+        self.assertIsNone(gate.confirm_packet({"valid": False}, lambda: True, now=2.1))
+        self.assertFalse(gate.confirmation_pending)
+        self.assertFalse(gate.enabled)
+
     def test_camera_start_is_locked_until_explicit_confirmation(self):
         gate = TeleopControlGate()
         packet = gate.decorate(

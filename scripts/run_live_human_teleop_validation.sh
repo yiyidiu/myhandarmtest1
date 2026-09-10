@@ -8,8 +8,15 @@ cd "$workspace"
 source /opt/ros/noetic/setup.bash
 source devel/setup.bash
 
-conda_executable="/home/dongtian/anaconda3/bin/conda"
-asset_root="/home/dongtian/myhandarmtest1-v1.0.1-ubuntu2004/perception_hamer/_DATA"
+motion_controller="${TELEOP_MOTION_CONTROLLER:-constrained}"
+case "$motion_controller" in
+  constrained) constrained_velocity_projection=true ;;
+  legacy) constrained_velocity_projection=false ;;
+  *) echo "TELEOP_MOTION_CONTROLLER 只能是 constrained 或 legacy。" >&2; exit 2 ;;
+esac
+
+conda_executable="${TELEOP_CONDA_EXECUTABLE:-/home/dongtian/anaconda3/bin/conda}"
+asset_root="${TELEOP_HAMER_ASSET_ROOT:-/home/dongtian/myhandarmtest1-v1.0.1-ubuntu2004/perception_hamer/_DATA}"
 checkpoint="$asset_root/hamer_ckpts/checkpoints/hamer.ckpt"
 runtime_directory="$workspace/.runtime/live_human_validation_$(date +%Y%m%dT%H%M%S)"
 mkdir -p "$runtime_directory"
@@ -51,12 +58,25 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo "正在启动 Gazebo 和 ROS 控制链……"
-setsid roslaunch handarm_moveit_demo \
+if [[ "$constrained_velocity_projection" == true ]]; then
+  echo "本次使用约束速度控制；旧控制可通过 TELEOP_MOTION_CONTROLLER=legacy 运行。"
+else
+  echo "本次使用本轮修改前的运动控制；物体使用当前布局。"
+fi
+simulation_affinity_arguments=()
+if command -v taskset >/dev/null 2>&1 && (( $(nproc) >= 12 )); then
+  # Reserve the two physical cores used by HaMeR (8-11). Pinning only HaMeR
+  # still let ROS, Gazebo and recording compete on those same cores.
+  simulation_affinity_arguments=(taskset -c 0-7)
+fi
+setsid "${simulation_affinity_arguments[@]}" roslaunch handarm_moveit_demo \
   live_human_ground_gazebo_egm_teleop.launch \
   gazebo_gui:=true with_ground_object:=true enable_logger:=false \
+  grasp_alignment_views:="${TELEOP_ALIGNMENT_VIEWS:-true}" \
   input_source:=udp \
+  constrained_velocity_projection:="$constrained_velocity_projection" \
   mapping_profile:=current_linear \
-  hamer_input_timeout_s:=2.00 \
+  hamer_input_timeout_s:=0.40 \
   hamer_maximum_pipeline_latency_s:=0.25 \
   >"$runtime_directory/roslaunch.log" 2>&1 &
 ros_pid=$!
@@ -111,14 +131,16 @@ echo "本次运行日志：$runtime_directory"
 # This observer subscribes before C and never gates the control path.  It
 # distinguishes camera acceptance, a non-zero Servo command, and real Gazebo
 # tool0 displacement so a broken link cannot masquerade as a working one.
-rosrun handarm_moveit_demo live_teleop_terminal_monitor.py &
+export TELEOP_ROBOT_FEEDBACK_FILE="$runtime_directory/robot_feedback.json"
+"${simulation_affinity_arguments[@]}" rosrun handarm_moveit_demo live_teleop_terminal_monitor.py \
+  _feedback_file:="$TELEOP_ROBOT_FEEDBACK_FILE" &
 link_monitor_pid=$!
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 camera_affinity_arguments=()
 if command -v taskset >/dev/null 2>&1 && (( $(nproc) >= 12 )); then
   # i5-12400F: HaMeR gets the final two physical cores while the GUI and
-  # MediaPipe use the preceding two.  ROS/Gazebo remain scheduler-managed.
+  # MediaPipe use the preceding two. ROS/Gazebo stay on cores 0-7 above.
   camera_affinity_arguments+=(
     --inference-cpu-affinity 8-11
     --sidecar-cpu-affinity 4-7

@@ -3,6 +3,8 @@
 
 import json
 import math
+import os
+from pathlib import Path
 import time
 
 import numpy as np
@@ -24,6 +26,19 @@ class LiveTeleopTerminalMonitor:
         self.no_motion_warning_reported = False
         self.servo_status = 0
         self.collision_scale = 1.0
+        self.latest_diagnostic = {}
+        self.last_diagnostic_at = 0.0
+        self.geometry = {}
+        self.finger_closure = None
+        self.grip_latched = False
+        self.release_phase = None
+        self.feedback_file = rospy.get_param("~feedback_file", "")
+        self.last_feedback_write = 0.0
+        self.direction_blocked_since = None
+        rospy.Subscriber("/shared_teleop/geometric_filter_diagnostics", String,
+                         self.geometry_callback, queue_size=1)
+        rospy.Subscriber("/shared_teleop/finger_diagnostics", String,
+                         self.finger_callback, queue_size=1)
         rospy.Subscriber(
             "/shared_teleop/trend_diagnostics",
             String,
@@ -67,6 +82,8 @@ class LiveTeleopTerminalMonitor:
             diagnostic = json.loads(message.data)
         except (TypeError, ValueError):
             return
+        self.latest_diagnostic = diagnostic
+        self.last_diagnostic_at = time.monotonic()
         token = str(diagnostic.get("active_reference_token", ""))
         accepted = bool(diagnostic.get("reference_ready", False) and token)
         if not accepted or token == self.reference_token:
@@ -110,7 +127,73 @@ class LiveTeleopTerminalMonitor:
     def collision_scale_callback(self, message):
         self.collision_scale = float(message.data)
 
+    def geometry_callback(self, message):
+        try:
+            self.geometry = json.loads(message.data)
+        except (TypeError, ValueError):
+            pass
+
+    def finger_callback(self, message):
+        try:
+            state = json.loads(message.data)
+            self.finger_closure = state.get("normalized_robot_closure")
+            self.grip_latched = bool(state.get("grip_latched"))
+            self.release_phase = state.get("release_phase")
+        except (TypeError, ValueError):
+            pass
+
+    def write_feedback(self):
+        now = time.monotonic()
+        if not self.feedback_file or now - self.last_feedback_write < 0.25:
+            return
+        self.last_feedback_write = now
+        d, g = self.latest_diagnostic, self.geometry
+        p = d.get("current_position")
+        target = d.get("requested_target_position", d.get("target_position"))
+        gap = None if p is None or target is None else float(np.linalg.norm(np.array(target)-p)*100)
+        approved = g.get("approved_velocity")
+        blocked_now = bool(
+            d.get("valid") and g.get("input_valid") and approved is not None
+            and len(approved) == 6 and gap is not None and gap > 1.0
+            and np.linalg.norm(approved[:3]) < 0.0001
+            and np.linalg.norm(approved[3:]) < 0.001
+        )
+        if not blocked_now:
+            self.direction_blocked_since = None
+        elif self.direction_blocked_since is None:
+            self.direction_blocked_since = now
+        direction_blocked = bool(self.direction_blocked_since is not None
+                                 and now - self.direction_blocked_since >= 0.4)
+        limited = bool(g.get("filtered") or (gap is not None and gap > 3))
+        status, level = "正在跟随", "normal"
+        if now - self.last_diagnostic_at > 1.0:
+            status, level = "控制状态未更新，等待连接", "waiting"
+        elif not d.get("reference_ready"):
+            status, level = "张手放稳后按 C，建立零位", "waiting"
+        elif not d.get("valid") or d.get("position_reference_hold_active"):
+            status, level = "手部输入暂不可用，机械臂保持", "limited"
+        elif direction_blocked:
+            status, level = "当前指令方向受限，请撤回或换方向；等待不会自动到达", "limited"
+        elif limited and g.get("self_distance_m", 1) < 0.005:
+            status, level = "接近自身碰撞，请撤回或调整姿态", "limited"
+        elif limited and g.get("world_distance_m", 1) < 0.03:
+            status, level = "接近物体或台面，请调整接近位置", "limited"
+        elif limited and (g.get("singularity_limited") or g.get("joint_limit_limited")):
+            status, level = "当前姿态已接近运动边界，请撤回或调整姿态", "limited"
+        elif gap is not None and gap > 5:
+            status, level = "目标尚未到达，请先停手观察实际末端", "limited"
+        value = dict(monotonic_s=now, status_text=status, level=level,
+                     motion_direction_blocked=direction_blocked,
+                     target_gap_cm=gap, actual_position_m=p,
+                     closure=self.finger_closure, grip_latched=self.grip_latched,
+                     release_phase=self.release_phase)
+        path = Path(self.feedback_file)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(value, ensure_ascii=False))
+        os.replace(str(temporary), str(path))
+
     def tick(self, _event):
+        self.write_feedback()
         if not self.reference_token:
             return
         try:

@@ -77,6 +77,25 @@ class HamerPacketContractTest(unittest.TestCase):
     def setUp(self):
         self.contract = HamerPacketContract("camera_color_optical_frame")
 
+    def test_camera_c_pose_survives_loss_of_its_first_packet(self):
+        value = packet(sequence=12)
+        value["control_reference_pose"] = {
+            "sequence": 10, "stamp": 133.5,
+            "wrist_position_m": [.09, -.18, .68],
+            "palm_rotation_row_major": np.eye(3).reshape(-1).tolist(),
+        }
+        normalized = self.contract.validate(value)
+        self.assertEqual(normalized["control_reference_sequence"], 10)
+        np.testing.assert_allclose(normalized["control_reference_pose"]["position"], [.09, -.18, .68])
+        np.testing.assert_allclose(normalized["position"], [.1, -.2, .7])
+        value = packet(sequence=13)
+        value["control_reference_pose"] = {
+            "sequence": 14, "wrist_position_m": [.09, -.18, .68],
+            "palm_rotation_row_major": np.eye(3).reshape(-1).tolist(),
+        }
+        with self.assertRaisesRegex(ValueError, "future frame"):
+            self.contract.validate(value)
+
     def test_enabled_pose_requires_identity_bound_token(self):
         normalized = self.contract.validate(packet())
         self.assertTrue(normalized["observation_valid"])

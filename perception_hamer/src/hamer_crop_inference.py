@@ -450,15 +450,25 @@ class HamerCropInference:
         cfg.freeze()
 
         try:
-            model = HAMER.load_from_checkpoint(
-                str(self.checkpoint_path),
-                strict=False,
-                cfg=cfg,
-                init_renderer=False,
-                map_location="cpu",
-            )
+            # Lightning's loader materializes a full CPU checkpoint alongside
+            # the initialized model. That peak caused earlyoom to terminate
+            # live HaMeR on this 16 GB Gazebo host. Map the existing checkpoint
+            # and adopt its tensors before moving the model onto the GPU.
+            checkpoint = torch.load(
+                str(self.checkpoint_path), map_location="cpu", mmap=True)
+            model = HAMER(cfg=cfg, init_renderer=False)
+            model.load_state_dict(checkpoint["state_dict"], strict=True, assign=True)
+            del checkpoint
             model = model.to(device)
             model.eval()
+            if self.precision == "fp16" and device.type == "cuda":
+                # Autocast was recasting the large Linear/Conv weights on
+                # every frame. Keep the same fp16 operands resident instead;
+                # normalization, pose parameters and MANO remain fp32.
+                for subnet in (model.backbone, model.mano_head):
+                    for layer in subnet.modules():
+                        if isinstance(layer, (torch.nn.Linear, torch.nn.Conv2d)):
+                            layer.half()
         except Exception as exc:
             raise HamerInferenceError(f"failed to load HaMeR checkpoint: {exc}") from exc
         self._torch = torch

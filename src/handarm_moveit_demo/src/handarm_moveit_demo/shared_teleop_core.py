@@ -496,34 +496,106 @@ class CollisionRetreatResult:
     angular_retreat_allowed: bool
 
 
-class BlockedPoseTarget:
-    """Discard unexecuted pose displacement when the safety guard rejects it.
+def sampled_velocity_freshness(age_s, sample_interval_s, observation_invalid=False):
+    """Hold a measured velocity for one observed sample interval, then fade.
 
-    Offsets persist until the next operator reference capture. A hand reversal
-    therefore starts from the stopped tool pose, without first cancelling a
-    distant, unreachable target. This does not authorize any robot motion.
+    A normal camera inter-frame gap is not a zero-velocity measurement.
+    Explicit loss still stops feedforward immediately; no future pose is made.
+    """
+    if observation_invalid or not math.isfinite(age_s) or not math.isfinite(sample_interval_s):
+        return 0.0
+    interval = float(np.clip(sample_interval_s, 0.02, 0.20))
+    return float(np.clip(1.0 - max(0.0, age_s-interval)/(0.5*interval), 0.0, 1.0))
+
+
+class CZeroRecoveryTarget:
+    """Bound an unexecuted excursion, with the original C as anchor.
+
+    Absolute pose error can still point into a limit after the hand reverses.
+    Compress while stopped by a constraint, before a release can chase the
+    accumulated target. A return maps the remaining excursion to unchanged C.
+    Once clear, rejoin the absolute mapping at bounded speed; never add a
+    permanent position or orientation offset to the zero.
     """
 
     def __init__(self):
         self.reset()
 
     def reset(self):
-        self.position_offset = np.zeros(3)
-        self.rotation_offset = np.eye(3)
+        self.translation_gain = np.ones(3)
+        self.translation_sign = np.zeros(3)
+        self.rotation_gain = 1.0
+        self.rotation_direction = np.zeros(3)
 
-    def apply(self, position, rotation):
-        return (np.asarray(position) + self.position_offset,
-                self.rotation_offset @ np.asarray(rotation))
-
-    def discard(self, requested_position, requested_rotation,
-                current_position, current_rotation,
-                linear_blocked, angular_blocked):
-        if linear_blocked:
-            self.position_offset = (
-                np.asarray(current_position) - np.asarray(requested_position))
-        if angular_blocked:
-            self.rotation_offset = project_to_so3(
-                np.asarray(current_rotation) @ np.asarray(requested_rotation).T)
+    def apply(self, requested_position, requested_rotation,
+              current_position, current_rotation, zero_position, zero_rotation,
+              hand_velocity, translation_blocked=False, rotation_blocked=False,
+              current_velocity=None, dt_s=0.0):
+        zero = _finite_vector(zero_position, 3, "zero_position")
+        requested = _finite_vector(requested_position, 3, "requested_position")
+        current = _finite_vector(current_position, 3, "current_position")
+        velocity = _finite_vector(hand_velocity, 6, "hand_velocity").copy()
+        measured = (np.zeros(6) if current_velocity is None else
+                    _finite_vector(current_velocity, 6, "current_velocity"))
+        delta = requested - zero
+        reached = current - zero
+        blocked_axes = np.broadcast_to(np.asarray(translation_blocked, dtype=bool), (3,))
+        dt = float(np.clip(dt_s, 0.0, 0.05))
+        for axis in range(3):
+            if (abs(delta[axis]) <= 0.001 or
+                    delta[axis] * self.translation_sign[axis] < 0.0):
+                self.translation_gain[axis] = 1.0
+                self.translation_sign[axis] = 0.0
+            if (blocked_axes[axis]
+                    and abs(measured[axis]) < 0.005
+                    and abs(delta[axis]) > 0.001):
+                gain = float(np.clip(reached[axis] / delta[axis], 0.0, 1.0))
+                if gain < min(0.98, self.translation_gain[axis]):
+                    self.translation_gain[axis] = gain
+                    self.translation_sign[axis] = np.sign(delta[axis])
+            elif (not blocked_axes[axis] and self.translation_gain[axis] < 1.0
+                  and delta[axis] * velocity[axis] >= -1e-8):
+                # Geometry permission alone is not actuator progress. Keep
+                # rejoining at most 1 cm ahead of the measured endpoint so a
+                # slow/stopped downstream stage cannot rebuild a large target
+                # backlog and release it as a carrying-motion burst.
+                reached_gain = float(np.clip(
+                    (reached[axis] + np.sign(delta[axis]) * 0.01)
+                    / delta[axis], 0.0, 1.0))
+                self.translation_gain[axis] = min(
+                    reached_gain, self.translation_gain[axis] +
+                    0.10 * dt / max(abs(delta[axis]), 0.001))
+        zero_rotation = project_to_so3(zero_rotation)
+        rotation_vector = so3_log(project_to_so3(requested_rotation) @ zero_rotation.T)
+        angle = float(np.linalg.norm(rotation_vector))
+        if (angle <= math.radians(1.0) or
+                np.dot(rotation_vector, self.rotation_direction) < 0.0):
+            self.rotation_gain = 1.0
+            self.rotation_direction = np.zeros(3)
+        elif (rotation_blocked
+              and np.linalg.norm(measured[3:]) < math.radians(5.0)):
+            reached_rotation = so3_log(
+                project_to_so3(current_rotation) @ zero_rotation.T)
+            gain = float(np.clip(
+                np.dot(reached_rotation, rotation_vector) / (angle * angle),
+                0.0, 1.0))
+            if gain < min(0.98, self.rotation_gain):
+                self.rotation_gain = gain
+                self.rotation_direction = rotation_vector / angle
+        elif (not rotation_blocked and self.rotation_gain < 1.0
+              and np.dot(rotation_vector, velocity[3:]) >= -1e-8):
+            reached_rotation = so3_log(
+                project_to_so3(current_rotation) @ zero_rotation.T)
+            reached_gain = float(np.clip(
+                (np.dot(reached_rotation, rotation_vector) / angle
+                 + math.radians(2.0)) / angle, 0.0, 1.0))
+            self.rotation_gain = min(reached_gain, self.rotation_gain +
+                math.radians(10.0) * dt / max(angle, math.radians(1.0)))
+        velocity[:3] *= self.translation_gain
+        velocity[3:] *= self.rotation_gain
+        return (zero + self.translation_gain * delta,
+                so3_exp(self.rotation_gain * rotation_vector) @ zero_rotation,
+                velocity)
 
 
 class CollisionRetreatGuard:
@@ -1006,18 +1078,33 @@ class RelativePoseMapper:
                  translation_gain: Sequence[float],
                  rotation_gain: Sequence[float],
                  maximum_relative_translation: Sequence[float],
-                 maximum_relative_rotation_rad: float) -> None:
+                 maximum_relative_rotation_rad: float,
+                 maximum_side_rotation_rad: Optional[float] = None,
+                 positive_side_rotation_gain: Optional[float] = None) -> None:
         self.translation_matrix = project_to_orthogonal(translation_matrix)
         self.rotation_matrix = project_to_so3(rotation_matrix)
         self.translation_gain = _finite_vector(
             translation_gain, 3, "translation_gain")
         self.rotation_gain = _finite_vector(
             rotation_gain, 3, "rotation_gain")
+        self.positive_side_rotation_gain = (
+            self.rotation_gain[0] if positive_side_rotation_gain is None
+            else float(positive_side_rotation_gain))
+        if (not math.isfinite(self.positive_side_rotation_gain) or
+                self.positive_side_rotation_gain < 0.0):
+            raise ValueError("positive side rotation gain must be nonnegative")
         self.maximum_relative_translation = _finite_vector(
             maximum_relative_translation, 3,
             "maximum_relative_translation")
         self.maximum_relative_rotation_rad = float(
             maximum_relative_rotation_rad)
+        self.maximum_side_rotation_rad = (
+            None if maximum_side_rotation_rad is None else
+            float(maximum_side_rotation_rad))
+        if (self.maximum_side_rotation_rad is not None and
+                (not math.isfinite(self.maximum_side_rotation_rad) or
+                 not 0.0 < self.maximum_side_rotation_rad <= math.pi)):
+            raise ValueError("side rotation limit must be in (0, pi]")
         if (np.any(self.translation_gain < 0.0) or
                 np.any(self.rotation_gain < 0.0) or
                 np.any(self.maximum_relative_translation <= 0.0) or
@@ -1047,7 +1134,34 @@ class RelativePoseMapper:
             mapped_rotation_vector *= (
                 self.maximum_relative_rotation_rad / rotation_size)
         target_position = zero_position + mapped_translation
-        target_rotation = zero_rotation @ so3_exp(mapped_rotation_vector)
+        if self.maximum_side_rotation_rad is None:
+            relative_target = so3_exp(mapped_rotation_vector)
+        else:
+            # Ordered tool-zero X/Y/Z angles: side rotation, tilt, then
+            # rotation about the tool axis. This keeps the side angle within
+            # +/-90 even while the operator adjusts the other two axes.
+            mapped_hand = (self.rotation_matrix @
+                           project_to_so3(relative_hand_rotation) @
+                           self.rotation_matrix.T)
+            tilt = math.asin(float(np.clip(mapped_hand[0, 2], -1.0, 1.0)))
+            if abs(math.cos(tilt)) > 1e-8:
+                side = math.atan2(-mapped_hand[1, 2], mapped_hand[2, 2])
+                roll = math.atan2(-mapped_hand[0, 1], mapped_hand[0, 0])
+            else:
+                side = math.atan2(mapped_hand[2, 1], mapped_hand[1, 1])
+                roll = 0.0
+            side_gain = (self.positive_side_rotation_gain if side >= 0.0
+                         else self.rotation_gain[0])
+            side = float(np.clip(side * side_gain,
+                -self.maximum_side_rotation_rad, self.maximum_side_rotation_rad))
+            # Amplified roll must stop at the configured angular range,
+            # rather than wrapping back after a full turn of the target.
+            roll = float(np.clip(roll * self.rotation_gain[2],
+                -self.maximum_relative_rotation_rad, self.maximum_relative_rotation_rad))
+            relative_target = (so3_exp([side, 0, 0]) @
+                so3_exp([0, tilt * self.rotation_gain[1], 0]) @
+                so3_exp([0, 0, roll]))
+        target_rotation = zero_rotation @ relative_target
         return target_position, project_to_so3(target_rotation)
 
     def map_target_velocity(
@@ -1055,7 +1169,8 @@ class RelativePoseMapper:
             hand_zero_rotation: Sequence[Sequence[float]],
             robot_zero_rotation: Sequence[Sequence[float]],
             relative_hand_position: Optional[Sequence[float]] = None,
-            robot_zero_position: Optional[Sequence[float]] = None) -> np.ndarray:
+            robot_zero_position: Optional[Sequence[float]] = None,
+            relative_hand_rotation: Optional[Sequence[Sequence[float]]] = None) -> np.ndarray:
         """Map measured hand motion to the target-pose feed-forward twist.
 
         Linear motion is expressed in fixed camera axes.  Angular motion from
@@ -1073,6 +1188,21 @@ class RelativePoseMapper:
         angular_tool_zero = (
             self.rotation_matrix @ angular_hand_zero) * self.rotation_gain
         angular_base = robot_zero @ angular_tool_zero
+        if (relative_hand_rotation is not None
+                and (self.maximum_side_rotation_rad is not None or
+                     not np.allclose(self.rotation_gain, np.ones(3)))):
+            # Different angle gains do not commute with finite 3-D rotation.
+            # Differentiate the actual pose map so yaw amplification cannot
+            # give mixed pitch/roll motion an inconsistent feed-forward twist.
+            relative = project_to_so3(relative_hand_rotation)
+            derivative_dt = 1.0e-4
+            advanced = so3_exp(angular_hand_zero * derivative_dt) @ relative
+            _, current_target = self.map(
+                np.zeros(3), relative, np.zeros(3), robot_zero)
+            _, advanced_target = self.map(
+                np.zeros(3), advanced, np.zeros(3), robot_zero)
+            angular_base = so3_log(
+                advanced_target @ current_target.T) / derivative_dt
         return np.concatenate((linear, angular_base))
 
     def mapping_diagnostics(self) -> Dict[str, object]:

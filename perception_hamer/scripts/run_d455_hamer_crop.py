@@ -70,6 +70,7 @@ from perception_hamer.src.mano_wrist_reference import (
     build_mano_wrist_definition,
     estimate_mano_wrist_frame,
 )
+from perception_hamer.src.palm_frame import rotation_matrix_to_quaternion_xyzw
 from perception_hamer.src.realtime_hamer_pipeline import (
     LatestFrameSlot,
     LiveFramePacket,
@@ -319,10 +320,12 @@ def _capture_worker(
     pending: PendingReinitialization,
     async_detector: Optional["AsyncMediaPipeDetection"],
     stop: threading.Event,
+    cpu_affinity: str = "",
 ) -> None:
     sequence = 0
     last_detector_confirmation_serial = -1
     try:
+        _apply_thread_cpu_affinity(cpu_affinity)
         while not stop.is_set():
             frame = capture.wait_for_frame()
             presence = None
@@ -1135,33 +1138,11 @@ def _display_worker(
             # C is the only live-teleoperation enable/re-zero action. Lock
             # first so an invalid visible pose cannot leave an older robot
             # reference active.
-            teleop_control_gate.disable("OPERATOR_REQUESTED_NEW_C_REFERENCE")
+            teleop_control_gate.request_confirmation(pose_display.snapshot().sequence)
             pose_display.clear_zero("operator_reference_requested")
-            zero_set = bool(
-                pose_matches_visible_hand
-                and pose_display.calibrate_from_latest(
-                    expected_presence_generation=overlay_presence_generation
-                )
-            )
-            reference_epoch = (
-                teleop_control_gate.confirm(
-                    int(overlay_presence_generation),
-                    int(active_hand_generation),
-                    bool(result.is_right),
-                )
-                if zero_set else None
-            )
             print(
-                (
-                    "6D wrist/robot control reference requested by C "
-                    "(epoch {}); hold the hand steady until Gazebo starts "
-                    "following.".format(reference_epoch)
-                    if zero_set
-                    else
-                    "C reference rejected and robot control remains LOCKED: "
-                    "current MANO/D455 pose is invalid."
-                ),
-                flush=True,
+                "C requested: hold the open hand steady; waiting up to 2 s "
+                "for four stable fresh poses.", flush=True,
             )
         pose_delta = pose_display.snapshot(
             "display_pose_not_current:" + str(failure_reason or "invalid")
@@ -1171,6 +1152,13 @@ def _display_worker(
         # Append, rather than overlay, so the existing exact-frame RGB/MANO
         # rendering remains pixel-for-pixel visible.
         canvas = draw_hand_pose_panel(canvas, pose_delta)
+        if teleop_control_gate.confirmation_pending:
+            cv2.putText(
+                canvas, "C: HOLD OPEN HAND - waiting for fresh pose",
+                (canvas.shape[1] - 398, canvas.shape[0] - 35),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.44, (60, 210, 255),
+                1, cv2.LINE_AA,
+            )
         displayed += 1
         display_hz = displayed/max(1.0e-9, time.monotonic()-started)
         cv2.putText(
@@ -1348,7 +1336,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--inference-cpu-affinity",
         default="",
-        help="optional taskset CPU list reserved for HaMeR/capture threads",
+        help="optional taskset CPU list reserved for HaMeR threads",
+    )
+    parser.add_argument(
+        "--capture-cpu-affinity",
+        default="",
+        help="optional CPU list for RealSense recording/alignment and ROI capture",
     )
     parser.add_argument(
         "--sidecar-cpu-affinity",
@@ -1430,9 +1423,23 @@ def _apply_process_cpu_affinity(cpu_affinity: str) -> None:
     print("HaMeR/capture CPU affinity: {}".format(affinity), flush=True)
 
 
+def _apply_thread_cpu_affinity(cpu_affinity: str) -> None:
+    if not str(cpu_affinity).strip():
+        return
+    result = subprocess.run(
+        ["taskset", "-pc", str(cpu_affinity), str(threading.get_native_id())],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if result.returncode:
+        raise RuntimeError("cannot set capture thread affinity: " + result.stdout)
+
+
 def main() -> int:
     args = _parse_args()
     _apply_process_cpu_affinity(args.inference_cpu_affinity)
+    # KLT runs beside inference on the same small CPU set. OpenCV's default
+    # 12-worker pool was competing with HaMeR and increasing frame-age tails.
+    # The same image operations remain in place; only CPU scheduling changes.
+    cv2.setNumThreads(1)
     if not 0.0 < args.roi_smoothing_alpha <= 1.0:
         raise SystemExit("--roi-smoothing-alpha must be in (0, 1]")
     if args.orientation_filter_time_constant_s <= 0.0:
@@ -1516,7 +1523,8 @@ def main() -> int:
         "mano_mean_params_exists")):
         raise SystemExit("HaMeR assets are incomplete: " + repr(asset_status))
 
-    capture = D455Capture(width=640, height=480, fps=30, require_superspeed=False)
+    capture = D455Capture(width=640, height=480, fps=30, require_superspeed=False,
+                         record_path=os.environ.get("TELEOP_RGBD_RECORDING_FILE"))
     output_dir: Optional[Path] = None
     records_file = None
     video = None
@@ -1644,7 +1652,15 @@ def main() -> int:
                 flush=True,
             )
         mano_faces = None if args.no_mesh_overlay else mano_topology
-        capture.start()
+        # Native RealSense/SQLite workers inherit the calling thread's CPU
+        # set. Keep them off the inference cores, then restore only this
+        # thread; do not repin all the newly created SDK workers afterward.
+        inference_cpus = os.sched_getaffinity(0)
+        try:
+            _apply_thread_cpu_affinity(args.capture_cpu_affinity)
+            capture.start()
+        finally:
+            os.sched_setaffinity(0, inference_cpus)
         seed_frame = capture.wait_for_stable_frames(consecutive=8)
         if not args.no_display:
             display = LiveDisplay(
@@ -1821,7 +1837,7 @@ def main() -> int:
         worker = threading.Thread(
             target=_capture_worker,
             args=(capture, tracker, slot, preview_slot if display is not None else None,
-                  pending, async_detector, stop),
+                  pending, async_detector, stop, args.capture_cpu_affinity),
             daemon=True,
         )
         worker.start()
@@ -2166,6 +2182,23 @@ def main() -> int:
                             packet.frame.rgb.shape[1],
                             packet.frame.rgb.shape[0],
                         )
+                        finger_presence = post_presence or presence_state
+                        finger_hand_visible = bool(
+                            finger_presence["valid"]
+                            and not finger_presence.get("consecutive_negative_results", 0)
+                            and _roi_detector_alignment(packet.roi, finger_presence)["valid"]
+                            and (finger_presence.get("confirmed_detection") or {}).get(
+                                "landmarks_inside_image", False)
+                        )
+                        estimates["teleop_finger_crop_quality"] = bbox_crop_quality(
+                            packet.roi.bbox, previous_quality_bbox,
+                            packet.frame.rgb.shape[1], packet.frame.rgb.shape[0],
+                            content_fully_visible=finger_hand_visible,
+                        )
+                        estimates["teleop_finger_visible_fraction"] = (
+                            1.0 if finger_hand_visible else result.quality.get(
+                                "bbox_visible_fraction", 0.0)
+                        )
                         previous_quality_bbox = np.asarray(
                             packet.roi.bbox, dtype=np.float64
                         ).copy()
@@ -2407,6 +2440,11 @@ def main() -> int:
                         active_hand_generation,
                         reference_depth_m=previous_control_depth_m,
                         reference_depth_age_s=reference_depth_age_s,
+                        required_reference_kind=(
+                            "MANO_WRIST_RING_16"
+                            if args.control_reference == "mano-wrist-ring"
+                            else "MANO_JOINT_0_PALM_FRAME_LEGACY"
+                        ),
                     )
                     diagnostics = pose_packet_payload.get(
                         "position_diagnostics"
@@ -2462,9 +2500,6 @@ def main() -> int:
                     estimates["forearm_fusion"] = pose_packet_payload.get(
                         "forearm_fusion"
                     )
-                    pose_delta = pose_display.update_from_packet(
-                        pose_packet_payload, presence_generation
-                    )
                     if (
                         not teleop_control_gate.enabled
                         and not measurement_ready_announced
@@ -2479,7 +2514,9 @@ def main() -> int:
                             fingers.get("valid") is True
                             and flexion.shape == (5,)
                             and np.all(np.isfinite(flexion))
-                            and np.all(flexion <= 0.40)
+                            # The live retargeter uses four-finger closure;
+                            # a naturally bent thumb is not a closed hand.
+                            and np.all(flexion[1:] <= 0.40)
                             and float(fingers.get("confidence", 0.0)) >= 0.55
                         )
                         if open_finger_sample:
@@ -2621,6 +2658,53 @@ def main() -> int:
                     publish_ready_monotonic - postprocess_started_monotonic,
                 ),
             }
+            # Display and C calibration must use the same final observation
+            # as the controller. Previously the panel announced VALID before
+            # the latency check discarded that very pose for UDP.
+            udp_payload = pose_packet_payload
+            if udp_payload is None:
+                udp_payload = build_invalid_teleop_packet(
+                    teleop_session_id,
+                    processed - 1,
+                    timestamp_s,
+                    pose_failure_reason or failure_reason
+                    or "HAMER_POSE_UNAVAILABLE",
+                    presence_generation,
+                    active_hand_generation,
+                    hand_is_right=(
+                        identity_hand_is_right if presence_valid else None
+                    ),
+                )
+            udp_payload["timing"] = dict(timing_payload)
+            udp_payload = invalidate_stale_teleop_observation(
+                udp_payload, args.teleop_maximum_pipeline_latency_s
+            )
+            if udp_payload.get("valid") is True:
+                pose_delta = pose_display.update_from_packet(
+                    udp_payload, presence_generation
+                )
+            else:
+                pose_failure_reason = str(udp_payload["invalid_reason"])
+                pose_delta = pose_display.invalidate(
+                    pose_failure_reason, presence_generation
+                )
+            confirmation_was_pending = teleop_control_gate.confirmation_pending
+            reference_epoch = teleop_control_gate.confirm_packet(
+                udp_payload,
+                lambda: pose_display.calibrate_from_latest(
+                    expected_presence_generation=presence_generation
+                ),
+            )
+            if reference_epoch is not None:
+                pose_delta = pose_display.snapshot()
+                print(
+                    "C accepted on the same displayed/control frame: epoch {}, sequence {}".format(
+                        reference_epoch, udp_payload["sequence"]
+                    ), flush=True,
+                )
+            elif confirmation_was_pending and not teleop_control_gate.confirmation_pending:
+                print("C request expired: pose was not stable; hold the open hand steady and press C again.",
+                      flush=True)
             record: Dict[str, Any] = {
                 "inference_ms": None if result is None else 1000.0 * result.inference_time_s,
                 "timing": timing_payload,
@@ -2672,28 +2756,6 @@ def main() -> int:
                 })
             if teleop_socket is not None:
                 try:
-                    udp_payload = pose_packet_payload
-                    if udp_payload is None:
-                        udp_payload = build_invalid_teleop_packet(
-                            teleop_session_id,
-                            processed - 1,
-                            timestamp_s,
-                            pose_failure_reason
-                            or failure_reason
-                            or pose_delta.reason
-                            or "HAMER_POSE_UNAVAILABLE",
-                            presence_generation,
-                            active_hand_generation,
-                            hand_is_right=(
-                                identity_hand_is_right
-                                if presence_valid else None
-                            ),
-                        )
-                    udp_payload["timing"] = dict(timing_payload)
-                    udp_payload = invalidate_stale_teleop_observation(
-                        udp_payload,
-                        args.teleop_maximum_pipeline_latency_s,
-                    )
                     teleop_packet = teleop_control_gate.decorate(
                         udp_payload, teleop_session_id
                     )

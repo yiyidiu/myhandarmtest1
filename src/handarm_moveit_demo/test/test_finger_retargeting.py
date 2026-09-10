@@ -45,6 +45,80 @@ def retargeter(**overrides):
 
 
 class ThreeFingerRetargeterTest(unittest.TestCase):
+    def test_power_grip_releases_all_contacts_together_from_measured_angles(self):
+        controller = retargeter(
+            grip_latch_enabled=True,
+            one_euro_minimum_cutoff_hz=1000.0,
+            maximum_single_frame_innovation=1.0,
+            maximum_human_flexion_rate_per_s=100.0,
+        )
+        controller.open_target[1:] = 0.20
+        _, baseline, current = self.calibrate(controller)
+        timestamp = 10.15
+
+        def observe(value, measurement=None):
+            nonlocal timestamp, current
+            timestamp += 0.05
+            result = controller.update(
+                timestamp, "c:1", value, 0.99,
+                current if measurement is None else measurement)
+            if result.command_target is not None:
+                current = result.command_target.copy()
+            return result
+
+        for _ in range(30):
+            result = observe(baseline + 0.60)
+        self.assertTrue(controller.grip_latched)
+        np.testing.assert_allclose(result.command_target, controller.close_target)
+        for _ in range(8):
+            result = observe(baseline + 0.30)
+            np.testing.assert_allclose(result.desired_target, controller.close_target)
+
+        # Unequal contact angles in the 18:25 video must not leave one
+        # finger applying preload after the other fingers begin opening.
+        contact_angles = np.array([0.18, 0.783, 0.405, 0.664])
+        for _ in range(5):
+            result = observe(baseline, contact_angles)
+            if controller.release_phase is not None:
+                break
+        self.assertEqual(controller.release_phase, "OPEN_ALL")
+        self.assertFalse(controller.grip_latched)
+        self.assertTrue(np.all(result.command_target[1:] < contact_angles[1:]))
+        progress = ((contact_angles[1:] - result.command_target[1:]) /
+                    (contact_angles[1:] - controller.open_target[1:]))
+        np.testing.assert_allclose(progress, [progress[0]] * 3)
+        np.testing.assert_allclose(result.desired_target[1:], [0.20] * 3)
+
+        for _ in range(25):
+            result = observe(baseline)
+        self.assertIsNone(controller.release_phase)
+        np.testing.assert_allclose(result.command_target, controller.open_target)
+
+    def test_unused_bent_thumb_does_not_block_recorded_open_hand(self):
+        controller = retargeter()
+        controller.mixing[1] = [0.0, 0.25, 0.25, 0.25, 0.25]
+        opened = [0.44694, 0.24340, 0.14263, 0.18371, 0.23119]
+        for i in range(4):
+            result = controller.update(10 + .05*i, "c:recorded", opened, .97, [.2]*4)
+        self.assertTrue(result.calibrated)
+        self.assertEqual(result.status, "OPEN_BASELINE")
+        # A fist still cannot serve as the open reference.
+        fist = [0.47076, 0.81420, 0.83584, 0.82917, 0.75894]
+        result = controller.update(11., "c:new", fist, .97, [.2]*4)
+        self.assertFalse(result.calibrated)
+        self.assertEqual(result.status, "C_REFERENCE_HAND_NOT_OPEN")
+
+    def test_missing_vision_preserves_recorded_contact_preload(self):
+        # 2026-09-07 recording, 67.54 s: an invalid image used to replace
+        # f2's 0.85 rad command by its blocked 0.40 rad measured position.
+        command = np.asarray([0.18, 0.85, 0.85, 0.90])
+        measured = np.asarray([0.177, 0.838, 0.400, 0.664])
+        hold = frozen_finger_hold_target(None, measured, command)
+        np.testing.assert_array_equal(hold, command)
+        for drift in (0.0, -0.02, -0.05):
+            hold = frozen_finger_hold_target(hold, measured + drift, command)
+            np.testing.assert_array_equal(hold, command)
+
     def test_invalid_heartbeat_hold_target_does_not_chase_joint_drift(self):
         first_measurement = np.asarray([0.05, 0.04, 0.03, 0.04])
         hold = frozen_finger_hold_target(None, first_measurement)

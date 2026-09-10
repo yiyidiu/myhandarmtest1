@@ -109,6 +109,14 @@ class HamerInputAdapter:
         message.control_enabled = normalized["control_enabled"]
         message.control_reference_epoch = normalized["control_reference_epoch"]
         message.control_reference_token = normalized["control_reference_token"]
+        reference = normalized["control_reference_pose"]
+        message.control_reference_pose_present = reference is not None
+        if reference is not None:
+            message.control_reference_sequence = normalized["control_reference_sequence"]
+            pose = message.control_reference_wrist_pose
+            pose.position.x, pose.position.y, pose.position.z = reference["position"]
+            (pose.orientation.x, pose.orientation.y, pose.orientation.z,
+             pose.orientation.w) = reference["quaternion"]
         message.valid = bool(
             normalized["observation_valid"] and normalized["control_enabled"]
         )

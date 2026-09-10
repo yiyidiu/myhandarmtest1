@@ -3,12 +3,15 @@
   <!-- New opt-in EGM position-reference profile. The established velocity
        entry live_human_ground_gazebo_teleop.launch is intentionally untouched. -->
   <arg name="gazebo_gui" default="true" />
+  <arg name="grasp_alignment_views" default="false" />
   <arg name="with_ground_object" default="true" />
   <arg name="enable_logger" default="true" />
   <arg name="input_source" default="udp"
        doc="udp for the live camera; direction_test is reserved for automated full-chain validation" />
   <arg name="mapping_profile" default="current_linear"
-       doc="current_linear is the uncalibrated-safe 0.6x relative mapping; camera_ground_workspace requires a measured per-operator range" />
+       doc="current_linear uses the shared translation/rotation gains; camera_ground_workspace requires a measured per-operator range" />
+  <arg name="constrained_velocity_projection" default="false"
+       doc="Gazebo constrained differential IK; false preserves the previous controller for comparison." />
   <arg name="hamer_input_timeout_s" default="0.40" />
   <arg name="hamer_maximum_pipeline_latency_s" default="0.20" />
   <arg name="use_moveit_servo_safety" default="true"
@@ -24,7 +27,8 @@
   <arg name="camera_workspace_calibration_file"
        default="$(find handarm_moveit_demo)/config/camera_workspace_calibration.yaml" />
   <arg name="safe_initial_joint_positions"
-       default=" -J f1j1 0.051 -J f1j2 0.0317 -J f2j1 0.0227 -J f3j2 0.0363 -J joint_1 0.0 -J joint_2 0.0 -J joint_3 0.0 -J joint_4 0.0 -J joint_5 1.5707963267948966 -J joint_6 0.0" />
+       default=" -J f1j1 0.18 -J f1j2 0.08726646259971647 -J f2j1 0.08726646259971647 -J f3j2 0.08726646259971647 -J joint_1 0.0 -J joint_2 0.0 -J joint_3 0.0 -J joint_4 0.0 -J joint_5 1.5707963267948966 -J joint_6 0.0"
+       doc="Restore the user-approved GitHub 09f9bd4 initial arm pose; arrange the workcell around this reference." />
   <arg name="empty_ground_world"
        default="$(find handarm_sim_demo)/worlds/handarm_ground_workspace.world" />
   <arg name="ground_object_world"
@@ -49,6 +53,8 @@
          value="$(arg camera_workspace_calibration_file)" />
     <arg name="safe_initial_joint_positions"
          value="$(arg safe_initial_joint_positions)" />
+    <arg name="initial_arm_reference"
+         value="[0.0, 0.0, 0.0, 0.0, 1.5707963267948966, 0.0]" />
     <arg name="legacy_moveit_servo_reference"
          value="$(arg legacy_moveit_servo_reference)" />
     <arg name="stable_position_reference_profile"
@@ -56,6 +62,9 @@
     <arg name="hand_stability_profile"
          value="$(arg hand_stability_profile)" />
   </include>
+
+  <param name="/shared_teleop/control/constrained_velocity_projection"
+         value="$(arg constrained_velocity_projection)" />
 
   <!-- Gazebo models are not automatically visible to MoveIt. Mirror the
        ground and active objects into PlanningScene before live acceptance. -->
@@ -66,5 +75,14 @@
     <param name="scenario" value="$(arg planning_scene_scenario)" />
     <param name="startup_timeout" value="90.0" />
     <param name="wait_for_startup_ready" value="false" />
+    <param name="allow_grasp_contacts" value="true" />
   </node>
+
+  <node if="$(arg grasp_alignment_views)" name="grasp_alignment_views"
+        pkg="handarm_sim_demo" type="grasp_alignment_views.py" output="screen">
+    <param name="rate_hz" value="8.0" />
+    <env name="GDK_SCALE" value="1" />
+    <env name="GDK_DPI_SCALE" value="1" />
+  </node>
+
 </launch>

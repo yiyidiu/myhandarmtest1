@@ -75,7 +75,8 @@ class EgmPositionReferenceModel:
             command_timeout_s: float = 0.10,
             joint_limit_margin_rad: float = 0.01,
             maximum_step_dt_s: float = 0.02,
-            maximum_following_error: Optional[Sequence[float]] = None):
+            maximum_following_error: Optional[Sequence[float]] = None,
+            coordinated_velocity_changes: bool = False):
         self.joint_names = tuple(str(name) for name in joint_names)
         if not self.joint_names or len(set(self.joint_names)) != len(self.joint_names):
             raise ValueError("joint_names must be non-empty and unique")
@@ -93,6 +94,7 @@ class EgmPositionReferenceModel:
             "maximum_velocity", maximum_velocity, size)
         self.maximum_acceleration = _finite_vector(
             "maximum_acceleration", maximum_acceleration, size)
+        self.coordinated_velocity_changes = bool(coordinated_velocity_changes)
         if maximum_following_error is None:
             self.maximum_following_error = np.full(
                 size, float("inf"), dtype=float)
@@ -228,9 +230,18 @@ class EgmPositionReferenceModel:
 
         if dt > 0.0:
             maximum_delta = self.maximum_acceleration * dt
-            delta = np.clip(
-                desired_velocity - self.feedforward_velocity,
-                -maximum_delta, maximum_delta)
+            requested_delta = desired_velocity - self.feedforward_velocity
+            if self.coordinated_velocity_changes:
+                # Preserve the coordinated change of all six joint rates.
+                # Independent clipping broke their Cartesian cancellation
+                # near the recorded elbow singularity and produced a large
+                # vertical/rotational swing during a lateral hand motion.
+                active = np.abs(requested_delta) > 1e-12
+                fraction = min(1.0, float(np.min(
+                    maximum_delta[active] / np.abs(requested_delta[active])))) if np.any(active) else 1.0
+                delta = fraction * requested_delta
+            else:
+                delta = np.clip(requested_delta, -maximum_delta, maximum_delta)
             self.feedforward_velocity = np.clip(
                 self.feedforward_velocity + delta,
                 -self.maximum_velocity, self.maximum_velocity)

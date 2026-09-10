@@ -30,9 +30,9 @@ reference:
   # receiver must see the locked state once, or a newer C-token edge.
   require_new_c_after_receiver_start: true
   allow_automatic_rezero: false
-  # Translation stays in fixed D455 optical axes; orientation is the
-  # C-zero-local MANO delta right-multiplied onto the captured tool0 pose.
-  direction_basis: FIXED_CAMERA_TRANSLATION_AND_C_ZERO_LOCAL_ROTATION
+  # Both inputs use fixed optical axes. C still captures the robot's zero
+  # pose; the inclination of the user's palm at C must not mix input axes.
+  direction_basis: FIXED_CAMERA_INPUT_AND_CAPTURED_TOOL_ZERO
 
 mapping:
   status: APRILTAG_V3_RELATION_PORTED_TO_HAMER_MANO_SIMULATION
@@ -48,13 +48,23 @@ mapping:
   # AprilTag V3 sends q_delta without an axis remap.  Here the same relation
   # maps MANO wrist-local RGB axes directly to captured tool0-local XYZ axes.
   rotation_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+  # Camera +Z (screen clockwise) -> tool-zero +X side rotation;
+  # camera +X -> -Y and camera +Y -> -Z preserve the established directions.
+  camera_rotation_to_tool_zero: [[0.0, 0.0, 1.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]]
   # Mapped robot axes are base X/Y/Z: camera depth (forward/back), image
   # left/right, and image up/down respectively.
-  # Base Y is the camera left/right axis. A 23.3 cm hand displacement can
-  # now request the side objects at +/-28 cm instead of requiring 35 cm.
-  translation_gain: [0.8, 1.2, 1.2]
-  # q_target = q_robot_zero * q_hand_delta: 20 deg hand -> 20 deg tool target.
-  rotation_gain: [1.0, 1.0, 1.0]
+  translation_gain: [1.6, 1.6, 1.2]
+  # Screen clockwise/counterclockwise rotation maps to tool-zero local X.
+  # 70 deg side rotation requests 90 deg. Tool-axis roll uses the requested
+  # 3x ratio (5 deg hand -> 15 deg tool); tilt remains 1:1.
+  rotation_gain: [1.2857142857142858, 1.0, 3.0]
+  # Recorded left side rotation has positive tool-zero X. The operator's
+  # comfortable left excursion is 35 deg; right side retains 70 -> 90 deg.
+  positive_side_rotation_gain: 2.5714285714285716
+  maximum_side_rotation_deg: 90.0
+  # Recorded grasp/combined motion overshot a bounded target by 1.69 deg.
+  # Keep a 2-deg tracking reserve below the user's actual 90-deg limit.
+  side_rotation_tracking_margin_deg: 2.0
 
 # Select these profiles with the private ``mapping_profile`` parameter on the
 # trend and output-adapter nodes.  ``current_linear`` is handled by the legacy
@@ -118,14 +128,12 @@ mapping_profiles:
       boundary_margin_m: 0.010
       soft_margin_m: 0.050
 
-# A visually pure wrist roll from monocular MANO often carries substantial
-# pitch/yaw components.  Near a side grasp those coupled components drive the
-# IRB120 wrist toward joint_5 limits asymmetrically.  In the captured C-zero
-# local frame, smoothly isolate dominant +/-X roll while leaving its angle
-# exactly 1:1.  The rule is sign-symmetric and fades to zero for ordinary
-# mixed-axis motion below 30 degrees.
+# Retained only as an opt-in legacy diagnostic; live control preserves all
+# three rotation components and caps the side angle in RelativePoseMapper.
 side_grasp_projection:
-  enabled: true
+  # The 13:43 recording proves this projection erased intentional roll at
+  # side grasps. Bound the side angle in the mapper; retain the other axes.
+  enabled: false
   local_axis: x
   blend_start_deg: 30.0
   blend_full_deg: 55.0
@@ -198,11 +206,15 @@ safety:
   emergency_stop_latched: false
 
 workspace:
-  # Preset boundary only. This is not unknown-obstacle avoidance.
+  # Non-binding envelope from the URDF chain: shoulder z=0.290 m;
+  # sum of remaining link offsets to tool0 is 0.884 m. This box contains
+  # that sphere, including the soft margin. It does NOT certify reachability.
+  # Actual allowable motion is decided by joint/singularity limits and the
+  # swept full-robot self/world collision guard at the current orientation.
   reference_link: tool0
-  minimum_base_m: [0.15, -0.55, 0.05]
-  maximum_base_m: [0.75, 0.55, 0.85]
-  soft_margin_m: 0.05
+  minimum_base_m: [-0.90, -0.90, -0.61]
+  maximum_base_m: [0.90, 0.90, 1.19]
+  soft_margin_m: 0.005
 
 transforms:
   flange_to_palm_center:
@@ -254,11 +266,9 @@ gesture:
 finger_retargeting:
   joint_names: [f1j1, f1j2, f2j1, f3j2]
   source_mixing_matrix:
-    - [0.0, 1.0, 0.0, 0.0, 0.0]  # human index -> robot outer finger f1
-    # The opposed finger completes a power grasp. The recorded thumb flexion
-    # barely changes during closure, so use the four-finger grasp excursion.
     - [0.0, 0.25, 0.25, 0.25, 0.25]
-    - [0.0, 0.0, 0.5, 0.3, 0.2]  # remaining fingers -> robot outer f3
+    - [0.0, 0.25, 0.25, 0.25, 0.25]
+    - [0.0, 0.25, 0.25, 0.25, 0.25]
   minimum_confidence: 0.55
   calibration_samples: 4
   reference_max_flexion: [0.40, 0.40, 0.40, 0.40, 0.40]
@@ -267,7 +277,11 @@ finger_retargeting:
   # about 0.12 despite rigid-motion invariance of the geometric feature.
   # Ignore that model-level motion/scale coupling before robot mapping.
   human_flexion_deadband: [0.15, 0.15, 0.15]
-  human_close_excursion: [0.60, 0.60, 0.60]
+  # Use the mean of four long fingers for all three robot fingers. The
+  # 13:43 sideways fist had a weak index estimate but clear overall closure;
+  # individual index control left one finger at only 40% while carrying.
+  human_close_excursion: [0.32, 0.32, 0.32]
+  grip_latch_enabled: true
   one_euro_minimum_cutoff_hz: 2.0
   one_euro_beta: 0.15
   one_euro_derivative_cutoff_hz: 1.0
@@ -284,6 +298,8 @@ finger_retargeting:
   input_timeout_s: 0.45
 
 control:
+  # Generic profiles retain legacy control; the live launcher selects the tested controller.
+  constrained_velocity_projection: false
   mode: RELATIVE_POSE_TRACKING
   rate_hz: 50.0
   # AprilTag V3 pose tracker relation: feed-forward + pose-error feedback.
@@ -314,7 +330,9 @@ control:
   rotation_tolerance_deg: 0.0572957795  # 0.001 rad
   maximum_linear_speed_norm_mps: 1.00
   maximum_angular_speed_norm_radps: 10.00
-  maximum_relative_translation_m: [0.25, 0.32, 0.25]
+  # Larger than the 1.768 m diameter of the URDF endpoint envelope.
+  # C no longer imposes an artificial 25 cm motion limit.
+  maximum_relative_translation_m: [2.0, 2.0, 2.0]
   maximum_relative_rotation_deg: 179.0
   # A full-pose IK query is not a valid per-frame gate for local Cartesian
   # Servo tracking: real HaMeR orientation noise made it reject every target
@@ -331,18 +349,13 @@ control:
   # made recovery depend on another C. Servo and the collision guard still
   # emit zero/retreat-safe commands, but C remains an operator-only clutch.
   servo_interlock_statuses: []
-  # A hard singularity halt (2) or joint-bound halt (5) must not strand the
-  # arm.  While either status is present, pass only motion that reduces the
-  # measured tool-pose error to the robot pose captured at C. A recovery
-  # command must point toward that measured robot reference.
+  # Compatibility profiles use the C-zero retreat guard for these statuses.
+  # The live EGM profile instead checks the current geometry and preserves
+  # the original C anchor while releasing a blocked return excursion.
   servo_retreat_statuses: [2, 5]
-  # Discard rejected pose travel so reversing the hand immediately requests
-  # retreat. This shifts the mapping origin until the next operator C capture.
-  # Collision, joint and singularity protection remain in the output chain.
-  discard_blocked_target: true
   # MoveIt Servo retains a hard-stop status until its reset service is called.
   # Request that reset only when a new MANO target is fresh and the command has
-  # already passed the measured C-zero retreat-direction guard.  This prevents
+  # already passed the active geometric/compatibility retreat guard. This prevents
   # both permanent status-2 deadlock and a reset that chases an old target.
   servo_auto_reset_statuses: [2, 5]
   servo_reset_service: /servo_server/reset_servo_status

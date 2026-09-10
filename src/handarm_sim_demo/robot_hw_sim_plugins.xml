@@ -1,0 +1,7 @@
+<library path="lib/libhandarm_bounded_position_hw_sim">
+  <class name="handarm_sim_demo/BoundedPositionHWSim"
+         type="handarm_sim_demo::BoundedPositionHWSim"
+         base_class_type="gazebo_ros_control::RobotHWSim">
+    <description>Finite-effort Gazebo position PID with correct bounded multi-turn angular errors.</description>
+  </class>
+</library>

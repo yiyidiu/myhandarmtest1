@@ -347,11 +347,11 @@ class KLTTrackerROIProvider(HandROIProvider):
         self._seed_bbox = np.asarray(bbox, dtype=np.float64).copy()
         self._previous_gray = gray
         self._points = points
-        self._bbox = clipped
+        self._bbox = np.asarray(bbox, dtype=np.float32).copy()
         self._initialized = True
         self._age = 0
         return ROIObservation(
-            bbox=clipped,
+            bbox=self._bbox.copy(),
             source="tracker_roi",
             confidence=float(visible_fraction),
             age=0,
@@ -444,7 +444,8 @@ class KLTTrackerROIProvider(HandROIProvider):
             dtype=np.float64,
         )
         try:
-            current_bbox, visible_fraction = clip_bbox(requested, frame.shape)
+            _, visible_fraction = clip_bbox(requested, frame.shape)
+            current_bbox = requested.copy()
         except ValueError:
             return self._fail("tracked_bbox_outside_image")
         if self.bbox_smoothing_alpha < 1.0:
@@ -458,13 +459,10 @@ class KLTTrackerROIProvider(HandROIProvider):
                 (1.0 - alpha) * np.log(previous_extent)
                 + alpha * np.log(current_extent)
             )
-            current_bbox, visible_fraction = clip_bbox(
-                np.concatenate(
-                    [smoothed_center - 0.5 * smoothed_extent,
-                     smoothed_center + 0.5 * smoothed_extent]
-                ),
-                frame.shape,
-            )
+            current_bbox = np.concatenate(
+                [smoothed_center - 0.5 * smoothed_extent,
+                 smoothed_center + 0.5 * smoothed_extent])
+            _, visible_fraction = clip_bbox(current_bbox, frame.shape)
         center_jump, scale_change = _motion_metrics(self._bbox, current_bbox)
         if visible_fraction < self.minimum_visible_fraction:
             return self._fail("tracked_bbox_visible_fraction_too_low")

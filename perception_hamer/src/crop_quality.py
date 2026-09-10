@@ -20,6 +20,7 @@ def bbox_crop_quality(
     previous_bbox: Optional[Any],
     image_width: int,
     image_height: int,
+    content_fully_visible: bool = False,
 ) -> float:
     """Score crop support, border truncation and frame-to-frame box jitter."""
 
@@ -45,6 +46,10 @@ def bbox_crop_quality(
     border_quality = float(
         np.clip(border_distance / max(0.15 * max(size), 1.0), 0.0, 1.0)
     )
+    if content_fully_visible:
+        # A detector checked every unpadded hand landmark. Missing context
+        # padding is not evidence of missing fingers; retain size/jitter checks.
+        border_quality = 1.0
 
     temporal_quality = 1.0
     if previous_bbox is not None:

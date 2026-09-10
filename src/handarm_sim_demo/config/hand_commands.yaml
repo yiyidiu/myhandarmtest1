@@ -14,8 +14,10 @@ commands:
   OPEN:
     # The palm-configuration joint is fixed before any object approach.  Both
     # OPEN and CLOSE use the same value, so GRASP/RELEASE only flex fingers.
-    positions: [0.18, 0.20, 0.20, 0.20]
-    source: fixed_opposed_finger_configuration_release_clearance
+    # All three flexion joints release together to the same open angle.
+    # User confirmed the near-fully-open pose: numerical URDF flexion 5 deg.
+    positions: [0.18, 0.08726646259971647, 0.08726646259971647, 0.08726646259971647]
+    source: synchronized_equal_angle_release
   CLOSE:
     # f1j1 is the palm/finger-placement joint. Keep it identical to OPEN;
     # GRASP changes flexion only and never changes the hand configuration.
@@ -46,11 +48,7 @@ execution:
   # its opposing finger has begun closing.
   configuration_joint_names: [f1j1]
   flexion_joint_names: [f1j2, f2j1, f3j2]
-  # RELEASE first retracts the previously obstructed f2 while f1 keeps the
-  # object supported against the table, then opens f1/f3. A diagnostic run of
-  # the opposite order left f2j1 physically wedged at 0.26088 rad. The palm-
-  # configuration joint never changes target.
-  open_delayed_joints: [f1j2, f3j2]
+  open_delayed_joints: []
   # A finger opposed by the object is expected to stop before the empty-hand
   # target. This tolerance keeps the controller goal active; physical grasp
   # success is verified independently by lifting the Gazebo object.

@@ -5,6 +5,7 @@
   <description>Simulation-only ABB IRB120 and three-finger hand avoidance and scripted pick baseline.</description>
   <maintainer email="user@example.com">handarm simulation maintainer</maintainer>
   <license>MIT</license>
+  <license>BSD-3-Clause</license>
 
   <buildtool_depend>catkin</buildtool_depend>
 
@@ -13,12 +14,16 @@
   <depend>controller_manager_msgs</depend>
   <depend>gazebo_dev</depend>
   <depend>gazebo_msgs</depend>
+  <depend>gazebo_ros_control</depend>
+  <depend>pluginlib</depend>
   <depend>geometry_msgs</depend>
   <depend>moveit_commander</depend>
   <depend>moveit_msgs</depend>
   <depend>roscpp</depend>
   <depend>rospy</depend>
   <depend>sensor_msgs</depend>
+  <exec_depend>shape_msgs</exec_depend>
+  <exec_depend>tf</exec_depend>
   <depend>std_msgs</depend>
   <depend>std_srvs</depend>
   <depend>tf2_geometry_msgs</depend>
@@ -29,7 +34,6 @@
   <exec_depend>abb120_moveit_config1</exec_depend>
   <exec_depend>controller_manager</exec_depend>
   <exec_depend>gazebo_ros</exec_depend>
-  <exec_depend>gazebo_ros_control</exec_depend>
   <exec_depend>joint_state_controller</exec_depend>
   <exec_depend>joint_trajectory_controller</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
@@ -38,7 +42,11 @@
   <exec_depend>python3-yaml</exec_depend>
   <exec_depend>python3-rospkg</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
   <exec_depend>urdfdom_py</exec_depend>
 
-  <export/>
+  <export>
+    <gazebo_ros_control plugin="${prefix}/robot_hw_sim_plugins.xml"/>
+  </export>
 </package>

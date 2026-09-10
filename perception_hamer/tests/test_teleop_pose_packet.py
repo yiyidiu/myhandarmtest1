@@ -25,6 +25,52 @@ INTRINSICS = {
 
 
 class TeleopPosePacketTest(unittest.TestCase):
+    def test_visible_hand_padding_does_not_penalize_finger_crop(self):
+        from perception_hamer.src.crop_quality import bbox_crop_quality
+        # Hand landmarks were checked independently; only padding crosses
+        # the sensor border. Without that evidence retain the old penalty.
+        box = [180, 180, 420, 510]
+        old = bbox_crop_quality(box, box, 640, 480)
+        confirmed = bbox_crop_quality(box, box, 640, 480, content_fully_visible=True)
+        self.assertLess(old, .55)
+        self.assertGreater(confirmed, .90)
+        self.assertEqual(bbox_crop_quality([0, 0, 0, 0], None, 640, 480,
+                                          content_fully_visible=True), 0.0)
+
+    def test_visible_hand_depth_rejects_majority_background_at_wrist(self):
+        vertices = self._ring_vertices()
+        grid = np.array([(x, y) for x in np.linspace(-.10, .10, 28)
+                         for y in np.linspace(-.10, .10, 27)])
+        vertices[16:16+len(grid), :2] = grid
+        depth = np.full((480, 640), 1400, dtype=np.uint16)
+        # A small part of the hand has valid foreground depth; the wrist
+        # centre and most projected pixels instead contain the background.
+        depth[102:111, 102:154] = 1000
+        point, _, diagnostics, _ = metric_wrist_ring_from_arrays(
+            vertices, np.arange(16), [0,0,1], [256,256],
+            [[1,0,0],[0,1,0]], depth, .001, INTRINSICS)
+        np.testing.assert_allclose(point, [.28,.28,1.0], atol=1e-9)
+        self.assertLess(diagnostics["foreground_sample_fraction"], .5)
+
+    def test_configured_wrist_reference_never_falls_back_after_an_exception(self):
+        result = SimpleNamespace(is_right=False)
+        estimates = {"mano_joint_palm_frame": {
+            "valid": True, "rotation": np.eye(3).tolist()}}
+        with self.assertRaisesRegex(ValueError, "required control wrist frame"):
+            build_live_teleop_packet(
+                result, estimates, None, None, "test", 1, 1, 1,
+                required_reference_kind="MANO_WRIST_RING_16")
+
+    def test_configured_wrist_reference_rejects_another_valid_basis(self):
+        result = SimpleNamespace(is_right=False)
+        estimates = {"control_wrist_frame": {
+            "valid": True, "rotation": np.eye(3).tolist(),
+            "reference_kind": "MANO_JOINT_0_PALM_FRAME_LEGACY"}}
+        with self.assertRaisesRegex(ValueError, "differs from configured"):
+            build_live_teleop_packet(
+                result, estimates, None, None, "test", 1, 1, 1,
+                required_reference_kind="MANO_WRIST_RING_16")
+
     @staticmethod
     def _ring_vertices():
         vertices = np.zeros((778, 3), dtype=float)
@@ -82,7 +128,7 @@ class TeleopPosePacketTest(unittest.TestCase):
             invalidate_stale_teleop_observation(packet, 0.25), packet
         )
 
-    def test_16_point_wrist_ring_center_uses_projected_depth_hull(self):
+    def test_16_point_wrist_ring_center_uses_visible_hand_depth(self):
         depth = np.zeros((480, 640), dtype=np.uint16)
         depth[116:141, 113:144] = 1000
         point, confidence, diagnostics, pixels = metric_wrist_ring_from_arrays(
@@ -116,7 +162,7 @@ class TeleopPosePacketTest(unittest.TestCase):
         point, confidence, diagnostics, pixels = metric_wrist_ring_from_arrays(
             self._ring_vertices(), np.arange(16), [0.0, 0.0, 1.0],
             [256.0, 256.0], [[1, 0, 0], [0, 1, 0]], depth, 0.001,
-            INTRINSICS,
+            INTRINSICS, use_visible_hand_depth=False,
         )
         np.testing.assert_allclose(pixels.mean(axis=0), [128.0, 128.0], atol=1e-6)
         # Depth comes from nearby support, but XYZ remains the ring-centre ray.
@@ -141,7 +187,7 @@ class TeleopPosePacketTest(unittest.TestCase):
 
     def test_depth_hold_expires_after_120_ms(self):
         depth = np.zeros((480, 640), dtype=np.uint16)
-        with self.assertRaisesRegex(ValueError, "no aligned depth"):
+        with self.assertRaisesRegex(ValueError, "no supported visible-hand depth"):
             metric_wrist_ring_from_arrays(
                 self._ring_vertices(), np.arange(16), [0.0, 0.0, 1.0],
                 [256.0, 256.0], [[1, 0, 0], [0, 1, 0]], depth, 0.001,
@@ -255,6 +301,20 @@ class TeleopPosePacketTest(unittest.TestCase):
         self.assertEqual(packet["orientation_source"], "FILTERED_TEST")
         self.assertEqual(packet["crop_quality"], 0.5)
 
+        # Verified hand visibility only changes the finger channel. It must
+        # not increase position/orientation confidence as a side effect.
+        from perception_hamer.tests.test_finger_observation import open_hand
+        result.pred_keypoints_3d_source_camera_axes = open_hand()
+        estimates["teleop_finger_visible_fraction"] = 1.0
+        estimates["teleop_finger_crop_quality"] = 0.95
+        fixed = build_live_teleop_packet(
+            result, estimates, frame, SimpleNamespace(confidence=0.9),
+            "test", 5, 2, 1)
+        self.assertTrue(fixed["finger_observation"]["valid"])
+        self.assertAlmostEqual(fixed["finger_observation"]["confidence"], .855)
+        np.testing.assert_allclose(fixed["confidence"], packet["confidence"])
+        np.testing.assert_allclose(fixed["wrist_position_m"], packet["wrist_position_m"])
+
     def test_held_orientation_keeps_metric_position_packet_valid(self):
         normalized = np.zeros((21, 2), dtype=float)
         depth = np.zeros((480, 640), dtype=np.uint16)
@@ -335,7 +395,7 @@ class TeleopPosePacketTest(unittest.TestCase):
         self.assertEqual(packet["control_reference"], "MANO_WRIST_RING_16")
         self.assertEqual(
             packet["position_source"],
-            "MANO_WRIST_RING_16_PROJECTED_HULL_PLUS_D455_ALIGNED_DEPTH",
+            "MANO_WRIST_RING_16_FROM_VISIBLE_HAND_SURFACE_AND_D455_DEPTH",
         )
         self.assertEqual(packet["orientation_source"], "RING_FILTER_TEST")
         np.testing.assert_allclose(packet["palm_rotation_row_major"], np.eye(3).reshape(-1))

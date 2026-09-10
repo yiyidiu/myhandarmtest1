@@ -60,6 +60,7 @@ class SharedControlNode:
         self.listener = tf.TransformListener()
         self.ik = rospy.ServiceProxy(self.ik_service_name, GetPositionIK, persistent=True)
         self.lock = threading.Lock()
+        self.command_lock = threading.Lock()
         self.latest = None
         self.last_tick = None
         self.last_candidates = []
@@ -73,17 +74,19 @@ class SharedControlNode:
                          HandCommand, self.command_callback, queue_size=1)
         rospy.Subscriber(topics.get("assist_request", "/shared_teleop/assist_request"),
                          String, self.assist_callback, queue_size=1)
-        rate = float(self.config.get("control", {}).get("rate_hz", 50.0))
-        self.timer = rospy.Timer(rospy.Duration(1.0/rate), self.tick)
         rospy.on_shutdown(self.shutdown)
 
     def shutdown(self):
         self.shutting_down = True
-        self.timer.shutdown()
 
     def command_callback(self, message):
-        with self.lock:
-            self.latest = message
+        # The upstream controller already supplies a steady control cadence.
+        # Compute on arrival instead of adding an independent 20 ms wait.
+        # If input stops, the output watchdog still sees the unchanged stamp.
+        with self.command_lock:
+            with self.lock:
+                self.latest = message
+            self.tick(None)
 
     def current_control_pose(self):
         translation, quaternion = self.listener.lookupTransform(
@@ -166,7 +169,7 @@ class SharedControlNode:
         if self.shutting_down or rospy.is_shutdown():
             return
         began = time.perf_counter()
-        now = event.current_real.to_sec()
+        now = rospy.Time.now().to_sec()
         dt = 0.0 if self.last_tick is None else max(0.0, now-self.last_tick)
         self.last_tick = now
         with self.lock:

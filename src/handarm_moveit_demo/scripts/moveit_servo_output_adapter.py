@@ -31,6 +31,7 @@ def three_axis_private_parameter(name, fallback):
 class MoveItServoOutputAdapter:
     def __init__(self):
         self.config = rospy.get_param("/shared_teleop", {})
+        self.future_tolerance_s = 0.02 if rospy.get_param("/use_sim_time", False) else 0.0
         limits = self.config.get("limits", {})
         safety = self.config.get("safety", {})
         frames = self.config.get("frames", {})
@@ -98,9 +99,13 @@ class MoveItServoOutputAdapter:
             self.calibration_confirmed, self.authorization)
         self.listener = tf.TransformListener()
         self.lock = threading.Lock()
+        self.geometry_feedback = ({}, -float("inf"))
+        self.geometric_filter = bool(rospy.get_param("~geometric_recovery_filter", False))
         self.estop_signal = False
         self.estop_latched = bool(safety.get("emergency_stop_latched", False))
         self.last_tick = None
+        self.tick_lock = threading.Lock()
+        self.last_command_received = -float("inf")
         self.last_logged_reasons = None
         self.shutting_down = False
         self.actual_publisher = rospy.Publisher(
@@ -112,8 +117,17 @@ class MoveItServoOutputAdapter:
         self.diagnostics = rospy.Publisher(
             topics.get("output_diagnostics", "/shared_teleop/output_diagnostics"),
             String, queue_size=1)
-        rospy.Subscriber(topics.get("assisted_command", "/shared_teleop/assisted_command"),
+        rospy.Subscriber(rospy.get_param(
+                             "~command_input_topic",
+                             topics.get("assisted_command", "/shared_teleop/assisted_command")),
                          HandCommand, self.command_callback, queue_size=1)
+        rospy.Subscriber("/shared_teleop/geometric_filter_diagnostics", String,
+                         self.geometry_callback, queue_size=1)
+        if self.geometric_filter:
+            self.shaped_publisher = rospy.Publisher(
+                "/shared_teleop/shaped_command", HandCommand, queue_size=1)
+            rospy.Subscriber("/shared_teleop/geometrically_limited_command",
+                             HandCommand, self.checked_command_callback, queue_size=1)
         rospy.Subscriber(topics.get("emergency_stop", "/shared_teleop/emergency_stop"),
                          Bool, self.estop_callback, queue_size=1)
         rospy.Service("/shared_teleop/reset_emergency_stop", Trigger, self.reset_estop)
@@ -135,9 +149,65 @@ class MoveItServoOutputAdapter:
     def command_callback(self, message):
         try:
             with self.lock:
-                self.shaper.update(self.vector(message), message.header.stamp.to_sec(), message.valid)
+                velocity = np.asarray(self.vector(message), dtype=float)
+                feedback, received = self.geometry_feedback
+                if message.valid and time.monotonic() - received <= 0.10:
+                    approved = np.asarray(feedback.get("approved_velocity", []))
+                    if approved.shape == (6,) and np.dot(approved, velocity) > 0.0:
+                        gain = float(np.clip(feedback.get("retreat_gain", 1.0), 1.0, 5.0))
+                        # This extra retreat request still passes the normal
+                        # norm/acceleration limits and the final geometry gate.
+                        # Compensate only components approved as an escape.
+                        # Scaling the blocked rotation as well stored a large
+                        # angular request that burst through at release.
+                        escaping = (approved * velocity > 1e-9)
+                        velocity[escaping] *= gain
+                        for part, cap in ((slice(0, 3), .30), (slice(3, 6), 2.0)):
+                            velocity[part] *= min(1.0, cap / max(1e-12, np.linalg.norm(velocity[part])))
+                    strongly_limited = (feedback.get("singularity_limited") is True or
+                                        feedback.get("joint_limit_limited") is True)
+                    measured = np.asarray(feedback.get("measured_velocity", [float("inf")] * 6))
+                    for component, key in ((slice(0, 3), "translation_limited"),
+                                           (slice(3, 6), "rotation_limited")):
+                        stopped = (measured.shape == (6,) and
+                                   np.linalg.norm(measured[component]) <
+                                   (0.005 if component.start == 0 else np.deg2rad(5.0)))
+                        if ((strongly_limited or feedback.get(key) is True) and
+                                stopped and
+                                np.dot(self.shaper.output[component], velocity[component]) <= 0.0):
+                            # A blocked approach was never executed at the
+                            # shaper's stored speed. Do not ramp through that
+                            # obsolete approach when the operator reverses.
+                            # The retreat itself still accelerates from zero.
+                            self.shaper.output[component] = 0.0
+                self.shaper.update(velocity, message.header.stamp.to_sec(), message.valid)
+                self.last_command_received = time.monotonic()
+            self.tick(None)
         except Exception as exc:
             rospy.logwarn_throttle(1.0, "Servo command rejected: %s", exc)
+
+    def geometry_callback(self, message):
+        try:
+            self.geometry_feedback = (json.loads(message.data), time.monotonic())
+        except (TypeError, ValueError):
+            pass
+
+    def checked_command_callback(self, message):
+        if self.shutting_down or rospy.is_shutdown():
+            return
+        age = (rospy.Time.now() - message.header.stamp).to_sec()
+        # Match the geometry guard's bounded /clock delivery tolerance. Wall
+        # clock operation still rejects future stamps; stale data stays stale.
+        velocity = np.asarray(self.vector(message), dtype=float)
+        with self.lock:
+            estopped = self.estop_latched
+        if (estopped or not message.valid or not -self.future_tolerance_s <= age <= 0.15 or
+                not np.all(np.isfinite(velocity))):
+            velocity[:] = 0.0
+        final = self.make_message(velocity, message.header.stamp)
+        self.monitor_publisher.publish(final)
+        if self.output_allowed:
+            self.actual_publisher.publish(final)
 
     def estop_callback(self, message):
         with self.lock:
@@ -165,8 +235,20 @@ class MoveItServoOutputAdapter:
     def tick(self, event):
         if self.shutting_down or rospy.is_shutdown():
             return
+        # Fresh commands drive shaping/output immediately. The timer remains
+        # a watchdog when upstream is silent, using the same source age and
+        # acceleration limits; it must not race an input-triggered output.
+        if event is not None and time.monotonic()-self.last_command_received < 0.03:
+            return
+        with self.tick_lock:
+            self.publish_shaped_command()
+
+    def publish_shaped_command(self):
+        if self.shutting_down or rospy.is_shutdown():
+            return
         began = time.perf_counter()
-        now = event.current_real.to_sec()
+        now_stamp = rospy.Time.now()
+        now = now_stamp.to_sec()
         dt = 0.0 if self.last_tick is None else max(0.0, now-self.last_tick)
         self.last_tick = now
         with self.lock:
@@ -195,10 +277,17 @@ class MoveItServoOutputAdapter:
         if estopped:
             velocity[:] = 0.0
             reasons.append("EMERGENCY_STOP_LATCHED")
-        message = self.make_message(velocity, event.current_real)
-        self.monitor_publisher.publish(message)
-        if self.output_allowed:
-            self.actual_publisher.publish(message)
+        message = self.make_message(velocity, now_stamp)
+        if self.geometric_filter:
+            candidate = HandCommand()
+            candidate.header = message.header
+            candidate.twist = message.twist
+            candidate.valid = shaped.valid and not estopped and "WORKSPACE_TF_UNAVAILABLE" not in reasons
+            self.shaped_publisher.publish(candidate)
+        else:
+            self.monitor_publisher.publish(message)
+            if self.output_allowed:
+                self.actual_publisher.publish(message)
         process_ms = (time.perf_counter()-began)*1000.0
         self.diagnostics.publish(String(data=json.dumps({
             "stamp": now, "source_input_age_s": shaped.input_age_s,
@@ -209,6 +298,7 @@ class MoveItServoOutputAdapter:
             "mapping_profile": self.mapping_profile_name,
             "workspace_mode": self.workspace_mode,
             "velocity": velocity.tolist(),
+            "velocity_stage": "BEFORE_FINAL_GEOMETRY_CHECK" if self.geometric_filter else "FINAL_OUTPUT",
         }, separators=(",", ":"))))
         reason_key = tuple(reasons)
         if reason_key != self.last_logged_reasons:

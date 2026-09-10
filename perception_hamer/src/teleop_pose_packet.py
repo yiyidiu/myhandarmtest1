@@ -94,6 +94,7 @@ def metric_wrist_ring_from_arrays(
     reference_depth_age_s: float = None,
     maximum_reference_hold_s: float = 0.12,
     crop_image_size: int = 256,
+    use_visible_hand_depth: bool = True,
 ) -> Tuple[np.ndarray, float, dict, np.ndarray]:
     """Return the projected 16-point wrist-ring centre in metric D455 axes."""
 
@@ -134,6 +135,71 @@ def metric_wrist_ring_from_arrays(
         or center_pixel[1] >= height
     ):
         raise ValueError("projected MANO wrist ring is outside aligned depth")
+    if use_visible_hand_depth:
+        # The wrist-opening projection is often on a stereo silhouette hole.
+        # In the Sep 10 recording its few remaining pixels belonged to the
+        # torso, changing 1.02 m into 1.45 m during an in-plane hand turn.
+        # Estimate the translation of the visible HAND surface using aligned
+        # depth, subtracting each MANO point's depth relative to the wrist.
+        # The control origin and its camera ray remain the same wrist ring.
+        surface_pixels, _ = project_hamer_vertices_to_original(
+            vertices, camera_translation, focal_length,
+            affine_original_to_crop, crop_image_size,
+        )
+        uv = np.rint(surface_pixels).astype(np.int32)
+        inside = ((uv[:, 0] >= 0) & (uv[:, 0] < width) &
+                  (uv[:, 1] >= 0) & (uv[:, 1] < height))
+        ids = np.flatnonzero(inside)
+        # Do not count occluded rear vertices or repeated pixels as separate
+        # observations. Camera +Z points away from the sensor.
+        order = ids[np.argsort(vertices[ids, 2])]
+        _, first = np.unique(uv[order, 1] * width + uv[order, 0], return_index=True)
+        ids = order[first]
+        measured = depth_raw[uv[ids, 1], uv[ids, 0]].astype(np.float64) * scale
+        good = np.isfinite(measured) & (measured > 0.12) & (measured < 3.0)
+        offsets = measured[good] - (vertices[ids[good], 2] - ring.mean(axis=0)[2])
+        offsets = np.sort(offsets[np.isfinite(offsets) & (offsets > 0.12) & (offsets < 3.0)])
+        selected = np.empty(0, dtype=np.float64)
+        if offsets.size >= 12:
+            # A supported foreground band, not the global median: most valid
+            # pixels can be background when a side-facing hand has depth holes.
+            ends = np.searchsorted(offsets, offsets + 0.025)
+            counts = ends - np.arange(offsets.size)
+            support = max(12, int(np.ceil(0.04 * offsets.size)))
+            candidates = np.flatnonzero(counts >= support)
+            if candidates.size:
+                start = int(candidates[0])
+                centre = float(np.median(offsets[start:ends[start]]))
+                selected = offsets[np.abs(offsets - centre) <= 0.020]
+        held = False
+        if selected.size < 12:
+            if (reference_depth_m is not None and np.isfinite(reference_depth_m) and
+                    reference_depth_age_s is not None and
+                    0.0 <= reference_depth_age_s <= maximum_reference_hold_s):
+                selected = np.full(12, reference_depth_m, dtype=np.float64)
+                held = True
+            else:
+                raise ValueError("no supported visible-hand depth surface")
+        median = float(np.median(selected))
+        mad = float(np.median(np.abs(selected - median)))
+        fraction = float(min(1.0, selected.size / max(offsets.size, 1)))
+        confidence = float(np.sqrt(fraction) * np.exp(-0.5 * (mad / 0.010) ** 2))
+        if held:
+            confidence = 0.08
+        center_m = deproject_pixels(center_pixel.reshape(1, 2),
+                                   np.asarray([median]), dict(color_intrinsics))[0]
+        diagnostics = {
+            "reference": "mean_of_16_mano_wrist_opening_vertices",
+            "method": "visible_hand_surface_depth_offset",
+            "center_pixel": center_pixel.tolist(), "depth_m": median,
+            "depth_mad_m": mad, "sample_count": int(selected.size),
+            "total_sample_count": int(offsets.size),
+            "foreground_sample_fraction": fraction,
+            "depth_reference_hold_used": held,
+            "depth_reference_age_s": reference_depth_age_s,
+            "maximum_depth_reference_hold_s": float(maximum_reference_hold_s),
+        }
+        return center_m, confidence, diagnostics, ring_pixels
     polygon = cv2.convexHull(np.rint(ring_pixels).astype(np.int32)).reshape(-1, 2)
     if len(polygon) < 3 or abs(float(cv2.contourArea(polygon))) < 2.0:
         raise ValueError("projected MANO wrist ring hull is degenerate")
@@ -347,6 +413,7 @@ def build_live_teleop_packet(
     active_hand_generation: int,
     reference_depth_m: float = None,
     reference_depth_age_s: float = None,
+    required_reference_kind: str = None,
 ) -> dict:
     """Build one fail-closed pose packet from the configured control frame."""
 
@@ -357,6 +424,10 @@ def build_live_teleop_packet(
     if presence_generation < 0 or active_hand_generation < 0:
         raise ValueError("hand identity generations must be non-negative")
 
+    if required_reference_kind and "control_wrist_frame" not in estimates:
+        # A failed wrist estimate must never silently change the basis used
+        # by C calibration. The legacy joint-palm basis differs by >100 deg.
+        raise ValueError("required control wrist frame is unavailable")
     control = estimates.get(
         "control_wrist_frame", estimates.get("mano_joint_palm_frame")
     )
@@ -365,6 +436,8 @@ def build_live_teleop_packet(
     reference_kind = str(
         control.get("reference_kind", "MANO_JOINT_0_PALM_FRAME_LEGACY")
     )
+    if required_reference_kind and reference_kind != required_reference_kind:
+        raise ValueError("control reference kind differs from configured reference")
     position_diagnostics = None
     if reference_kind == "MANO_WRIST_RING_16":
         loop = control.get("quality", {}).get("wrist_loop_vertex_indices")
@@ -383,7 +456,7 @@ def build_live_teleop_packet(
             )
         )
         position_source = (
-            "MANO_WRIST_RING_16_PROJECTED_HULL_PLUS_D455_ALIGNED_DEPTH"
+            "MANO_WRIST_RING_16_FROM_VISIBLE_HAND_SURFACE_AND_D455_DEPTH"
         )
     else:
         wrist, depth_confidence, _ = metric_wrist_from_arrays(
@@ -422,8 +495,8 @@ def build_live_teleop_packet(
     finger_observation = observe_mano_fingers(
         getattr(result, "pred_keypoints_3d_source_camera_axes", None),
         roi_confidence,
-        visible,
-        crop_quality,
+        estimates.get("teleop_finger_visible_fraction", visible),
+        estimates.get("teleop_finger_crop_quality", crop_quality),
     )
     return {
         "schema": "handarm_hamer_pose_v1",

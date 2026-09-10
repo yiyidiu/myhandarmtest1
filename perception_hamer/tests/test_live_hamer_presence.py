@@ -1,19 +1,82 @@
 import unittest
+import threading
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 
 from perception_hamer.scripts.run_d455_hamer_crop import (
+    LatestDisplayOverlay,
     PendingReinitialization,
+    _display_worker,
     _hand_preflight_timeout_diagnostics,
     make_overlay,
 )
+from perception_hamer.src.hand_pose_overlay import RelativeWristPoseDisplay
+from perception_hamer.src.teleop_control_gate import TeleopControlGate
 from perception_hamer.src.teleoperation_core_mano_renderer import (
     TeleoperationCoreRenderFrame,
 )
 
 
 class LiveHamerPresenceTest(unittest.TestCase):
+    def _confirm_with_delayed_pose(self, ready_at, stop_at):
+        pose = RelativeWristPoseDisplay()
+        gate = TeleopControlGate(retain_reference_until_operator_action=True)
+        overlay = LatestDisplayOverlay()
+        overlay.update(SimpleNamespace(is_right=True), {}, 10., "", None,
+                       None, None, 0)
+        packet = SimpleNamespace(
+            frame=SimpleNamespace(rgb=np.zeros((480, 640, 3), dtype=np.uint8)),
+            roi=self._roi(),
+        )
+
+        class Preview:
+            count = 0
+
+            def get_after(self, previous, timeout_s):
+                self.count += 1
+                if self.count == ready_at:
+                    pose.update_from_packet({
+                        "sequence": self.count, "stamp": 100.0,
+                        "wrist_position_m": [0.0, 0.0, 0.6],
+                        "palm_rotation_row_major": np.eye(3).ravel().tolist(),
+                        "confidence": [0.9] * 6,
+                    }, 0)
+                return previous + 1, packet
+
+        preview = Preview()
+
+        class Display:
+            stop_requested = False
+            confirmed = False
+
+            def pop_confirm_request(self):
+                if self.confirmed:
+                    return False
+                self.confirmed = True
+                return True
+
+            def show(self, canvas):
+                self.stop_requested = preview.count >= stop_at
+                return True
+
+        clock = iter(np.arange(0.0, 100.0, 0.02))
+        with patch("perception_hamer.scripts.run_d455_hamer_crop.time.monotonic",
+                   side_effect=lambda: next(clock)), patch(
+                       "perception_hamer.scripts.run_d455_hamer_crop.make_overlay",
+                       return_value=np.zeros((480, 1280, 3), dtype=np.uint8)), patch(
+                       "builtins.print"):
+            _display_worker(Display(), preview, overlay, pose, gate, None,
+                            threading.Event(), "teleoperation-core", 1000.)
+        return gate
+
+    def test_c_during_invalid_frame_accepts_next_fresh_pose(self):
+        self.assertTrue(self._confirm_with_delayed_pose(3, 5).enabled)
+
+    def test_expired_c_does_not_enable_on_a_later_pose(self):
+        self.assertFalse(self._confirm_with_delayed_pose(100, 105).enabled)
+
     def _roi(self):
         return SimpleNamespace(
             bbox=np.array([300.0, 300.0, 400.0, 400.0]),

@@ -155,6 +155,21 @@ class HandDetectionGateTest(unittest.TestCase):
         self.assertEqual(first["reason"], "hand_reconfirming_1/2")
         self.assertTrue(second["valid"])
 
+    def test_selected_hand_switch_invalidates_old_confirmation(self):
+        gate = ContinuousHandPresenceGate(required_frames=2, timeout_s=0.3)
+        left = {"valid": True, "bbox": [10, 10, 100, 100], "is_right": False}
+        right = {"valid": True, "bbox": [110, 10, 200, 100], "is_right": True}
+        gate.observe(left, 1.0)
+        previous = gate.observe(left, 1.02)
+        switching = gate.observe(right, 1.04)
+        self.assertFalse(switching["valid"])
+        self.assertIsNone(switching["confirmed_detection"])
+        self.assertGreater(switching["generation"], previous["generation"])
+        confirmed = gate.observe(right, 1.06)
+        self.assertTrue(confirmed["valid"])
+        self.assertTrue(confirmed["confirmed_detection"]["is_right"])
+        self.assertGreater(confirmed["generation"], switching["generation"])
+
     def test_continuous_presence_times_out_fail_closed(self):
         gate = ContinuousHandPresenceGate(required_frames=2, timeout_s=0.25)
         hand = {

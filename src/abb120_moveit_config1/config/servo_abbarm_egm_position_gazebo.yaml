@@ -35,21 +35,24 @@ status_topic: /servo_server/status
 warning_topic: /servo_server/status
 use_gazebo: true
 
-# Safe hybrid profile: MoveIt Servo continuously scales for scene/self
-# proximity, singularities and joint limits before the strict swept-state gate.
+# MoveIt Servo scales for scene/self proximity and joint limits. This profile
+# uses a damped inverse near singularities, before the timed swept-state gate.
 check_collisions: true
+directional_collision_retreat: true
+inverse_damping: 0.005
 collision_check_rate: 60.0
 collision_check_type: threshold_distance
-self_collision_proximity_threshold: 0.01
+# The prior 10 mm wrist proximity band stopped collision-free side-yaw
+# paths at roughly 47 degrees. Use 5 mm in this Gazebo-only model; actual
+# self/world collisions remain checked along the commanded braking path.
+self_collision_proximity_threshold: 0.005
 scene_collision_proximity_threshold: 0.03
 collision_distance_safety_factor: 1000.0
 min_allowable_collision_distance: 0.01
-# Gazebo pitch-path check: a continuous 60 degree pitch has condition ~62,
-# remains collision-free and needs <=0.32 rad/s joint speed at 16 deg/s.
-# 17/30 stopped that path around 46 degrees. Keep joint/collision limits and
-# retain an earlier stop than the near-limit 75 degree pose (condition ~234).
-lower_singularity_threshold: 60.0
-hard_stop_singularity_threshold: 120.0
+# Legacy condition-number settings, used only when inverse_damping is zero.
+# The active damped profile retains joint-rate limits and collision prediction.
+lower_singularity_threshold: 40.0
+hard_stop_singularity_threshold: 80.0
 leaving_singularity_threshold_multiplier: 2.0
 joint_limit_margin: 0.08
 is_primary_planning_scene_monitor: false

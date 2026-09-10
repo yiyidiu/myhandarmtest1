@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 
 import math
+import contextlib
+import importlib.util
 import pathlib
 import unittest
+from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -184,6 +187,64 @@ class EgmPositionReferenceModelTest(unittest.TestCase):
             make_model(maximum_following_error=[math.inf, 0.1])
 
 
+class GeometricStopReferenceTest(unittest.TestCase):
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location(
+            "reference_adapter_test", PACKAGE / "scripts/egm_position_reference_adapter.py")
+        self.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.module)
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        self.now = 10.0
+        for name in ("Publisher", "Subscriber", "Timer", "on_shutdown", "logwarn", "loginfo"):
+            stack.enter_context(patch.object(self.module.rospy, name))
+        stack.enter_context(patch.object(self.module.rospy, "get_param", side_effect=
+            lambda name, default: True if name == "/shared_teleop/control/constrained_velocity_projection" else default))
+        stack.enter_context(patch.object(self.module.rospy.Time, "now", side_effect=
+            lambda: self.module.rospy.Time.from_sec(self.now)))
+        stack.enter_context(patch.object(self.module.time, "monotonic", side_effect=lambda: self.now))
+        stack.enter_context(patch.object(self.module.time, "time", side_effect=lambda: 1000.0 + self.now))
+        self.adapter = self.module.EgmPositionReferenceAdapter()
+        self.adapter.latest_actual = [0, 0, 0, 0, 1.90, 0]
+        self.adapter.model.reference = np.array([0, 0, 0, 0, 1.92, 0], dtype=float)
+        self.adapter.collision_scale_callback(self.module.Float64(data=1.0))
+
+    def stop(self, reason):
+        self.now += .004
+        self.adapter.collision_scale_callback(self.module.Float64(data=1.0))
+        self.adapter.strict_command_safe_callback(self.module.Bool(data=False))
+        self.adapter.guard_detail_callback(self.module.String(data=reason))
+        self.adapter.tick(None)
+
+    def test_collision_cancels_position_lead_once_without_chasing_deflection(self):
+        self.stop("PREDICTED_SELF_COLLISION:handbase_link,link_4")
+        self.assertAlmostEqual(self.adapter.model.reference[4], 1.90)
+        for i in range(10):
+            self.adapter.latest_actual[4] -= .0001
+            self.stop("PREDICTED_SELF_COLLISION:handbase_link,link_4")
+        self.assertAlmostEqual(self.adapter.model.reference[4], 1.90)
+        self.assertEqual(self.adapter.collision_reference_resets, 1)
+
+    def test_input_loss_keeps_the_checked_position_reference(self):
+        for _ in range(10):
+            self.adapter.latest_actual[4] -= .0001
+            self.stop("INPUT_INVALID")
+        self.assertAlmostEqual(self.adapter.model.reference[4], 1.92)
+        self.assertEqual(self.adapter.collision_reference_resets, 0)
+
+    def test_checked_zero_does_not_rearm_repeated_collision_captures(self):
+        self.stop("PREDICTED_SELF_COLLISION:handbase_link,link_4")
+        self.now += .004
+        self.adapter.guard_detail_callback(self.module.String(data="SAFE_CONSTRAINED_VELOCITY"))
+        self.adapter.strict_command_safe_callback(self.module.Bool(data=True))
+        self.adapter.velocity_callback(self.module.Float64MultiArray(data=[0.0]*6+[2000.0]))
+        self.adapter.tick(None)
+        self.adapter.latest_actual[4] = 1.89
+        self.stop("PREDICTED_SELF_COLLISION:handbase_link,link_4")
+        self.assertAlmostEqual(self.adapter.model.reference[4], 1.90)
+        self.assertEqual(self.adapter.collision_reference_resets, 1)
+
+
 class EgmPositionProfileWiringTest(unittest.TestCase):
     def test_established_velocity_entry_is_unchanged_and_independent(self):
         legacy = (PACKAGE / "launch/live_human_ground_gazebo_teleop.launch").read_text()
@@ -328,19 +389,6 @@ class EgmPositionProfileWiringTest(unittest.TestCase):
         self.assertEqual(
             parameters["strict_command_safe_topic"],
             "/full_robot_self_collision_guard/command_safe")
-
-    def test_safety_hold_captures_feedback_once_then_freezes_reference(self):
-        source = (PACKAGE / "scripts/egm_position_reference_adapter.py").read_text()
-        hold_start = source.index(
-            "if hard_safety_hold and self.latest_actual is not None:")
-        hold_end = source.index("output = self.model.step(now)", hold_start)
-        hold_block = source[hold_start:hold_end]
-        self.assertIn("if not self.hard_safety_hold_active:", hold_block)
-        self.assertEqual(
-            hold_block.count(
-                "self.model.synchronize_reference(self.latest_actual)"), 1)
-        self.assertIn("self.model.hold_reference(self.latest_actual)", hold_block)
-        self.assertIn("self.hard_safety_hold_active = True", hold_block)
 
     def test_strict_guard_uses_bounded_combined_arm_hand_prediction(self):
         source = (PACKAGE / "src/full_robot_self_collision_guard.cpp").read_text()

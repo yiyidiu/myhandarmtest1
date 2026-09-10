@@ -67,6 +67,22 @@ class ManualProviderTest(unittest.TestCase):
 
 
 class KLTProviderTest(unittest.TestCase):
+    def test_context_crossing_sensor_edge_does_not_shrink_tracked_hand(self):
+        first = textured_frame()
+        box = np.array([55, 20, 175, 175], dtype=float)
+        provider = KLTTrackerROIProvider(box, min_tracked_points=6)
+        provider.initialize(first)
+        dy = 25.0
+        second = cv2.warpAffine(
+            first, np.array([[1, 0, 0], [0, 1, dy]], dtype=np.float32), (240, 180))
+        tracked = provider.update(second)
+        self.assertFalse(tracked.lost, tracked.reason)
+        np.testing.assert_allclose(tracked.bbox, box + [0, dy, 0, dy], atol=1.5)
+        self.assertAlmostEqual(tracked.scale_change, 1.0, delta=.03)
+        # Reacquisition preserves the same crop geometry, too.
+        seeded = provider.reinitialize(second, box + [0, dy, 0, dy])
+        np.testing.assert_allclose(seeded.bbox, box + [0, dy, 0, dy])
+
     def test_translation_is_tracked_with_motion_metrics(self):
         first_frame = textured_frame()
         dx, dy = 8.0, -5.0

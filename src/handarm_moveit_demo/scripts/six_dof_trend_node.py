@@ -21,7 +21,8 @@ from handarm_moveit_demo.hamer_input_contract import (
     authoritative_camera_c_gate_lock,
 )
 from handarm_moveit_demo.shared_teleop_core import (
-    AprilTagV3PoseContinuityFilter, BlockedPoseTarget, CollisionRetreatGuard, PoseSample,
+    AprilTagV3PoseContinuityFilter, CollisionRetreatGuard, CZeroRecoveryTarget, PoseSample,
+    sampled_velocity_freshness,
     CameraRangeWorkspaceMapper, GroundSectorWorkspace,
     RelativePoseMapper, RelativePoseServoController,
     SixDofTrendEstimator, StationaryFeedforwardGate,
@@ -48,6 +49,14 @@ class SixDofTrendNode:
         trend = config.get("trend", {})
         limits = config.get("limits", {})
         mapping = config.get("mapping", {})
+        self.camera_rotation_to_tool_zero = mapping.get("camera_rotation_to_tool_zero")
+        if self.camera_rotation_to_tool_zero is not None:
+            axes = np.asarray(self.camera_rotation_to_tool_zero, dtype=float)
+            if (axes.shape != (3, 3) or not np.all(np.isfinite(axes)) or
+                    not np.allclose(axes.T @ axes, np.eye(3), atol=1e-8) or
+                    not np.isclose(np.linalg.det(axes), 1.0)):
+                raise ValueError("camera rotation axes must be a proper rotation")
+            self.camera_rotation_to_tool_zero = axes
         reference = config.get("reference", {})
         control = config.get("control", {})
         frames = config.get("frames", {})
@@ -89,10 +98,12 @@ class SixDofTrendNode:
                 "maximum_pose_rotation_innovation_deg", 35.0)),
             maximum_position_innovation_m=trend.get(
                 "maximum_pose_position_innovation_m", float("inf")),
-            position_alpha_max=trend.get(
-                "pose_position_lowpass_alpha_max"),
-            rotation_alpha_max=trend.get(
-                "pose_rotation_lowpass_alpha_max"),
+            position_alpha_max=rospy.get_param(
+                "~pose_position_lowpass_alpha_max",
+                trend.get("pose_position_lowpass_alpha_max")),
+            rotation_alpha_max=rospy.get_param(
+                "~pose_rotation_lowpass_alpha_max",
+                trend.get("pose_rotation_lowpass_alpha_max")),
             position_quiet_step_m=trend.get(
                 "pose_position_quiet_step_m", 0.0),
             position_responsive_step_m=trend.get(
@@ -125,6 +136,12 @@ class SixDofTrendNode:
                 control.get("maximum_relative_translation_m", [0.20]*3),
                 math.radians(control.get(
                     "maximum_relative_rotation_deg", 90.0)),
+                maximum_side_rotation_rad=(
+                    math.radians(mapping["maximum_side_rotation_deg"] -
+                                 mapping.get("side_rotation_tracking_margin_deg", 0.0))
+                    if "maximum_side_rotation_deg" in mapping else None),
+                positive_side_rotation_gain=mapping.get(
+                    "positive_side_rotation_gain"),
             )
         else:
             profiles = config.get("mapping_profiles", {})
@@ -339,9 +356,19 @@ class SixDofTrendNode:
             rotation_progress_rad=math.radians(control.get(
                 "collision_guard_rotation_progress_deg", 1.0)),
         )
-        self.blocked_pose_target = BlockedPoseTarget()
-        self.discard_blocked_target = self.simulation and bool(
-            control.get("discard_blocked_target", True))
+        self.geometric_recovery_filter = bool(rospy.get_param(
+            "~geometric_recovery_filter", False))
+        self.recovery_target = CZeroRecoveryTarget()
+        # The constrained velocity solver already limits execution. Scaling
+        # the hand goal again made a fixed request move by centimetres as a
+        # blocked axis was released. Keep one fixed C-relative pose goal.
+        self.compensate_blocked_target = not bool(rospy.get_param(
+            "/shared_teleop/control/constrained_velocity_projection", False))
+        self.recovery_last_tick = None
+        self.geometric_feedback = ({}, -float("inf"))
+        if self.geometric_recovery_filter:
+            rospy.Subscriber("/shared_teleop/geometric_filter_diagnostics", String,
+                             self.geometric_filter_callback, queue_size=1)
         topics = config.get("topics", {})
         self.publisher = rospy.Publisher(
             topics.get("raw_command", "/shared_teleop/raw_hand_command"),
@@ -634,7 +661,8 @@ class SixDofTrendNode:
         self.latest_target_update_ros = None
         self.target_hold_reason = None
         self.collision_retreat_guard.reset()
-        self.blocked_pose_target.reset()
+        self.recovery_target.reset()
+        self.geometric_feedback = ({}, -float("inf"))
         self.pose_reachability_cache = []
         self.pose_reachability_last = {
             "limit": 1.0, "cache_hit": False, "ik_calls": 0,
@@ -823,6 +851,12 @@ class SixDofTrendNode:
                 self.collision_velocity_scale <= self.collision_disarm_scale):
             self.engage_servo_interlock(status)
 
+    def geometric_filter_callback(self, message):
+        try:
+            self.geometric_feedback = (json.loads(message.data), time.monotonic())
+        except (ValueError, TypeError):
+            pass
+
     def collision_scale_callback(self, message):
         self.collision_velocity_scale = float(np.clip(message.data, 0.0, 1.0))
         if (self.collision_disarm_scale > 0.0 and
@@ -858,8 +892,8 @@ class SixDofTrendNode:
         emits zero forever, so Servo never receives the nonzero command needed
         to recalculate its condition.  Resetting blindly would make it chase a
         stale target.  This gate requires a fresh MANO target and a command
-        already approved by the C-zero retreat guard before calling Servo's
-        own reset service.
+        approved by the current geometry check (or the compatibility C-zero
+        guard) before calling Servo's own reset service.
         """
 
         status = int(self.last_servo_status)
@@ -867,7 +901,15 @@ class SixDofTrendNode:
             return False, False, "NONE"
         if target_age_s > self.servo_reset_fresh_target_s:
             return False, False, "WAITING_FOR_FRESH_HAND_TARGET"
-        if collision_retreat is None or not collision_retreat.active:
+        if self.geometric_recovery_filter:
+            feedback, received_at = self.geometric_feedback
+            key = "reset_singularity_allowed" if status == 2 else "reset_joint_limit_allowed"
+            approved = np.asarray(feedback.get("approved_velocity", []), dtype=float)
+            if (time.monotonic() - received_at > 0.10 or feedback.get(key) is not True
+                    or approved.shape != (6,) or not np.all(np.isfinite(approved))
+                    or float(np.dot(approved, velocity)) <= 0.0):
+                return False, False, "WAITING_FOR_GEOMETRICALLY_APPROVED_RETREAT"
+        elif collision_retreat is None or not collision_retreat.active:
             return False, False, "WAITING_FOR_C_ZERO_RETREAT_GUARD"
         if float(np.linalg.norm(velocity)) <= self.servo_reset_min_command_norm:
             return False, False, "WAITING_FOR_NONZERO_RECOVERY_COMMAND"
@@ -885,7 +927,7 @@ class SixDofTrendNode:
             return True, False, "RESET_SERVICE_FAILED"
         self.servo_reset_count += 1
         rospy.logwarn(
-            "reset recoverable Servo status %d for a fresh C-zero-safe "
+            "reset recoverable Servo status %d for an approved fresh recovery "
             "command (reset count=%d)", status, self.servo_reset_count)
         return True, True, "RESET_REQUESTED"
 
@@ -997,6 +1039,13 @@ class SixDofTrendNode:
             return
         if not self.prepare_operator_reference(message):
             return
+        if (not message.valid and
+                str(message.invalid_reason).startswith("no_real_hand:")):
+            # Confirmed disappearance is different from a late inference
+            # frame. Stop the old target now, retaining the operator's C
+            # reference and continuity filter for a bounded, fresh recovery.
+            self.publish_waiting(message, "HAND_LOST_HOLDING_C_REFERENCE")
+            return
         with self.lock:
             reference_armed = self.reference_armed
             reference_revision = self.reference_revision
@@ -1037,6 +1086,14 @@ class SixDofTrendNode:
                 return_reference_rotation=hand_zero_rotation_for_retreat)
             pose_continuity_reason = self.pose_continuity.last_reason
             with self.lock:
+                if (self.estimator.zero_position is None and
+                        getattr(message, "control_reference_pose_present", False)):
+                    reference = message.control_reference_wrist_pose
+                    self.estimator.zero_position = np.asarray([
+                        reference.position.x, reference.position.y, reference.position.z])
+                    self.estimator.zero_rotation = quaternion_xyzw_to_matrix([
+                        reference.orientation.x, reference.orientation.y,
+                        reference.orientation.z, reference.orientation.w])
                 result = self.estimator.update(sample)
                 needs_robot_zero = self.robot_zero_position is None
                 hand_zero_rotation = (
@@ -1080,6 +1137,14 @@ class SixDofTrendNode:
             with self.lock:
                 robot_zero_position = self.robot_zero_position.copy()
                 robot_zero_rotation = self.robot_zero_rotation.copy()
+            if self.mapping_profile_name == "current_linear":
+                camera_axes = self.camera_rotation_to_tool_zero
+                if camera_axes is not None:
+                    # result.relative_rotation is R_hand_zero.T @ R_hand.
+                    # Convert its axis to the fixed camera basis before the
+                    # side-angle gain/limit. No new zero or axis suppression.
+                    self.mapper.rotation_matrix = (
+                        np.asarray(camera_axes, dtype=float) @ hand_zero_rotation)
             side_projection = self.side_grasp_projector.project(
                 result.relative_rotation)
             target_position, target_rotation = self.mapper.map(
@@ -1109,7 +1174,10 @@ class SixDofTrendNode:
                     result.raw_velocity, hand_zero_rotation,
                     robot_zero_rotation,
                     relative_hand_position=result.relative_position,
-                    robot_zero_position=robot_zero_position)
+                    robot_zero_position=robot_zero_position,
+                    **({"relative_hand_rotation": side_projection.rotation}
+                       if self.mapping_profile_name == "current_linear"
+                       else {}))
             mapping_diagnostics = self.mapper.mapping_diagnostics()
             if self.pose_reachability_enabled:
                 mapping_diagnostics["reachability_projection"] = dict(
@@ -1136,6 +1204,7 @@ class SixDofTrendNode:
                 return
             mapped_confidence = self.mapper.map_confidence(result.confidence)
             tracking = {
+                "reference_revision": reference_revision,
                 "header_stamp": message.header.stamp,
                 "source_stamp": result.timestamp,
                 "valid": bool(result.valid),
@@ -1176,6 +1245,13 @@ class SixDofTrendNode:
                         not self.reference_armed or
                         not self.reference_ready):
                     return
+                previous = self.latest_tracking
+                interval = (result.timestamp-previous["source_stamp"]
+                            if previous is not None else 0.05)
+                tracking["source_interval_s"] = float(np.clip(
+                    0.5*interval + 0.5*(previous.get("source_interval_s", interval)
+                                       if previous is not None else interval),
+                    0.02, 0.20))
                 self.latest_tracking = tracking
                 self.latest_target_update_ros = rospy.Time.now().to_sec()
                 self.target_hold_reason = None
@@ -1207,21 +1283,10 @@ class SixDofTrendNode:
         if self.shutting_down or rospy.is_shutdown():
             return
         began = time.perf_counter()
+        recovery_dt = 0.0 if self.recovery_last_tick is None else began-self.recovery_last_tick
+        self.recovery_last_tick = began
         with self.lock:
-            requested_state = self.latest_tracking
-            state = None if requested_state is None else dict(requested_state)
-            reference_revision = self.reference_revision
-            if state is not None and self.discard_blocked_target:
-                state["target_position"], state["target_rotation"] = (
-                    self.blocked_pose_target.apply(
-                        requested_state["target_position"],
-                        requested_state["target_rotation"]))
-                state["target_velocity"] = state["target_velocity"].copy()
-                state["target_velocity"][3:] = (
-                    self.blocked_pose_target.rotation_offset @
-                    state["target_velocity"][3:])
-            position_offset = self.blocked_pose_target.position_offset.copy()
-            rotation_offset = self.blocked_pose_target.rotation_offset.copy()
+            state = self.latest_tracking
             latest_target_update_ros = self.latest_target_update_ros
             target_hold_reason = self.target_hold_reason
         if state is None:
@@ -1255,7 +1320,11 @@ class SixDofTrendNode:
         position_error = None
         rotation_error = None
         velocity = np.zeros(6)
+        target_velocity = np.zeros(6)
+        velocity_freshness = 0.0
         collision_retreat = None
+        control_target_position = state["target_position"].copy()
+        control_target_rotation = state["target_rotation"].copy()
         servo_reset_attempted = False
         servo_reset_succeeded = False
         servo_recovery_reason = "NONE"
@@ -1266,15 +1335,42 @@ class SixDofTrendNode:
                 rotation_error = so3_log(
                     state["target_rotation"] @ current_rotation.T)
                 if not position_reference_hold:
-                    # A V3 HOLD_LAST packet repeats a fixed target pose.  Its
-                    # target velocity therefore decays to zero; retaining the
-                    # final measured hand velocity would drive past it.
-                    target_velocity = (
-                        np.zeros(6) if holding_last_target else
-                        state["target_velocity"])
+                    # Keep the existing feedforward gains, but respect the
+                    # measured camera cadence rather than pulsing velocity to
+                    # zero 50 ms into every normal 100-150 ms frame interval.
+                    # Explicit invalid observations immediately remove it.
+                    velocity_freshness = sampled_velocity_freshness(
+                        target_age_s, state.get("source_interval_s", 0.05),
+                        observation_invalid=target_hold_reason is not None)
+                    target_velocity = state["target_velocity"] * velocity_freshness
+                    if self.geometric_recovery_filter and self.compensate_blocked_target:
+                        feedback, received_at = self.geometric_feedback
+                        feedback_fresh = time.monotonic() - received_at <= 0.20
+                        with self.lock:
+                            if state["reference_revision"] != self.reference_revision:
+                                return
+                            (control_target_position, control_target_rotation,
+                             target_velocity) = self.recovery_target.apply(
+                                state["target_position"], state["target_rotation"],
+                                current_position, current_rotation,
+                                state["robot_zero_position"], state["robot_zero_rotation"],
+                                target_velocity,
+                                (feedback.get("recovery_limited_axes", feedback.get(
+                                    "translation_limited_axes",
+                                    feedback.get("translation_limited") is True))
+                                    if feedback_fresh else False),
+                                feedback_fresh and feedback.get(
+                                    "recovery_rotation_limited",
+                                    feedback.get("rotation_limited") is True),
+                                current_velocity=(feedback.get("measured_velocity")
+                                                  if feedback_fresh else None),
+                                dt_s=recovery_dt)
+                        position_error = control_target_position - current_position
+                        rotation_error = so3_log(
+                            control_target_rotation @ current_rotation.T)
                     velocity = self.pose_servo.command(
                         current_position, current_rotation,
-                        state["target_position"], state["target_rotation"],
+                        control_target_position, control_target_rotation,
                         target_velocity)
                     velocity[:3][
                         np.abs(position_error) <= self.position_tolerance] = 0.0
@@ -1291,38 +1387,15 @@ class SixDofTrendNode:
                             self.last_servo_status)
                         if servo_retreat_active else
                         "COLLISION_PROXIMITY_RETURN_TOWARD_C_ZERO")
-                    with self.lock:
-                        collision_retreat = self.collision_retreat_guard.apply(
-                            retreat_scale,
-                            current_position, current_rotation,
-                            state["robot_zero_position"],
-                            state["robot_zero_rotation"], velocity,
-                            active_reason=retreat_reason)
-                    velocity = collision_retreat.velocity
-                    if (self.discard_blocked_target and
-                            collision_retreat.active and
-                            (not collision_retreat.linear_retreat_allowed or
-                             not collision_retreat.angular_retreat_allowed)):
+                    if not self.geometric_recovery_filter:
                         with self.lock:
-                            if reference_revision != self.reference_revision:
-                                return
-                            self.blocked_pose_target.discard(
-                                requested_state["target_position"],
-                                requested_state["target_rotation"],
+                            collision_retreat = self.collision_retreat_guard.apply(
+                                retreat_scale,
                                 current_position, current_rotation,
-                                not collision_retreat.linear_retreat_allowed,
-                                not collision_retreat.angular_retreat_allowed)
-                            position_offset = (
-                                self.blocked_pose_target.position_offset.copy())
-                            rotation_offset = (
-                                self.blocked_pose_target.rotation_offset.copy())
-                            state["target_position"], state["target_rotation"] = (
-                                self.blocked_pose_target.apply(
-                                    requested_state["target_position"],
-                                    requested_state["target_rotation"]))
-                        position_error = state["target_position"] - current_position
-                        rotation_error = so3_log(
-                            state["target_rotation"] @ current_rotation.T)
+                                state["robot_zero_position"],
+                                state["robot_zero_rotation"], velocity,
+                                active_reason=retreat_reason)
+                        velocity = collision_retreat.velocity
                     (servo_reset_attempted, servo_reset_succeeded,
                      servo_recovery_reason) = (
                         self.maybe_reset_recoverable_servo_halt(
@@ -1349,7 +1422,10 @@ class SixDofTrendNode:
         (command.twist.linear.x, command.twist.linear.y,
          command.twist.linear.z, command.twist.angular.x,
          command.twist.angular.y, command.twist.angular.z) = values
-        self.publisher.publish(command)
+        with self.lock:
+            if state["reference_revision"] != self.reference_revision:
+                return
+            self.publisher.publish(command)
         self.publish_diagnostic({
             "stamp": state["source_stamp"],
             "valid": valid,
@@ -1361,9 +1437,6 @@ class SixDofTrendNode:
             "servo_auto_reset_count": self.servo_reset_count,
             "servo_recovery_reason": servo_recovery_reason,
             "target_input_age_s": target_age_s,
-            "blocked_target_position_offset_m": position_offset.tolist(),
-            "blocked_target_rotation_offset_deg": np.degrees(
-                so3_log(rotation_offset)).tolist(),
             "target_hold_active": holding_last_target,
             "position_reference_hold_active": position_reference_hold,
             "collision_retreat_guard_active": bool(
@@ -1379,9 +1452,9 @@ class SixDofTrendNode:
                 collision_retreat.angular_retreat_allowed),
             "raw_velocity": state["raw_velocity"].tolist(),
             "mapped_velocity": values.tolist(),
-            "target_feedforward_velocity": (
-                np.zeros(6) if holding_last_target else
-                state["target_velocity"]).tolist(),
+            "target_feedforward_velocity": target_velocity.tolist(),
+            "velocity_freshness": float(velocity_freshness),
+            "target_sample_interval_s": float(state.get("source_interval_s", 0.05)),
             "feedforward_linear_weight": float(
                 state["feedforward_linear_weight"]),
             "feedforward_angular_weight": float(
@@ -1410,9 +1483,14 @@ class SixDofTrendNode:
             "robot_zero_position": state["robot_zero_position"].tolist(),
             "robot_zero_quaternion_xyzw": matrix_to_quaternion_xyzw(
                 state["robot_zero_rotation"]).tolist(),
-            "target_position": state["target_position"].tolist(),
-            "target_quaternion_xyzw": matrix_to_quaternion_xyzw(
+            "requested_target_position": state["target_position"].tolist(),
+            "requested_target_quaternion_xyzw": matrix_to_quaternion_xyzw(
                 state["target_rotation"]).tolist(),
+            "recovery_translation_gain": self.recovery_target.translation_gain.tolist(),
+            "recovery_rotation_gain": self.recovery_target.rotation_gain,
+            "target_position": control_target_position.tolist(),
+            "target_quaternion_xyzw": matrix_to_quaternion_xyzw(
+                control_target_rotation).tolist(),
             "current_position": (
                 None if current_position is None else current_position.tolist()),
             "current_quaternion_xyzw": (
@@ -1420,6 +1498,9 @@ class SixDofTrendNode:
                 matrix_to_quaternion_xyzw(current_rotation).tolist()),
             "position_error_m": (
                 None if position_error is None else position_error.tolist()),
+            "requested_position_error_m": (
+                None if current_position is None else
+                (state["target_position"] - current_position).tolist()),
             "rotation_error_rad": (
                 None if rotation_error is None else rotation_error.tolist()),
             "processing_ms": (

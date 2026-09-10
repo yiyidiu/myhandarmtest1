@@ -50,6 +50,29 @@ def _packet(sequence, position, rotation, confidence=None):
 
 
 class RelativeWristPoseDisplayTest(unittest.TestCase):
+    def test_held_orientation_updates_position_but_c_waits_for_fresh_rotation(self):
+        display = RelativeWristPoseDisplay()
+        held = _packet(1, [0.1, 0.2, 0.6], np.eye(3))
+        held.update(orientation_channel_valid=False, orientation_held=True)
+        self.assertTrue(display.update_from_packet(held, 4).valid)
+        self.assertFalse(display.calibrate_from_latest(4))
+        fresh = _packet(2, [0.1, 0.2, 0.6], _rotation(0, 3, 0))
+        display.update_from_packet(fresh, 4)
+        self.assertTrue(display.calibrate_from_latest(4))
+        held["sequence"] = 3
+        held["stamp"] = 101.0
+        held["wrist_position_m"] = [0.1, 0.1, 0.6]
+        current = display.update_from_packet(held, 4)
+        self.assertTrue(current.valid)
+        self.assertTrue(current.calibrated)
+        np.testing.assert_allclose(current.delta_m, [0.0, -0.1, 0.0])
+
+    def test_c_rejects_zero_rotation_confidence(self):
+        display = RelativeWristPoseDisplay()
+        packet = _packet(1, [0.1, 0.2, 0.6], np.eye(3), [0.8]*3+[0.0]*3)
+        display.update_from_packet(packet, 4)
+        self.assertFalse(display.calibrate_from_latest(4))
+
     def test_c_zero_then_all_six_components_are_reported_together(self):
         display = RelativeWristPoseDisplay()
         reference = _rotation(7.0, -4.0, 12.0)

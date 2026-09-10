@@ -16,8 +16,9 @@ sys.path.insert(0, str(PACKAGE / "src"))
 
 from handarm_moveit_demo.shared_teleop_core import (  # noqa: E402
     AprilTagV3PoseContinuityFilter,
-    BlockedPoseTarget,
     CollisionRetreatGuard,
+    CZeroRecoveryTarget,
+    sampled_velocity_freshness,
     CoordinateVelocityMapper,
     CameraRangeWorkspaceMapper,
     GESTURE_CLOSE,
@@ -48,34 +49,101 @@ from handarm_moveit_demo.shared_teleop_core import (  # noqa: E402
 )
 
 
+class CZeroRecoveryTargetTest(unittest.TestCase):
+    def test_geometry_release_cannot_rebuild_backlog_while_robot_stays_still(self):
+        recovery = CZeroRecoveryTarget()
+        requested = np.array([.30, 0, 0])
+        actual = np.array([.10, 0, 0])
+        desired_rotation = so3_exp([0, .9, 0])
+        actual_rotation = so3_exp([0, .3, 0])
+        recovery.apply(requested, desired_rotation, actual, actual_rotation,
+                       np.zeros(3), np.eye(3), np.zeros(6), True, True)
+        for _ in range(250):
+            target, rotation, _ = recovery.apply(
+                requested, desired_rotation, actual, actual_rotation,
+                np.zeros(3), np.eye(3), np.zeros(6), dt_s=.02)
+        self.assertLessEqual(target[0] - actual[0], .01000001)
+        self.assertLessEqual(rotation_distance(rotation, actual_rotation), math.radians(2.00001))
+        target, rotation, _ = recovery.apply(
+            np.zeros(3), np.eye(3), actual, actual_rotation,
+            np.zeros(3), np.eye(3), np.zeros(6), dt_s=.02)
+        np.testing.assert_allclose(target, np.zeros(3))
+        self.assertLess(rotation_distance(rotation, np.eye(3)), 1e-7)
+
+    def test_velocity_between_camera_samples_is_not_a_stop_measurement(self):
+        self.assertEqual(sampled_velocity_freshness(.10, .14), 1.0)
+        self.assertAlmostEqual(sampled_velocity_freshness(.175, .14), .5)
+        self.assertEqual(sampled_velocity_freshness(.3, .14), 0.0)
+        self.assertEqual(sampled_velocity_freshness(.02, .14, True), 0.0)
+    def test_moving_near_constraint_does_not_compress_normal_curve(self):
+        recovery = CZeroRecoveryTarget()
+        requested = so3_exp([0, 1.4, 0])
+        p, rotation, _ = recovery.apply(
+            [.1, .1, .2], requested, [.06, .05, .1], so3_exp([0, .8, 0]),
+            np.zeros(3), np.eye(3), [-.1, -.1, -.1, 0, -.2, 0], True, True,
+            current_velocity=[.04, .04, .04, 0, .3, 0])
+        np.testing.assert_allclose(p, [.1, .1, .2])
+        self.assertLess(rotation_distance(rotation, requested), 1e-7)
+
+    def test_blocked_return_starts_at_reached_pose_and_preserves_c(self):
+        recovery = CZeroRecoveryTarget()
+        zero = np.array([0.3, 0.0, 0.38])
+        requested = zero + [0.0, 0.0, 0.20]
+        actual = zero + [0.0, 0.0, 0.07]
+        p, _, _ = recovery.apply(requested, np.eye(3), actual, np.eye(3),
+                                 zero, np.eye(3), [0, 0, .03, 0, 0, 0], True)
+        # Pushing farther into a blocked direction must not store an
+        # unexecuted target for a sudden catch-up after release.
+        np.testing.assert_allclose(p, actual)
+        p, _, v = recovery.apply(requested, np.eye(3), actual, np.eye(3),
+                                 zero, np.eye(3), [0, 0, -.03, 0, 0, 0], True)
+        np.testing.assert_allclose(p, actual)
+        self.assertLess(v[2], 0.0)
+        p, _, _ = recovery.apply(zero + [0, 0, .15], np.eye(3), actual,
+                                 np.eye(3), zero, np.eye(3), np.zeros(6))
+        self.assertLess(p[2], actual[2])
+        p, _, _ = recovery.apply(zero, np.eye(3), actual, np.eye(3),
+                                 zero, np.eye(3), np.zeros(6))
+        np.testing.assert_allclose(p, zero)
+        np.testing.assert_allclose(recovery.translation_gain, np.ones(3))
+        p, _, _ = recovery.apply(requested, np.eye(3), zero, np.eye(3),
+                                 zero, np.eye(3), np.zeros(6))
+        np.testing.assert_allclose(p, requested)
+
+    def test_rotation_return_keeps_original_zero_orientation(self):
+        recovery = CZeroRecoveryTarget()
+        reference = so3_exp([.2, -.1, .3])
+        requested = so3_exp([0, 1.4, 0]) @ reference
+        reached = so3_exp([0, .8, 0]) @ reference
+        _, orientation, _ = recovery.apply(
+            np.zeros(3), requested, np.zeros(3), reached,
+            np.zeros(3), reference, [0, 0, 0, 0, -.2, 0], False, True)
+        self.assertLess(rotation_distance(orientation, reached), 1e-7)
+        _, orientation, _ = recovery.apply(
+            np.zeros(3), reference, np.zeros(3), reached,
+            np.zeros(3), reference, np.zeros(6))
+        self.assertLess(rotation_distance(orientation, reference), 1e-7)
+        self.assertEqual(recovery.rotation_gain, 1.0)
+
+    def test_only_blocked_axis_compresses_and_clear_rejoin_is_bounded(self):
+        recovery = CZeroRecoveryTarget()
+        p, r, _ = recovery.apply([.1, .1, .2], so3_exp([0, 1.4, 0]),
+            [.04, .05, .07], so3_exp([0, .8, 0]), np.zeros(3), np.eye(3),
+            [.02, .02, .02, 0, .2, 0], [True, False, False], True)
+        np.testing.assert_allclose(p, [.04, .1, .2])
+        self.assertLess(rotation_distance(r, so3_exp([0, .8, 0])), 1e-7)
+        p2, r2, _ = recovery.apply([.1, .1, .2], so3_exp([0, 1.4, 0]),
+            p, r, np.zeros(3), np.eye(3), np.zeros(6), dt_s=.02)
+        self.assertAlmostEqual(p2[0]-p[0], .10*.02)
+        self.assertAlmostEqual(rotation_distance(r2, r), math.radians(10)*.02)
+
+
 def sample(stamp, velocity, quaternion=None, confidence=None):
     velocity = np.asarray(velocity, dtype=float)
     rotation = (so3_exp(velocity[3:] * stamp) if quaternion is None else
                 quaternion_xyzw_to_matrix(quaternion))
     return PoseSample(stamp, velocity[:3] * stamp, rotation,
                       np.ones(6) if confidence is None else confidence)
-
-
-class BlockedPoseTargetTest(unittest.TestCase):
-    def test_upward_stop_discards_debt_and_accepts_first_reversal(self):
-        target = BlockedPoseTarget()
-        actual = np.asarray([0.30, 0.0, 0.448])
-        requested = np.asarray([0.30, 0.0, 0.588])
-        np.testing.assert_allclose(target.apply(requested, np.eye(3))[0], requested)
-        target.discard(requested, np.eye(3), actual, np.eye(3), True, False)
-        reversed_target, _ = target.apply(requested - [0, 0, .005], np.eye(3))
-        self.assertAlmostEqual(reversed_target[2], actual[2] - .005)
-        target.reset()
-        np.testing.assert_allclose(target.apply(requested, np.eye(3))[0], requested)
-
-    def test_rotation_stop_preserves_translation_and_reverse_axis(self):
-        target = BlockedPoseTarget()
-        requested = so3_exp([0, 0, 1.0])
-        actual = so3_exp([0, 0, .4])
-        target.discard([.3, .1, .4], requested, [.2, .1, .3], actual, False, True)
-        position, reversed_rotation = target.apply([.3, .1, .4], so3_exp([0, 0, .95]))
-        np.testing.assert_allclose(position, [.3, .1, .4])
-        np.testing.assert_allclose(so3_log(reversed_rotation), [0, 0, .35], atol=1e-10)
 
 
 class AprilTagV3PoseContinuityTest(unittest.TestCase):
@@ -366,6 +434,96 @@ class RobotDescriptionLimitTest(unittest.TestCase):
 
 
 class SixDofCommandTest(unittest.TestCase):
+    def test_left_side_gain_preserves_right_side_and_velocity_mapping(self):
+        mapper = RelativePoseMapper(
+            np.eye(3), np.eye(3), [1, 1, 1], [9.0/7.0, 1, 3],
+            [2, 2, 2], math.radians(179),
+            maximum_side_rotation_rad=math.radians(88),
+            positive_side_rotation_gain=18.0/7.0)
+        for hand, tool in ((35, 88), (-70, -88), (10, 180.0/7), (-10, -90.0/7)):
+            relative = so3_exp([math.radians(hand), 0, 0])
+            _, target = mapper.map([0, 0, 0], relative, [0, 0, 0], np.eye(3))
+            np.testing.assert_allclose(so3_log(target), [math.radians(tool), 0, 0], atol=1e-8)
+            v = mapper.map_target_velocity(
+                [0, 0, 0, .1, 0, 0], np.eye(3), np.eye(3),
+                relative_hand_rotation=relative)
+            expected = 0.0 if abs(tool) == 88 else .1*(18.0/7 if hand > 0 else 9.0/7)
+            np.testing.assert_allclose(v[3:], [expected, 0, 0], atol=1e-7)
+
+    def test_sixfold_roll_stays_bounded_without_wrapping_target(self):
+        mapper = RelativePoseMapper(
+            np.eye(3), np.eye(3), [1, 1, 1], [9.0/7.0, 1, 6],
+            [2, 2, 2], math.radians(179), maximum_side_rotation_rad=math.pi/2)
+        for sign in (-1, 1):
+            for hand_angle, tool_angle in ((5, 30), (20, 120), (35, 179), (60, 179)):
+                _, rotation = mapper.map(np.zeros(3),
+                    so3_exp([0, 0, sign*math.radians(hand_angle)]),
+                    np.zeros(3), np.eye(3))
+                np.testing.assert_allclose(so3_log(rotation),
+                    [0, 0, sign*math.radians(tool_angle)], atol=1e-8)
+            relative = so3_exp([0, 0, sign*math.radians(35)])
+            velocity = mapper.map_target_velocity(
+                [0, 0, 0, 0, 0, sign*.1], np.eye(3), np.eye(3),
+                relative_hand_rotation=relative)
+            np.testing.assert_allclose(velocity, np.zeros(6), atol=1e-8)
+
+    def test_side_angle_stops_at_ninety_but_roll_still_moves(self):
+        mapper = RelativePoseMapper(
+            np.eye(3), np.eye(3), [1, 1, 1], [9.0/7.0, 1, 1],
+            [2, 2, 2], math.pi, maximum_side_rotation_rad=math.pi/2)
+        for sign in (-1, 1):
+            for angle in (70, 82, 100):
+                _, target = mapper.map(
+                    np.zeros(3), so3_exp([sign*math.radians(angle), 0, 0]),
+                    np.zeros(3), np.eye(3))
+                np.testing.assert_allclose(
+                    so3_log(target), [sign*math.pi/2, 0, 0], atol=1e-8)
+            for axis in (1, 2):
+                swing = np.zeros(3)
+                swing[axis] = math.radians(25)
+                _, target = mapper.map(np.zeros(3),
+                    so3_exp([sign*math.radians(82), 0, 0]) @ so3_exp(swing),
+                    np.zeros(3), np.eye(3))
+                self.assertLess(rotation_distance(target,
+                    so3_exp([sign*math.pi/2, 0, 0]) @ so3_exp(swing)), 1e-8)
+        velocity = mapper.map_target_velocity(
+            [0, 0, 0, 0.5, 0, 0], np.eye(3), np.eye(3),
+            relative_hand_rotation=so3_exp([math.radians(82), 0, 0]))
+        np.testing.assert_allclose(velocity, np.zeros(6), atol=1e-8)
+
+    def test_requested_yaw_gain_preserves_other_rotation_axes(self):
+        mapper = RelativePoseMapper(
+            np.eye(3), np.eye(3), [1.6, 1.6, 1.2], [9.0/7.0, 1, 1],
+            [2, 2, 2], math.radians(179))
+        for sign in (-1, 1):
+            for axis, angle, expected in ((0, 70, 90), (1, 25, 25), (2, 25, 25)):
+                vector = np.zeros(3)
+                vector[axis] = sign * math.radians(angle)
+                _, rotation = mapper.map(np.zeros(3), so3_exp(vector),
+                                         np.zeros(3), np.eye(3))
+                np.testing.assert_allclose(
+                    so3_log(rotation), vector * (expected/angle), atol=1e-7)
+        p, _ = mapper.map([.35, -.35, .1], np.eye(3),
+                          [.3, 0, .38], np.eye(3))
+        np.testing.assert_allclose(p, [.86, -.56, .50])
+
+    def test_yaw_amplified_mixed_rotation_velocity_matches_pose_change(self):
+        mapper = RelativePoseMapper(
+            np.eye(3), np.eye(3), [1, 1, 1], [9.0/7.0, 1, 1],
+            [2, 2, 2], math.radians(179))
+        relative = so3_exp([.8, .2, -.3])
+        hand_zero = so3_exp([.1, -.2, .15])
+        robot_zero = so3_exp([-.2, .1, .3])
+        omega = np.array([.15, -.22, .07])
+        velocity = mapper.map_target_velocity(
+            np.r_[np.zeros(3), hand_zero @ omega], hand_zero, robot_zero,
+            relative_hand_rotation=relative)
+        dt = .001
+        _, a = mapper.map(np.zeros(3), relative, np.zeros(3), robot_zero)
+        _, b = mapper.map(np.zeros(3), so3_exp(omega*dt) @ relative,
+                          np.zeros(3), robot_zero)
+        np.testing.assert_allclose(velocity[3:], so3_log(b @ a.T)/dt, atol=1e-5)
+
     def make_estimator(self):
         return SixDofTrendEstimator(
             window_size=4,
@@ -895,8 +1053,8 @@ class SafetyConfigurationTest(unittest.TestCase):
             encoding="utf-8"))
         mapping = config["mapping"]
         limits = config["limits"]
-        np.testing.assert_allclose(mapping["translation_gain"], [0.8, 0.8, 1.2])
-        np.testing.assert_allclose(mapping["rotation_gain"], [1.0, 1.0, 1.0])
+        np.testing.assert_allclose(mapping["translation_gain"], [1.6, 1.6, 1.2])
+        np.testing.assert_allclose(mapping["rotation_gain"], [9.0/7.0, 1.0, 1.0])
         np.testing.assert_allclose(
             limits["maximum_linear_velocity_mps"], [1.0, 1.0, 1.0])
         np.testing.assert_allclose(

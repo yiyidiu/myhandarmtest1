@@ -215,6 +215,14 @@ class ThreeFingerRetargeter:
         self.pending_innovation = None
         self.pending_innovation_count = 0
 
+        self.grip_latch_enabled = bool(config.get("grip_latch_enabled", False))
+        self._reset_grip_state()
+
+    def _reset_grip_state(self):
+        self.grip_latched = False
+        self.release_phase = None
+        self.open_confirmation_count = 0
+
     @property
     def calibrated(self) -> bool:
         return self.baseline is not None
@@ -245,6 +253,7 @@ class ThreeFingerRetargeter:
         )
 
     def _begin_reference(self, token: str, current_joints: np.ndarray) -> None:
+        self._reset_grip_state()
         if token in self.blocked_tokens:
             raise ValueError("blocked finger reference requires a new C token")
         if self.blocked_tokens:
@@ -262,6 +271,7 @@ class ThreeFingerRetargeter:
         self.filter.timestamp = None
 
     def block_active_reference(self) -> None:
+        self._reset_grip_state()
         if self.active_token:
             self.blocked_tokens.add(self.active_token)
         self.active_token = ""
@@ -313,8 +323,15 @@ class ThreeFingerRetargeter:
         if token != self.active_token:
             self._begin_reference(token, current)
 
+        release_dt = (self.command_duration_s if self.last_timestamp is None else
+                      min(0.10, max(0.0, stamp - self.last_timestamp)))
+
         if not self.calibrated:
-            if np.any(raw > self.reference_max_flexion):
+            # The natural-fist profile uses the four long fingers. An unused
+            # thumb must not prevent C calibration when those fingers are
+            # open (Sept 8, 150 s: thumb 0.447, other digits 0.14--0.24).
+            used_digits = np.any(self.mixing > 0.0, axis=0)
+            if np.any(raw[used_digits] > self.reference_max_flexion[used_digits]):
                 self.calibration_buffer = []
                 return self._result(
                     "C_REFERENCE_HAND_NOT_OPEN", raw=raw, hold_required=True
@@ -326,7 +343,7 @@ class ThreeFingerRetargeter:
                     "CALIBRATING_OPEN_HAND", raw=raw, hold_required=True
                 )
             samples = np.asarray(self.calibration_buffer)
-            if float(np.max(np.ptp(samples, axis=0))) > self.calibration_max_range:
+            if float(np.max(np.ptp(samples[:, used_digits], axis=0))) > self.calibration_max_range:
                 self.calibration_buffer = [raw.copy()]
                 return self._result(
                     "C_REFERENCE_HAND_MOVING", raw=raw, hold_required=True
@@ -384,14 +401,47 @@ class ThreeFingerRetargeter:
         )
         desired = self.open_target.copy()
         desired[1:] += closure * (self.close_target[1:] - self.open_target[1:])
+        if self.grip_latch_enabled:
+            # Hold a clear power grasp through small visual changes. Two
+            # clearly open observations request release, without a mode key.
+            if float(np.mean(closure)) >= 0.90:
+                self.grip_latched = True
+                self.release_phase = None
+                self.open_confirmation_count = 0
+            if self.grip_latched:
+                self.open_confirmation_count = (
+                    self.open_confirmation_count + 1
+                    if float(np.max(closure)) <= 0.10 else 0)
+                desired = self.close_target.copy()
+                if self.open_confirmation_count >= 2:
+                    self.grip_latched = False
+                    self.release_phase = "OPEN_ALL"
+                    # An explicit release unloads all contacts together.
+                    # Starting from the old, preloaded CLOSE references would
+                    # leave a blocked finger squeezing while the others open.
+                    self.last_target = np.clip(current, self.lower_limits,
+                                               self.upper_limits)
+                    self.last_target[0] = self.open_target[0]
+            if self.release_phase is not None:
+                desired = self.open_target.copy()
         maximum_step = self.maximum_velocity * self.command_duration_s
         command = self.last_target + np.clip(
             desired - self.last_target, -maximum_step, maximum_step
         )
+        if self.release_phase == "OPEN_ALL":
+            # One common progress fraction starts/finishes all three fingers
+            # together, even when their measured contact angles differ.
+            delta = desired - self.last_target
+            remaining_s = float(np.max(np.abs(delta) / self.maximum_velocity))
+            progress = min(1.0, release_dt / max(remaining_s, 1e-9))
+            command = self.last_target + progress * delta
         command = np.clip(command, self.lower_limits, self.upper_limits)
         self.last_target = command.copy()
+        if (self.release_phase == "OPEN_ALL" and
+                np.max(np.abs(command - self.open_target)) < 1e-6):
+            self.release_phase = None
         return self._result(
-            "TRACKING" if np.any(closure > 0.0) else "OPEN_BASELINE",
+            "TRACKING" if np.any(desired[1:] > self.open_target[1:] + 1e-8) else "OPEN_BASELINE",
             command_target=command,
             desired_target=desired,
             raw=raw,
@@ -401,19 +451,24 @@ class ThreeFingerRetargeter:
 
 
 def frozen_finger_hold_target(
-    existing_target: Sequence[float], current_joints: Sequence[float]
+    existing_target: Sequence[float], current_joints: Sequence[float],
+    last_command_target: Sequence[float] = None,
 ) -> np.ndarray:
-    """Capture a hand hold once instead of chasing measured plant drift.
+    """Keep the last actuator reference through missing visual observations.
 
-    Rebuilding a trajectory target from ``/joint_states`` on every invalid
-    camera heartbeat creates a positive feedback path: gravity/contact moves
-    a joint slightly, the next heartbeat blesses that displacement as the new
-    target, and the hand slowly walks away.  A hold transition captures the
-    measured configuration once and every later heartbeat reuses it verbatim.
+    In contact, measured joint angles differ from the commanded spring
+    reference. Replacing that reference with the measurement unloads the
+    fingers and can drop a held object. Do not advance the reference while
+    vision is absent; reuse exactly the last bounded command. Before the first
+    command, the measured configuration is the only available hold target.
     """
 
     current = _finite_vector(current_joints, 4, "current finger hold joints")
     if existing_target is None:
+        if last_command_target is not None:
+            return _finite_vector(
+                last_command_target, 4, "last finger command target"
+            ).copy()
         return current.copy()
     return _finite_vector(
         existing_target, 4, "existing finger hold target"

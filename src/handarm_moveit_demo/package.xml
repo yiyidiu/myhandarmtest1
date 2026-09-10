@@ -5,6 +5,8 @@
   <description>Beginner MoveIt programming examples for ABB IRB120 hand-arm simulation.</description>
   <maintainer email="user@example.com">user</maintainer>
   <license>MIT</license>
+  <!-- Vendored qpOASES solver; original notices are in third_party/qpOASES. -->
+  <license>LGPL-2.1-or-later</license>
 
   <buildtool_depend>catkin</buildtool_depend>
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+from pathlib import Path
 import time
 from typing import Any, Dict, Iterable, Optional
 
@@ -309,6 +310,7 @@ class D455Capture:
         timeout_ms: int = 3000,
         require_superspeed: bool = False,
         device_models: Optional[Iterable[str]] = None,
+        record_path: Optional[str] = None,
     ) -> None:
         self.width = int(width)
         self.height = int(height)
@@ -317,6 +319,7 @@ class D455Capture:
         self.timeout_ms = int(timeout_ms)
         self.require_superspeed = bool(require_superspeed)
         self.device_models = normalize_device_models(device_models)
+        self.record_path = str(Path(record_path).expanduser().resolve()) if record_path else None
         if min(self.width, self.height, self.fps, self.timeout_ms) <= 0:
             raise ValueError("capture dimensions, fps, and timeout must be positive")
         self._rs: Any = None
@@ -389,6 +392,12 @@ class D455Capture:
         config.enable_stream(
             rs.stream.color, self.width, self.height, rs.format.rgb8, self.fps
         )
+        if self.record_path:
+            destination = Path(self.record_path)
+            if destination.exists():
+                raise D455CaptureError("refusing to overwrite RGB-D recording: " + str(destination))
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            config.enable_record_to_file(str(destination))
         try:
             profile = pipeline.start(config)
             device = profile.get_device()
@@ -446,6 +455,7 @@ class D455Capture:
                 sdk_version = "unknown"
             self._session_metadata = {
                 "pyrealsense2_version": sdk_version,
+                "native_rgbd_recording": self.record_path,
                 "active_depth_profile": {
                     "stream": str(depth_profile.stream_type()),
                     "format": str(depth_profile.format()),

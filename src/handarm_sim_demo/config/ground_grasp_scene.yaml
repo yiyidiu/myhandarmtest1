@@ -1,18 +1,35 @@
+# Green cylinder moved another 30 mm toward base; shorter, narrower front carton.
 schema_version: 1
 frame_id: world
-units: {length: m, angle: rad, mass: kg}
-support_surface_key: ground
-
+units:
+  length: m
+  angle: rad
+  mass: kg
+support_surface_key: table
+grasp_touch_links:
+- f1link2
+- f1link3
+- f2link1
+- f2link2
+- f3link2
+- f3link3
 objects:
-  # Logical support surface used by grasp-clearance calculations. Gazebo owns
-  # the standard ground_plane model; this entry is not synchronized as a box.
   ground:
     name: teleop_ground_safety
     type: box
-    # Keep a 3 mm numerical gap below z=0 so the fixed base is not born in
-    # collision while every moving arm/hand link is still protected.
-    pose: {position: [0.0, 0.0, -0.011], orientation_rpy: [0.0, 0.0, 0.0]}
-    size: [4.0, 4.0, 0.016]
+    pose:
+      position:
+      - 0.0
+      - 0.0
+      - -0.011
+      orientation_rpy:
+      - 0.0
+      - 0.0
+      - 0.0
+    size:
+    - 4.0
+    - 4.0
+    - 0.016
     mass: 0.0
     static: true
     collision_enabled: true
@@ -20,35 +37,344 @@ objects:
     scene_manager_enabled: false
   target:
     name: target_object
-    type: box
-    pose: {position: [0.48, 0.0, 0.051], orientation_rpy: [0.0, 0.0, 0.0]}
-    size: [0.05, 0.06, 0.10]
-    planning_padding_m: [0.02, 0.02, 0.02]
-    mass: 0.10
+    display_name: green_grasp_cylinder
+    graspable: true
+    type: cylinder
+    pose:
+      position:
+      - 0.24
+      - -0.41
+      - 0.1993333333333333
+      orientation_rpy:
+      - 0.0
+      - 0.0
+      - 0.0
+    size:
+    - 0.06
+    - 0.06
+    - 0.15666666666666665
+    mass: 0.27
     static: false
     collision_enabled: true
     planning_scene_enabled: true
   left_object:
     name: ground_object_left
-    type: box
-    pose: {position: [0.40, 0.28, 0.041], orientation_rpy: [0.0, 0.0, 0.0]}
-    size: [0.06, 0.06, 0.08]
-    mass: 0.08
+    display_name: 550ml_nongfu_style_water_bottle
+    graspable: true
+    type: compound
+    pose:
+      position:
+      - 0.24
+      - 0.455
+      - 0.2345
+      orientation_rpy:
+      - 0.0
+      - 0.0
+      - 0.0
+    size:
+    - 0.064
+    - 0.064
+    - 0.227
+    collision_parts:
+    - type: cylinder
+      dimensions:
+      - 0.158
+      - 0.032
+      position:
+      - 0
+      - 0
+      - -0.0345
+    - type: sphere
+      dimensions:
+      - 0.032
+      position:
+      - 0
+      - 0
+      - 0.0445
+    - type: cylinder
+      dimensions:
+      - 0.033
+      - 0.014
+      position:
+      - 0
+      - 0
+      - 0.084
+    - type: cylinder
+      dimensions:
+      - 0.013
+      - 0.016
+      position:
+      - 0
+      - 0
+      - 0.107
+    mass: 0.11399999999999999
     static: false
     collision_enabled: true
     planning_scene_enabled: true
+    reference_full_mass_kg: 0.57
+    load_fraction: 0.2
+    load_note: User requested 20% of full gross mass; partially loaded, not empty.
   right_object:
     name: ground_object_right
+    display_name: thick_household_carton
+    graspable: true
     type: box
-    pose: {position: [0.40, -0.28, 0.061], orientation_rpy: [0.0, 0.0, 0.0]}
-    size: [0.08, 0.05, 0.12]
-    mass: 0.12
+    pose:
+      position:
+      - 0.425
+      - 0
+      - 0.17933333333333334
+      orientation_rpy:
+      - 0
+      - 0
+      - 1.5707963267948966
+    size:
+    - 0.069
+    - 0.076
+    - 0.11666666666666667
+    mass: 0.1028
     static: false
     collision_enabled: true
     planning_scene_enabled: true
-
+    reference_full_mass_kg: 0.514
+    load_fraction: 0.2
+    load_note: User requested 20% of full gross mass; partially loaded, not empty.
+  table:
+    name: work_table
+    type: compound
+    pose:
+      position:
+      - 0.5
+      - 0
+      - 0.1025
+      orientation_rpy:
+      - 0
+      - 0
+      - 0
+    size:
+    - 0.34
+    - 0.56
+    - 0.035
+    collision_parts:
+    - type: box
+      dimensions:
+      - 0.34
+      - 0.56
+      - 0.035
+      position:
+      - 0
+      - 0
+      - 0
+    - type: box
+      dimensions:
+      - 0.03
+      - 0.03
+      - 0.085
+      position:
+      - -0.125
+      - -0.23500000000000004
+      - -0.06
+    - type: box
+      dimensions:
+      - 0.03
+      - 0.03
+      - 0.085
+      position:
+      - -0.125
+      - 0.23500000000000004
+      - -0.06
+    - type: box
+      dimensions:
+      - 0.03
+      - 0.03
+      - 0.085
+      position:
+      - 0.125
+      - -0.23500000000000004
+      - -0.06
+    - type: box
+      dimensions:
+      - 0.03
+      - 0.03
+      - 0.085
+      position:
+      - 0.125
+      - 0.23500000000000004
+      - -0.06
+    mass: 10.0
+    static: true
+    collision_enabled: true
+    planning_scene_enabled: true
+  left_table:
+    name: left_work_table
+    type: compound
+    pose:
+      position:
+      - 0.08
+      - -0.45
+      - 0.1025
+      orientation_rpy:
+      - 0
+      - 0
+      - 1.5707963267948966
+    size:
+    - 0.28
+    - 0.5
+    - 0.035
+    collision_parts:
+    - type: box
+      dimensions:
+      - 0.28
+      - 0.5
+      - 0.035
+      position:
+      - 0
+      - 0
+      - 0
+    - type: box
+      dimensions:
+      - 0.03
+      - 0.03
+      - 0.085
+      position:
+      - -0.09500000000000001
+      - -0.20500000000000002
+      - -0.06
+    - type: box
+      dimensions:
+      - 0.03
+      - 0.03
+      - 0.085
+      position:
+      - -0.09500000000000001
+      - 0.20500000000000002
+      - -0.06
+    - type: box
+      dimensions:
+      - 0.03
+      - 0.03
+      - 0.085
+      position:
+      - 0.09500000000000001
+      - -0.20500000000000002
+      - -0.06
+    - type: box
+      dimensions:
+      - 0.03
+      - 0.03
+      - 0.085
+      position:
+      - 0.09500000000000001
+      - 0.20500000000000002
+      - -0.06
+    mass: 10.0
+    static: true
+    collision_enabled: true
+    planning_scene_enabled: true
+  right_table:
+    name: right_work_table
+    type: compound
+    pose:
+      position:
+      - 0.08
+      - 0.45
+      - 0.1025
+      orientation_rpy:
+      - 0
+      - 0
+      - 1.5707963267948966
+    size:
+    - 0.28
+    - 0.5
+    - 0.035
+    collision_parts:
+    - type: box
+      dimensions:
+      - 0.28
+      - 0.5
+      - 0.035
+      position:
+      - 0
+      - 0
+      - 0
+    - type: box
+      dimensions:
+      - 0.03
+      - 0.03
+      - 0.085
+      position:
+      - -0.09500000000000001
+      - -0.20500000000000002
+      - -0.06
+    - type: box
+      dimensions:
+      - 0.03
+      - 0.03
+      - 0.085
+      position:
+      - -0.09500000000000001
+      - 0.20500000000000002
+      - -0.06
+    - type: box
+      dimensions:
+      - 0.03
+      - 0.03
+      - 0.085
+      position:
+      - 0.09500000000000001
+      - -0.20500000000000002
+      - -0.06
+    - type: box
+      dimensions:
+      - 0.03
+      - 0.03
+      - 0.085
+      position:
+      - 0.09500000000000001
+      - 0.20500000000000002
+      - -0.06
+    mass: 10.0
+    static: true
+    collision_enabled: true
+    planning_scene_enabled: true
 scenario_object_sets:
-  no_obstacle: [ground, target, left_object, right_object]
-  target_only: [ground, target]
-  ground_only: [ground]
-  ground_objects: [ground, target, left_object, right_object]
+  no_obstacle:
+  - ground
+  - table
+  - right_table
+  - left_table
+  - target
+  - left_object
+  - right_object
+  target_only:
+  - ground
+  - table
+  - right_table
+  - left_table
+  - target
+  ground_only:
+  - ground
+  - table
+  - right_table
+  - left_table
+  ground_objects:
+  - ground
+  - table
+  - right_table
+  - left_table
+  - target
+  - left_object
+  - right_object
+placement_targets:
+  front_left:
+    position:
+    - 0.425
+    - -0.17
+    - 0.12
+    surface: table
+  front_right:
+    position:
+    - 0.425
+    - 0.17
+    - 0.12
+    surface: table

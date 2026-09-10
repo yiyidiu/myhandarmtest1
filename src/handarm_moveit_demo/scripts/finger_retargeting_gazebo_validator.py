@@ -274,7 +274,9 @@ class FingerRetargetingGazeboValidator:
         self.stage(2.0, lambda _elapsed: baseline, epoch=1)
 
         index_closed, index_reopened = self.move_digit([1], epoch=1)
-        thumb_closed, thumb_reopened = self.move_digit([0], epoch=1)
+        # Natural fist: the thumb may stay at its open-hand bend while all
+        # four long fingers curl. All three robot fingers must enclose.
+        fist_closed, fist_reopened = self.move_digit([1, 2, 3, 4], epoch=1)
         remaining_closed, remaining_reopened = self.move_digit([2, 3, 4], epoch=1)
 
         # Continuous invalid heartbeats must hold immediately without
@@ -323,16 +325,16 @@ class FingerRetargetingGazeboValidator:
             return float(delta[selected]), [float(value) for value in delta]
 
         index_selected, index_delta = selected_delta(index_closed, opened, 1)
-        thumb_selected, thumb_delta = selected_delta(thumb_closed, index_reopened, 2)
+        fist_selected, fist_delta = selected_delta(fist_closed, index_reopened, 2)
         remaining_selected, remaining_delta = selected_delta(
-            remaining_closed, thumb_reopened, 3
+            remaining_closed, fist_reopened, 3
         )
         renewed_selected, renewed_delta = selected_delta(
             renewed_closed, new_c_opened, 1
         )
         reopen_errors = {
             "index": float(np.max(np.abs(index_reopened - OPEN))),
-            "thumb": float(np.max(np.abs(thumb_reopened - OPEN))),
+            "natural_fist": float(np.max(np.abs(fist_reopened - OPEN))),
             "remaining": float(np.max(np.abs(remaining_reopened - OPEN))),
             "renewed": float(np.max(np.abs(renewed_reopened - OPEN))),
         }
@@ -346,12 +348,12 @@ class FingerRetargetingGazeboValidator:
             and index_selected >= 0.30
             and abs(index_delta[2]) <= cross_limit
             and abs(index_delta[3]) <= cross_limit
-            and thumb_selected >= 0.30
-            and abs(thumb_delta[1]) <= cross_limit
-            and abs(thumb_delta[3]) <= cross_limit
+            and fist_selected >= 0.30
+            and fist_delta[1] >= 0.30
+            and fist_delta[3] >= 0.30
             and remaining_selected >= 0.30
             and abs(remaining_delta[1]) <= cross_limit
-            and abs(remaining_delta[2]) <= cross_limit
+            and remaining_delta[2] >= 0.30
             and timeout_seen
             and not old_token_blocked
             and np.max(np.abs(after_invalid - before_invalid)) <= 0.06
@@ -373,7 +375,7 @@ class FingerRetargetingGazeboValidator:
                 "arm_joint_peak_to_peak_rad": transport_arm_range.tolist(),
             },
             "index_to_f1_delta_rad": index_delta,
-            "thumb_to_f2_delta_rad": thumb_delta,
+            "natural_fist_three_finger_delta_rad": fist_delta,
             "middle_ring_pinky_to_f3_delta_rad": remaining_delta,
             "invalid_heartbeat_timeout_seen": timeout_seen,
             "invalid_hold_delta_rad": (after_invalid - before_invalid).tolist(),

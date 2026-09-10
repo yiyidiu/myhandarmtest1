@@ -49,7 +49,7 @@ class ThreeFingerRetargetingNode:
             upper,
             config.get("source_mixing_matrix", [
                 [0.0, 1.0, 0.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.25, 0.25, 0.25, 0.25],
                 [0.0, 0.0, 0.5, 0.3, 0.2],
             ]),
             config,
@@ -154,7 +154,7 @@ class ThreeFingerRetargetingNode:
             return None
         with self.command_state_lock:
             self.hold_target = frozen_finger_hold_target(
-                self.hold_target, current
+                self.hold_target, current, self.last_command_target
             )
             target = self.hold_target.copy()
             self.publish_trajectory(target, duration_s=0.05)
@@ -167,7 +167,7 @@ class ThreeFingerRetargetingNode:
             status=reason,
             calibrated=False,
             hold_required=True,
-            actual=current,
+            actual_joint_position_rad=current,
             hold_joint_target_rad=target,
         )
 
@@ -186,6 +186,8 @@ class ThreeFingerRetargetingNode:
             "stamp_ros": rospy.Time.now().to_sec(),
             "status": "UNKNOWN",
             "calibrated": self.retargeter.calibrated,
+            "grip_latched": self.retargeter.grip_latched,
+            "release_phase": self.retargeter.release_phase,
             "reference_token": self.retargeter.active_token,
             "blocked_reference_tokens": sorted(self.retargeter.blocked_tokens),
             "hold_required": False,

@@ -43,8 +43,7 @@ def _detect(
         if index >= len(handedness_results):
             rejected.append({"valid": False, "reason": "missing_handedness"})
             continue
-        # Landmarks are used only as a set of 2-D points for their bounds.
-        # Their individual identities, z and world coordinates are ignored.
+        # Only image coordinates are used for visibility and crop bounds.
         xy = np.asarray(
             [[point.x * width, point.y * height]
              for point in landmarks.landmark],
@@ -60,9 +59,13 @@ def _detect(
             np.prod(np.maximum(0.0, clipped_upper-clipped_lower))
         ) / float(width*height)
         observed_bbox = [
-            float(clipped_lower[0]), float(clipped_lower[1]),
-            float(clipped_upper[0]), float(clipped_upper[1]),
+            float(expanded_lower[0]), float(expanded_lower[1]),
+            float(expanded_upper[0]), float(expanded_upper[1]),
         ]
+        # Keep the requested crop centre/scale even when context padding
+        # extends outside the sensor. HaMeR pads that area itself. Clipping
+        # here changes the model input geometry as a visible hand approaches
+        # an edge, despite no change of hand orientation.
         candidate = {
             "valid": True,
             "bbox": observed_bbox,
@@ -71,16 +74,25 @@ def _detect(
             # aligned-depth forearm fit.  They are not a pose measurement.
             "wrist_pixel": xy[0].tolist(),
             "palm_mcp_pixels": xy[[5, 9, 13, 17]].tolist(),
+            "crop_margin_clipped": bool(
+                np.any(expanded_lower < 0.0)
+                or expanded_upper[0] > width or expanded_upper[1] > height),
         }
         if area_fraction < float(minimum_bbox_area_fraction):
             candidate.update(valid=False, reason="hand_bbox_too_small")
             rejected.append(candidate)
             continue
-        edge = float(edge_margin_px)
-        if (np.any(expanded_lower < edge)
-                or expanded_upper[0] > float(width)-edge
-                or expanded_upper[1] > float(height)-edge):
-            candidate.update(valid=False, reason="hand_bbox_touches_image_edge")
+        # Padding outside the sensor is not missing hand evidence. Check the
+        # unexpanded landmarks instead; keep the existing small inner margin
+        # for the wrist/palm anchors, whose depth supports the control pose.
+        palm = xy[[0, 5, 9, 13, 17]]
+        edge = max(0.0, float(edge_margin_px))
+        if (not np.all(np.isfinite(xy)) or np.any(lower < 0.0)
+                or upper[0] >= width or upper[1] >= height
+                or np.any(palm < edge)
+                or np.any(palm[:, 0] >= width-edge)
+                or np.any(palm[:, 1] >= height-edge)):
+            candidate.update(valid=False, reason="hand_landmarks_outside_usable_image")
             rejected.append(candidate)
             continue
         handedness = handedness_results[index].classification[0]
@@ -88,6 +100,7 @@ def _detect(
         # is not mirrored, so exchange Left/Right for the physical operator.
         media_pipe_label = handedness.label.lower()
         candidate.update({
+            "landmarks_inside_image": True,
             "is_right": media_pipe_label == "left",
             "confidence": float(handedness.score),
             "mediapipe_selfie_label": media_pipe_label,
@@ -122,7 +135,12 @@ def main() -> int:
     parser.add_argument("--height", type=int, required=True)
     parser.add_argument("--margin", type=float, default=0.18)
     parser.add_argument("--min-detection-confidence", type=float, default=0.45)
-    parser.add_argument("--min-bbox-area-fraction", type=float, default=0.012)
+    # The Sept 8 recording has confidently detected fists at 0.009--0.011
+    # of the image. The old 0.012 open-hand gate discarded them and disabled
+    # both arm and fingers. Keep a resolution floor below those observations;
+    # detector confidence, visible palm anchors and downstream depth/pose
+    # validity still decide whether the current image can control the robot.
+    parser.add_argument("--min-bbox-area-fraction", type=float, default=0.006)
     parser.add_argument("--edge-margin-px", type=float, default=8.0)
     parser.add_argument("--stream", action="store_true",
                         help="read fixed-size RGB frames until stdin closes")
