@@ -84,6 +84,7 @@ from perception_hamer.src.realtime_hamer_pipeline import (
 )
 from perception_hamer.src.roi_provider import KLTTrackerROIProvider
 from perception_hamer.src.teleop_pose_packet import (
+    ProximalWristDepthFilter,
     build_invalid_teleop_packet,
     build_live_teleop_packet,
     invalidate_stale_teleop_observation,
@@ -1288,6 +1289,16 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--wrist-depth-mode",
+        choices=("visible-surface", "proximal-surface"),
+        default=os.environ.get("TELEOP_WRIST_DEPTH_MODE", "visible-surface"),
+        help=(
+            "visible-surface preserves the previous wrist-depth estimator; "
+            "proximal-surface uses a confirmed 2-D palm region to associate "
+            "depth near the wrist, preserving the same wrist-ring reference"
+        ),
+    )
+    parser.add_argument(
         "--control-reference",
         choices=("mano-wrist-ring", "mano-joint-palm"),
         default="mano-wrist-ring",
@@ -1579,6 +1590,10 @@ def main() -> int:
     previous_control_depth_m = None
     previous_control_depth_monotonic = None
     previous_quality_bbox = None
+    wrist_depth_filter = (
+        ProximalWristDepthFilter()
+        if args.wrist_depth_mode == "proximal-surface" else None
+    )
     orientation_filter = CausalWristSO3Filter(
         CausalWristSO3FilterConfig(
             time_constant_s=args.orientation_filter_time_constant_s,
@@ -2435,6 +2450,28 @@ def main() -> int:
 
             if result is not None and estimates is not None:
                 try:
+                    depth_palm_pixels = None
+                    depth_detection = presence_state.get("confirmed_detection") or {}
+                    if (
+                        args.wrist_depth_mode == "proximal-surface"
+                        and presence_state.get("valid")
+                        and not presence_state.get("transient_miss", False)
+                        and float(presence_state.get("detection_age_s", float("inf"))) <= 0.10
+                        and depth_detection.get("is_right") == bool(result.is_right)
+                        and depth_detection.get("landmarks_inside_image", False)
+                    ):
+                        # A detector observation seeds only the depth ROI.
+                        # Neither its 2-D wrist location nor KLT extrapolation
+                        # replaces the control reference or creates motion.
+                        try:
+                            anchors = np.asarray([
+                                depth_detection["wrist_pixel"],
+                                *depth_detection["palm_mcp_pixels"],
+                            ], dtype=np.float64)
+                            if anchors.shape == (5, 2) and np.all(np.isfinite(anchors)):
+                                depth_palm_pixels = anchors
+                        except (KeyError, TypeError, ValueError):
+                            pass
                     depth_now_monotonic = time.monotonic()
                     reference_depth_age_s = (
                         None
@@ -2461,10 +2498,16 @@ def main() -> int:
                             if args.control_reference == "mano-wrist-ring"
                             else "MANO_JOINT_0_PALM_FRAME_LEGACY"
                         ),
+                        palm_anchor_pixels=depth_palm_pixels,
+                        depth_filter=wrist_depth_filter,
                     )
                     diagnostics = pose_packet_payload.get(
                         "position_diagnostics"
                     )
+                    if diagnostics is not None:
+                        diagnostics["requested_depth_mode"] = args.wrist_depth_mode
+                        diagnostics["palm_seed_supplied"] = depth_palm_pixels is not None
+                        diagnostics["palm_seed_age_s"] = presence_state.get("detection_age_s")
                     if (
                         diagnostics is not None
                         and not diagnostics.get(
@@ -2479,6 +2522,10 @@ def main() -> int:
                         forearm_estimator is not None
                         and presence_state.get("confirmed_detection") is not None
                     ):
+                        forearm_wrist_position = (diagnostics or {}).get(
+                            "legacy_wrist_position_m",
+                            pose_packet_payload["wrist_position_m"],
+                        )
                         forearm_identity = (
                             presence_generation,
                             active_hand_generation,
@@ -2489,7 +2536,7 @@ def main() -> int:
                             packet.frame.aligned_depth_raw,
                             packet.frame.depth_scale_m_per_unit,
                             packet.frame.color_intrinsics,
-                            pose_packet_payload["wrist_position_m"],
+                            forearm_wrist_position,
                             presence_state.get("confirmed_detection"),
                             detection_age_s=float(
                                 presence_state.get("detection_age_s", float("inf"))
@@ -2991,6 +3038,7 @@ def main() -> int:
                 "PLUS_LOW_WEIGHT_RGBD_FOREARM_AXIS"
             ),
             "forearm_fusion_enabled": not args.disable_forearm_fusion,
+            "wrist_depth_mode": args.wrist_depth_mode,
             "forearm_fusion_max_weight": float(
                 args.forearm_fusion_max_weight
             ),

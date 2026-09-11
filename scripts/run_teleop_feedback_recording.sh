@@ -74,6 +74,7 @@ value={"status":"PREPARING_RECORDERS","created_host_wall_ns":time.time_ns(),"cre
  "alignment_views_requested":os.environ.get("TELEOP_ALIGNMENT_VIEWS","true"),
  "empty_motion_scene":os.environ.get("TELEOP_EMPTY_SCENE","false")=="true",
  "wrist_axes_diagnostics":os.environ.get("TELEOP_WRIST_DIAGNOSTICS","false")=="true",
+ "wrist_depth_mode":os.environ.get("TELEOP_WRIST_DEPTH_MODE","visible-surface"),
  "imu_used_by_controller":False,"audio_recorded":False}
 (p/'session.json').write_text(json.dumps(value,ensure_ascii=False,indent=2)+'\n')
 PY

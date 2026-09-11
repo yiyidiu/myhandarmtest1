@@ -17,6 +17,70 @@ from .realtime_hamer_pipeline import (
 from .rgbd_rigid_tracker import deproject_pixels
 
 
+class ProximalWristDepthFilter:
+    """Keep observed surface motion current; smooth its model depth offset.
+
+    This is measurement state, not a new teleoperation zero. During a brief
+    loss of proximal support, preserve the offset between estimators while
+    applying the legacy depth increment. Switching algorithms must not emit
+    their entire depth disagreement as a one-frame hand movement.
+    """
+
+    def __init__(self, time_constant_s: float = .08, maximum_gap_s: float = .30):
+        if not np.isfinite(time_constant_s) or time_constant_s <= 0:
+            raise ValueError("depth-offset time constant must be positive")
+        if not np.isfinite(maximum_gap_s) or maximum_gap_s <= 0:
+            raise ValueError("depth-offset maximum gap must be positive")
+        self.time_constant_s = float(time_constant_s)
+        self.maximum_gap_s = float(maximum_gap_s)
+        self._last = None
+
+    def update(self, position: Any, diagnostics: dict,
+               timestamp: float, identity: Any) -> np.ndarray:
+        point = np.asarray(position, dtype=np.float64).copy()
+        association = diagnostics.get("proximal_surface_association") or {}
+        legacy = float(association.get("legacy_depth_m", diagnostics["depth_m"]))
+        available = bool(association.get("applied", False))
+        surface = float(association["observed_surface_depth_m"]) if available else None
+        previous = self._last
+        dt = None if previous is None else float(timestamp) - previous["t"]
+        if (previous is None or previous["identity"] != identity or
+                dt < 0 or dt > self.maximum_gap_s):
+            depth, status = float(point[2]), "initialized"
+        elif diagnostics.get("depth_reference_hold_used", False):
+            # The upstream hold already contains our previous filtered Z.
+            # Do not add the estimator offset a second time.
+            depth, status = float(point[2]), "existing_depth_hold"
+            legacy = previous["legacy"]
+            surface = None
+        elif dt == 0:
+            depth, status = previous["z"], "repeated_source_frame"
+        elif available:
+            increment = (surface - previous["surface"]
+                         if previous["surface"] is not None
+                         else legacy - previous["legacy"])
+            predicted = previous["z"] + increment
+            gain = 1.0 - float(np.exp(-dt / self.time_constant_s))
+            depth = predicted + gain * (float(point[2]) - predicted)
+            status = "surface_motion_with_filtered_model_offset"
+        else:
+            depth = previous["z"] + legacy - previous["legacy"]
+            status = "continuous_legacy_increment"
+        if not np.isfinite(depth) or not .12 < depth < 3.0:
+            self._last = None
+            raise ValueError("invalid temporally associated wrist depth")
+        self._last = dict(t=float(timestamp), identity=identity, z=depth,
+                          legacy=legacy, surface=surface)
+        diagnostics["depth_offset_filter"] = {
+            "status": status, "raw_depth_m": float(point[2]),
+            "filtered_depth_m": depth, "time_constant_s": self.time_constant_s,
+            "legacy_depth_m": legacy,
+        }
+        diagnostics["depth_m"] = depth
+        # Preserve the same wrist-ring camera ray for all three coordinates.
+        return point * (depth / point[2])
+
+
 def foreground_depth_component(
     samples: Any,
     mask_count: int,
@@ -81,6 +145,58 @@ def foreground_depth_component(
     }
 
 
+def _proximal_palm_depth_offsets(
+    palm_pixels: Any, depth_raw: np.ndarray, scale: float,
+    vertices: np.ndarray, wrist_center: np.ndarray,
+    surface_pixels: np.ndarray, projected_vertex_ids: np.ndarray,
+) -> Tuple[np.ndarray, dict]:
+    """Associate depth near the wrist, away from articulated fingertips.
+
+    The 2-D points only seed the sampling region. XYZ still uses the MANO
+    wrist-ring centre ray and each sampled surface-to-ring depth offset.
+    No detector prediction is accepted as a metric 3-D position.
+    """
+    points = np.asarray(palm_pixels, dtype=np.float64)
+    if points.shape != (5, 2) or not np.all(np.isfinite(points)):
+        return np.empty(0), {"reason": "invalid_palm_pixels"}
+    wrist = points[0]
+    along = points[1:].mean(axis=0) - wrist
+    across = points[1] - points[-1]
+    polygon = cv2.convexHull(np.asarray([
+        wrist + .05 * along + .25 * across,
+        wrist + .05 * along - .25 * across,
+        wrist + .40 * along - .30 * across,
+        wrist + .40 * along + .30 * across,
+    ], dtype=np.float32)).astype(np.int32)
+    mask = np.zeros(depth_raw.shape, dtype=np.uint8)
+    cv2.fillConvexPoly(mask, polygon, 1)
+    observed = depth_raw[(mask > 0) & (depth_raw > 0)].astype(float) * scale
+    observed = observed[(observed > .12) & (observed < 3.0)]
+    if observed.size < 12:
+        return np.empty(0), {"reason": "insufficient_proximal_depth"}
+    surface_depth = float(np.median(observed))
+    surface_mad = float(np.median(np.abs(observed - surface_depth)))
+    uv = np.rint(surface_pixels).astype(np.int32)
+    ids = projected_vertex_ids
+    ids = ids[mask[uv[ids, 1], uv[ids, 0]] > 0]
+    measured = depth_raw[uv[ids, 1], uv[ids, 0]].astype(float) * scale
+    good = ((measured > .12) & (measured < 3.0) &
+            (np.abs(measured - surface_depth) <= max(.010, 3.0 * surface_mad)))
+    offsets = measured[good] - (vertices[ids[good], 2] - wrist_center[2])
+    offsets = offsets[np.isfinite(offsets) & (offsets > .12) & (offsets < 3.0)]
+    details = {
+        "reason": "proximal_surface_associated" if offsets.size >= 12
+                  else "insufficient_model_surface_overlap",
+        "polygon_pixels": polygon.reshape(-1, 2).tolist(),
+        "observed_surface_depth_m": surface_depth,
+        "observed_surface_mad_m": surface_mad,
+        "observed_depth_count": int(observed.size),
+        "model_surface_count": int(ids.size),
+        "associated_sample_count": int(offsets.size),
+    }
+    return offsets, details
+
+
 def metric_wrist_ring_from_arrays(
     canonical_vertices: Any,
     wrist_loop: Any,
@@ -95,6 +211,7 @@ def metric_wrist_ring_from_arrays(
     maximum_reference_hold_s: float = 0.12,
     crop_image_size: int = 256,
     use_visible_hand_depth: bool = True,
+    palm_anchor_pixels: Any = None,
 ) -> Tuple[np.ndarray, float, dict, np.ndarray]:
     """Return the projected 16-point wrist-ring centre in metric D455 axes."""
 
@@ -186,6 +303,25 @@ def metric_wrist_ring_from_arrays(
         confidence = float(np.sqrt(fraction) * np.exp(-0.5 * (mad / 0.010) ** 2))
         if held:
             confidence = 0.08
+        association = None
+        if palm_anchor_pixels is not None and not held:
+            proximal, association = _proximal_palm_depth_offsets(
+                palm_anchor_pixels, depth_raw, scale, vertices,
+                ring.mean(axis=0), surface_pixels, ids,
+            )
+            association["applied"] = bool(proximal.size >= 12)
+            if association["applied"]:
+                association["legacy_depth_m"] = median
+                association["legacy_confidence"] = confidence
+                median = float(np.median(proximal))
+                mad = float(np.median(np.abs(proximal - median)))
+                fraction = float(min(1.0, proximal.size / max(
+                    association["model_surface_count"], 1)))
+                # Do not increase control authority merely because a smaller
+                # ROI has higher coverage. Keep the previous confidence cap.
+                confidence = min(confidence, float(
+                    np.sqrt(fraction) * np.exp(-0.5 * (mad / .010) ** 2)))
+                selected = proximal
         center_m = deproject_pixels(center_pixel.reshape(1, 2),
                                    np.asarray([median]), dict(color_intrinsics))[0]
         diagnostics = {
@@ -199,6 +335,12 @@ def metric_wrist_ring_from_arrays(
             "depth_reference_age_s": reference_depth_age_s,
             "maximum_depth_reference_hold_s": float(maximum_reference_hold_s),
         }
+        if association is not None:
+            diagnostics["proximal_surface_association"] = association
+            if association["applied"]:
+                diagnostics["method"] = "proximal_hand_surface_depth_offset"
+                diagnostics["all_surface_sample_count"] = diagnostics["total_sample_count"]
+                diagnostics["total_sample_count"] = association["model_surface_count"]
         return center_m, confidence, diagnostics, ring_pixels
     polygon = cv2.convexHull(np.rint(ring_pixels).astype(np.int32)).reshape(-1, 2)
     if len(polygon) < 3 or abs(float(cv2.contourArea(polygon))) < 2.0:
@@ -414,6 +556,8 @@ def build_live_teleop_packet(
     reference_depth_m: float = None,
     reference_depth_age_s: float = None,
     required_reference_kind: str = None,
+    palm_anchor_pixels: Any = None,
+    depth_filter: Any = None,
 ) -> dict:
     """Build one fail-closed pose packet from the configured control frame."""
 
@@ -453,11 +597,22 @@ def build_live_teleop_packet(
                 frame.color_intrinsics,
                 reference_depth_m=reference_depth_m,
                 reference_depth_age_s=reference_depth_age_s,
+                palm_anchor_pixels=palm_anchor_pixels,
             )
         )
         position_source = (
             "MANO_WRIST_RING_16_FROM_VISIBLE_HAND_SURFACE_AND_D455_DEPTH"
         )
+        if depth_filter is not None:
+            wrist = depth_filter.update(
+                wrist, position_diagnostics, result.timestamp,
+                (session_id, active_hand_generation, bool(result.is_right)),
+            )
+            legacy_depth = position_diagnostics["depth_offset_filter"]["legacy_depth_m"]
+            # The optional position experiment must not also change the
+            # wrist anchor used by the existing forearm-orientation channel.
+            position_diagnostics["legacy_wrist_position_m"] = (
+                wrist * (legacy_depth / wrist[2])).tolist()
     else:
         wrist, depth_confidence, _ = metric_wrist_from_arrays(
             result.pred_keypoints_2d_crop_normalized,
@@ -618,6 +773,7 @@ def invalidate_stale_teleop_observation(
 
 
 __all__ = [
+    "ProximalWristDepthFilter",
     "build_live_teleop_packet",
     "build_invalid_teleop_packet",
     "invalidate_stale_teleop_observation",

@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from perception_hamer.src.teleop_pose_packet import (  # noqa: E402
+    ProximalWristDepthFilter,
     build_invalid_teleop_packet, build_live_teleop_packet, foreground_depth_component,
     invalidate_stale_teleop_observation, metric_wrist_from_arrays,
     metric_wrist_ring_from_arrays,
@@ -25,6 +26,82 @@ INTRINSICS = {
 
 
 class TeleopPosePacketTest(unittest.TestCase):
+    @staticmethod
+    def _proximal_diagnostic(wrist_z, surface_z, legacy_z):
+        return {"depth_m": wrist_z, "proximal_surface_association": {
+            "applied": True, "observed_surface_depth_m": surface_z,
+            "legacy_depth_m": legacy_z}}
+
+    def test_depth_estimator_switch_does_not_create_a_five_cm_movement(self):
+        state = ProximalWristDepthFilter()
+        identity = ("session", 1, False)
+        first = state.update([.105, .21, 1.05],
+                             self._proximal_diagnostic(1.05, 1.02, 1.0),
+                             1.0, identity)
+        missing = state.update([.1, .2, 1.0], {"depth_m": 1.0}, 1.07, identity)
+        recovered = state.update([.105, .21, 1.05],
+                                 self._proximal_diagnostic(1.05, 1.02, 1.0),
+                                 1.14, identity)
+        np.testing.assert_allclose(missing, first, atol=1e-12)
+        np.testing.assert_allclose(recovered, first, atol=1e-12)
+
+    def test_real_surface_depth_motion_is_not_low_pass_filtered(self):
+        state = ProximalWristDepthFilter()
+        state.update([0, 0, 1.05], self._proximal_diagnostic(1.05, 1.02, 1.0),
+                     1.0, "hand")
+        moved = state.update([0, 0, .95], self._proximal_diagnostic(.95, .92, .9),
+                             1.07, "hand")
+        self.assertAlmostEqual(moved[2], .95)
+
+    def test_depth_hold_does_not_double_apply_the_estimator_offset(self):
+        state = ProximalWristDepthFilter()
+        state.update([0, 0, 1.05], self._proximal_diagnostic(1.05, 1.02, 1.0),
+                     1.0, "hand")
+        diagnostic = {"depth_m": 1.05, "depth_reference_hold_used": True}
+        held = state.update([0, 0, 1.05], diagnostic, 1.07, "hand")
+        self.assertAlmostEqual(held[2], 1.05)
+        self.assertAlmostEqual(diagnostic["depth_offset_filter"]["legacy_depth_m"], 1.0)
+
+    def test_depth_offset_never_crosses_a_hand_identity_change(self):
+        state = ProximalWristDepthFilter()
+        state.update([0, 0, 1.05], self._proximal_diagnostic(1.05, 1.02, 1.0),
+                     1.0, "first")
+        changed = state.update([0, 0, .75], {"depth_m": .75}, 1.07, "second")
+        self.assertAlmostEqual(changed[2], .75)
+
+    def test_proximal_surface_ignores_nearer_samples_outside_the_palm_region(self):
+        vertices = self._ring_vertices()
+        grid = np.array([(x, y) for x in np.linspace(-.10, .10, 28)
+                         for y in np.linspace(-.10, .10, 27)])
+        vertices[16:16+len(grid), :2] = grid
+        depth = np.full((480, 640), 1400, dtype=np.uint16)
+        depth[128:155, 106:151] = 1000
+        # A separate nearer patch satisfies the old first-window support
+        # rule, despite not belonging to the proximal hand observation.
+        depth[102:112, 102:154] = 960
+        args = (vertices, np.arange(16), [0, 0, 1], [256, 256],
+                [[1, 0, 0], [0, 1, 0]], depth, .001, INTRINSICS)
+        legacy, legacy_confidence, _, _ = metric_wrist_ring_from_arrays(*args)
+        corrected, confidence, diagnostic, _ = metric_wrist_ring_from_arrays(
+            *args, palm_anchor_pixels=[[128, 149], [106, 106],
+                                      [120, 103], [135, 103], [152, 106]])
+        self.assertAlmostEqual(legacy[2], .960)
+        np.testing.assert_allclose(corrected, [.28, .28, 1.0], atol=1e-9)
+        self.assertLessEqual(confidence, legacy_confidence)
+        self.assertTrue(diagnostic["proximal_surface_association"]["applied"])
+        self.assertEqual(diagnostic["reference"], "mean_of_16_mano_wrist_opening_vertices")
+
+    def test_unusable_palm_region_preserves_legacy_depth_and_validity(self):
+        vertices = self._ring_vertices()
+        depth = np.full((480, 640), 1000, dtype=np.uint16)
+        args = (vertices, np.arange(16), [0, 0, 1], [256, 256],
+                [[1, 0, 0], [0, 1, 0]], depth, .001, INTRINSICS)
+        old = metric_wrist_ring_from_arrays(*args)
+        new = metric_wrist_ring_from_arrays(*args, palm_anchor_pixels=[[20, 20]]*5)
+        np.testing.assert_array_equal(old[0], new[0])
+        self.assertEqual(old[1], new[1])
+        self.assertFalse(new[2]["proximal_surface_association"]["applied"])
+
     def test_visible_hand_padding_does_not_penalize_finger_crop(self):
         from perception_hamer.src.crop_quality import bbox_crop_quality
         # Hand landmarks were checked independently; only padding crosses
