@@ -18,6 +18,13 @@ esac
 conda_executable="${TELEOP_CONDA_EXECUTABLE:-/home/dongtian/anaconda3/bin/conda}"
 asset_root="${TELEOP_HAMER_ASSET_ROOT:-/home/dongtian/myhandarmtest1-v1.0.1-ubuntu2004/perception_hamer/_DATA}"
 checkpoint="$asset_root/hamer_ckpts/checkpoints/hamer.ckpt"
+empty_motion_scene="${TELEOP_EMPTY_SCENE:-false}"
+case "$empty_motion_scene" in true|false) ;; *) echo "TELEOP_EMPTY_SCENE must be true or false" >&2; exit 2 ;; esac
+diagnostic_arguments=()
+if [[ "${TELEOP_WRIST_DIAGNOSTICS:-false}" == true ]]; then
+  diagnostic_arguments=(--show-wrist-axes --experiment DEV_HAMER_6DOF_OBSERVATION
+    --experiment-jsonl-only --output-root "${TELEOP_WRIST_DIAGNOSTICS_DIRECTORY:?recording directory required}")
+fi
 runtime_directory="$workspace/.runtime/live_human_validation_$(date +%Y%m%dT%H%M%S)"
 mkdir -p "$runtime_directory"
 
@@ -72,6 +79,7 @@ fi
 setsid "${simulation_affinity_arguments[@]}" roslaunch handarm_moveit_demo \
   live_human_ground_gazebo_egm_teleop.launch \
   gazebo_gui:=true with_ground_object:=true enable_logger:=false \
+  empty_motion_scene:="$empty_motion_scene" \
   grasp_alignment_views:="${TELEOP_ALIGNMENT_VIEWS:-true}" \
   input_source:=udp \
   constrained_velocity_projection:="$constrained_velocity_projection" \
@@ -168,5 +176,6 @@ fi
   --duration-s 3600 \
   --checkpoint "$checkpoint" \
   --data-root "$asset_root" \
+  "${diagnostic_arguments[@]}" \
   "${camera_affinity_arguments[@]}" \
   2>&1 | tee "$runtime_directory/camera.log"

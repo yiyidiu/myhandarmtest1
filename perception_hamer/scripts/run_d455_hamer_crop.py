@@ -63,6 +63,7 @@ from perception_hamer.src.hand_detection_gate import (
 from perception_hamer.src.hand_pose_overlay import (
     RelativeWristPoseDisplay,
     draw_hand_pose_panel,
+    draw_wrist_axes_diagnostic,
 )
 from perception_hamer.src.hamer_palm_frame import RobustBetasCalibrator
 from perception_hamer.src.live_display import LiveDisplay
@@ -98,6 +99,7 @@ EXPERIMENTS = (
     "DEV_HAMER_STATIC",
     "DEV_HAMER_TRANSLATION",
     "DEV_HAMER_OPEN_CLOSE",
+    "DEV_HAMER_6DOF_OBSERVATION",
 )
 SKELETON = (
     (0, 1), (1, 2), (2, 3), (3, 4),
@@ -1008,6 +1010,7 @@ def _display_worker(
     stop: threading.Event,
     mesh_renderer: str,
     maximum_display_rate_hz: float,
+    show_wrist_axes: bool = False,
 ) -> None:
     last_version = 0
     displayed = 0
@@ -1080,7 +1083,8 @@ def _display_worker(
                     )
                 )
         if (
-            mesh_renderer == "teleoperation-core"
+            not show_wrist_axes
+            and mesh_renderer == "teleoperation-core"
             and result is not None
             and mano_faces is not None
             and inference_rgb is not None
@@ -1106,16 +1110,25 @@ def _display_worker(
                         else failure_reason + ";" + render_reason
                     )
             teleoperation_core_render = rendered_reference
-        canvas = make_overlay(
-            packet.frame.rgb, packet.roi, result, estimates,
-            processed_fps, failure_reason, mano_faces,
-            projection_source_bbox, hand_presence_valid,
-            roi_matches_detected_hand,
-            active_hand_is_right,
-            ignored_non_active_hand_count,
-            teleoperation_core_render,
-            mesh_renderer,
-        )
+        if show_wrist_axes:
+            visible = result is not None and estimates is not None and inference_rgb is not None
+            canvas = draw_wrist_axes_diagnostic(
+                inference_rgb if visible else packet.frame.rgb,
+                estimates.get("control_wrist_frame_raw") if visible else None,
+                estimates.get("wrist_axes_observation") if visible else None,
+                result.requested_bbox_xyxy if visible else None,
+            )
+        else:
+            canvas = make_overlay(
+                packet.frame.rgb, packet.roi, result, estimates,
+                processed_fps, failure_reason, mano_faces,
+                projection_source_bbox, hand_presence_valid,
+                roi_matches_detected_hand,
+                active_hand_is_right,
+                ignored_non_active_hand_count,
+                teleoperation_core_render,
+                mesh_renderer,
+            )
         pose_matches_visible_hand = bool(
             result is not None
             and estimates is not None
@@ -1350,6 +1363,8 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--no-mesh-overlay", action="store_true",
                         help="disable the MANO mesh overlay")
+    parser.add_argument("--show-wrist-axes", action="store_true",
+                        help="exact-frame raw/processed wrist axes and fixed-origin orientation views")
     parser.add_argument(
         "--mesh-renderer",
         choices=("teleoperation-core", "legacy-depth"),
@@ -1855,6 +1870,7 @@ def main() -> int:
                     stop,
                     args.mesh_renderer,
                     args.display_rate_hz,
+                    args.show_wrist_axes,
                 ),
                 name="hamer-live-preview",
                 daemon=True,
@@ -2598,6 +2614,19 @@ def main() -> int:
                     teleoperation_core_render,
                     args.mesh_renderer,
                 )
+            if args.show_wrist_axes and estimates is not None:
+                measured = pose_packet_payload or {}
+                confidence = np.asarray(measured.get("confidence", [0.]*6))
+                estimates["wrist_axes_observation"] = {
+                    "center_m": measured.get("wrist_position_m"),
+                    "processed_rotation": (
+                        np.asarray(measured["palm_rotation_row_major"]).reshape(3, 3)
+                        if measured.get("palm_rotation_row_major") is not None else None
+                    ),
+                    "processed_valid": bool(measured.get("valid") and np.all(confidence[3:] > 0)),
+                    "intrinsics": packet.frame.color_intrinsics,
+                    "capture_sequence": packet.capture_sequence,
+                }
             overlay_state.update(
                 result, estimates, hamer_fps, failure_reason, mano_faces,
                 projection_source_bbox, teleoperation_core_render,
@@ -2728,6 +2757,7 @@ def main() -> int:
                     "valid": result is not None and estimates is not None,
                     "failure_reason": failure_reason,
                     "hand_pose_6d": pose_delta.as_dict(),
+                    "published_pose": _json_safe(udp_payload),
                     "hand_pose_6d_failure_reason": pose_failure_reason,
                     "forearm_fusion": (
                         None

@@ -31,10 +31,16 @@ if (( $# == 1 )); then
     exit 2
   fi
 else
-  session_directory="$(mktemp -d "$workspace/.runtime/teleop_feedback_$(date +%Y%m%dT%H%M%S)_XXXX")"
+  recording_prefix="${TELEOP_RECORDING_PREFIX:-teleop_feedback}"
+  [[ "$recording_prefix" =~ ^[a-zA-Z0-9_]+$ ]] || { echo "Invalid recording prefix" >&2; exit 2; }
+  session_directory="$(mktemp -d "$workspace/.runtime/${recording_prefix}_$(date +%Y%m%dT%H%M%S)_XXXX")"
 fi
 printf '%s\n' "$session_directory" > "$workspace/.runtime/latest_teleop_feedback.txt"
+if [[ "${TELEOP_WRIST_DIAGNOSTICS:-false}" == true ]]; then
+  printf '%s\n' "$session_directory" > "$workspace/.runtime/latest_hand_motion_observation.txt"
+fi
 export TELEOP_RGBD_RECORDING_FILE="$session_directory/rgbd.db3"
+export TELEOP_WRIST_DIAGNOSTICS_DIRECTORY="$session_directory/perception"
 git rev-parse HEAD > "$session_directory/commit.txt"
 git status --porcelain -uno > "$session_directory/tracked_changes.txt"
 git diff HEAD -- > "$session_directory/code_changes.patch"
@@ -66,6 +72,8 @@ value={"status":"PREPARING_RECORDERS","created_host_wall_ns":time.time_ns(),"cre
  "controller_workspace":str(Path.cwd()),"recording_changes_controller_parameters":False,
  "motion_controller":os.environ.get("TELEOP_MOTION_CONTROLLER","constrained"),
  "alignment_views_requested":os.environ.get("TELEOP_ALIGNMENT_VIEWS","true"),
+ "empty_motion_scene":os.environ.get("TELEOP_EMPTY_SCENE","false")=="true",
+ "wrist_axes_diagnostics":os.environ.get("TELEOP_WRIST_DIAGNOSTICS","false")=="true",
  "imu_used_by_controller":False,"audio_recorded":False}
 (p/'session.json').write_text(json.dumps(value,ensure_ascii=False,indent=2)+'\n')
 PY
@@ -126,6 +134,7 @@ screen=p/'screen_summary.json';s['screen_summary']=json.loads(screen.read_text()
 video_ok=bool(s['screen_summary'] and s['screen_summary'].get('eos') and s['screen_summary'].get('container_timeline',{}).get('usable_frame_mapping'))
 s['imu_available']=s['imu_samples']>0
 s['raw_rgbd_file_present']=(p/'rgbd.db3').is_file() and (p/'rgbd.db3').stat().st_size>0
+s['perception_diagnostics']=[str(f.relative_to(p)) for f in sorted(p.glob('perception/*/frames.jsonl'))]
 s['status']='RECORDING_FILES_FINALIZED' if video_ok and s['camera_pose_rows']>0 and s['bag_finalized'] else 'RECORDING_INCOMPLETE'
 s['status_scope']='Recorded stream presence/finalization only; not evidence of accurate sensor alignment or successful teleoperation.'
 (p/'session.json').write_text(json.dumps(s,ensure_ascii=False,indent=2)+'\n')
@@ -147,6 +156,12 @@ echo "请等待相机窗口，保持自然张手后按一次 C；按 Q 退出后
 echo "本次操作日志：$session_directory"
 echo "回放视频：$session_directory/screen.mp4"
 echo "原始RGB-D：$session_directory/rgbd.db3"
+if [[ "${TELEOP_WRIST_DIAGNOSTICS:-false}" == true ]]; then
+  echo "腕口轴：红X、绿Y、蓝Z；左侧原始估计，右侧处理后估计。原始逐帧数值：$session_directory/perception/"
+fi
+if [[ "${TELEOP_EMPTY_SCENE:-false}" == true ]]; then
+  echo "本次场景：机械臂、三指手与地面；桌子和物体关闭。"
+fi
 echo "反馈时直接使用播放器从 00:00 开始的时间，不需要扣除启动等待。"
 
 setsid "${recording_affinity_arguments[@]}" /usr/bin/python3 "$helpers/record_screen_clock.py" "$session_directory" \

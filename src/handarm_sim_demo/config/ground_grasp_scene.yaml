@@ -338,6 +338,8 @@ objects:
     collision_enabled: true
     planning_scene_enabled: true
 scenario_object_sets:
+  bare_ground:
+  - ground
   no_obstacle:
   - ground
   - table

@@ -145,6 +145,75 @@ def rotation_geodesic_deg(rotation: Any) -> float:
     return math.degrees(math.acos(cosine))
 
 
+def draw_wrist_axes_diagnostic(rgb, raw_frame, observation, bbox=None):
+    """Display-only wrist axes on their exact inference RGB, plus a fixed view.
+
+    The on-hand arrows are perspective projections of 8 cm camera-frame axes.
+    The footer is an orthographic orientation view at a fixed origin; unlike
+    the on-hand projection it does not change merely because the hand moves.
+    Neither drawing feeds back into pose estimation or robot control.
+    """
+    height, width = rgb.shape[:2]
+    canvas = np.zeros((height + 120, width * 2, 3), dtype=np.uint8)
+    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    for offset in (0, width):
+        canvas[:height, offset:offset+width] = bgr
+        canvas[height:, offset:offset+width] = (24, 24, 24)
+        if bbox is not None:
+            box = np.rint(bbox).astype(int)
+            cv2.rectangle(canvas, (box[0]+offset, box[1]),
+                          (box[2]+offset, box[3]), (70, 255, 70), 1)
+    observation = observation or {}
+    colors = ((0, 0, 255), (0, 220, 0), (255, 150, 40))
+    frames = [(raw_frame or {}).get('rotation') if (raw_frame or {}).get('valid') else None,
+              observation.get('processed_rotation') if observation.get('processed_valid') else None]
+    titles = ['RAW WRIST: before filtering', 'PROCESSED WRIST: filter + fusion']
+    for index, (frame, title) in enumerate(zip(frames, titles)):
+        offset = index * width
+        cv2.putText(canvas, title, (offset+12, height+23), cv2.FONT_HERSHEY_SIMPLEX,
+                    .60, (240, 240, 240), 1, cv2.LINE_AA)
+        cv2.putText(canvas, 'X red   Y green   Z blue', (offset+155, height+51),
+                    cv2.FONT_HERSHEY_SIMPLEX, .5, (220, 220, 220), 1, cv2.LINE_AA)
+        cv2.putText(canvas, 'Fixed camera view: orientation only', (offset+155, height+76),
+                    cv2.FONT_HERSHEY_SIMPLEX, .46, (180, 180, 180), 1, cv2.LINE_AA)
+        cv2.putText(canvas, 'RGB / axes frame: %s' % observation.get('capture_sequence', '?'),
+                    (offset+155, height+100), cv2.FONT_HERSHEY_SIMPLEX, .46,
+                    (180, 180, 180), 1, cv2.LINE_AA)
+        if frame is None:
+            cv2.putText(canvas, 'UNAVAILABLE', (offset+12, height+80), cv2.FONT_HERSHEY_SIMPLEX,
+                        .43, (60, 160, 255), 1, cv2.LINE_AA)
+            continue
+        rotation = np.asarray(frame, dtype=float)
+        fixed = np.array([offset+74., height+73.])
+        for axis, color in enumerate(colors):
+            end = fixed + 37. * rotation[:2, axis]
+            cv2.arrowedLine(canvas, tuple(fixed.astype(int)), tuple(np.rint(end).astype(int)),
+                            color, 2, tipLength=.22)
+            cv2.putText(canvas, 'XYZ'[axis], tuple(np.rint(end+[4, -3]).astype(int)),
+                        cv2.FONT_HERSHEY_SIMPLEX, .47, color, 1, cv2.LINE_AA)
+        origin = observation.get('center_m')
+        intrinsics = observation.get('intrinsics')
+        if origin is None or intrinsics is None:
+            continue
+        # The live RGB stream currently has zero distortion coefficients.
+        # Do not draw a falsely calibrated projection on a different profile.
+        if any(abs(float(v)) > 1e-12 for v in intrinsics.get('coeffs', [])):
+            continue
+        points = np.vstack((np.asarray(origin), np.asarray(origin)+.08*rotation.T))
+        if not np.all(np.isfinite(points)) or np.any(points[:, 2] <= 0):
+            continue
+        pixels = points[:, :2]/points[:, 2, None]
+        pixels = pixels*[intrinsics['fx'], intrinsics['fy']] + [intrinsics['ppx']+offset, intrinsics['ppy']]
+        start = tuple(np.rint(pixels[0]).astype(int))
+        cv2.circle(canvas, start, 5, (255, 255, 255), -1)
+        for axis, color in enumerate(colors):
+            end = tuple(np.rint(pixels[axis+1]).astype(int))
+            cv2.arrowedLine(canvas, start, end, color, 2, tipLength=.22)
+            cv2.putText(canvas, 'XYZ'[axis], (end[0]+4, end[1]-4), cv2.FONT_HERSHEY_SIMPLEX,
+                        .55, color, 2, cv2.LINE_AA)
+    return canvas
+
+
 class RelativeWristPoseDisplay:
     """Causal C-zero pose state shared by inference and display threads."""
 
