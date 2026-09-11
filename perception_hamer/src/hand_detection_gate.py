@@ -9,6 +9,30 @@ from typing import Any, Dict, Optional
 import numpy as np
 
 
+def hand_landmark_visibility(xy: Any, width: int, height: int,
+                             palm_margin_px: float = 8.0) -> Dict[str, Any]:
+    """Separate a visible wrist/palm from partially clipped fingertips."""
+    points = np.asarray(xy, dtype=np.float64)
+    if points.shape != (21, 2) or not np.all(np.isfinite(points)):
+        return {"palm_inside_image": False, "landmarks_inside_image": False,
+                "fingers_inside_image": False, "reason": "invalid_hand_landmarks"}
+    inside = ((points[:, 0] >= 0.0) & (points[:, 0] < width) &
+              (points[:, 1] >= 0.0) & (points[:, 1] < height))
+    palm = points[[0, 5, 9, 13, 17]]
+    edge = max(0.0, float(palm_margin_px))
+    palm_visible = bool(np.all(palm >= edge) and
+                        np.all(palm[:, 0] < width - edge) and
+                        np.all(palm[:, 1] < height - edge))
+    complete = bool(np.all(inside))
+    return {"palm_inside_image": palm_visible,
+            "landmarks_inside_image": complete,
+            "fingers_inside_image": complete,
+            "outside_landmark_indices": np.flatnonzero(~inside).tolist(),
+            "reason": ("visible_hand" if complete and palm_visible else
+                       "visible_palm_clipped_fingers" if palm_visible else
+                       "palm_landmarks_outside_usable_image")}
+
+
 def bbox_iou(first: Any, second: Any) -> float:
     a = np.asarray(first, dtype=np.float64)
     b = np.asarray(second, dtype=np.float64)

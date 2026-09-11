@@ -679,7 +679,10 @@ def build_live_teleop_packet(
         "position_diagnostics": position_diagnostics,
         "crop_quality": crop_quality,
         "orientation_filter": filter_diagnostics,
-        "finger_observation": finger_observation.as_packet(),
+        "finger_observation": (
+            invalid_finger_observation("FINGER_LANDMARKS_OUTSIDE_IMAGE")
+            if estimates.get("teleop_fingers_visible") is False
+            else finger_observation.as_packet()),
     }
 
 

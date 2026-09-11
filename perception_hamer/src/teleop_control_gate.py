@@ -19,7 +19,8 @@ class TeleopControlGate:
     """Decorate live pose packets with an explicit, repeatable C-key gate."""
 
     def __init__(
-        self, retain_reference_until_operator_action: bool = False
+        self, retain_reference_until_operator_action: bool = False,
+        startup_rotation_noise_deg: float = 0.0,
     ) -> None:
         self._lock = threading.RLock()
         self._retain_reference_until_operator_action = bool(
@@ -32,6 +33,12 @@ class TeleopControlGate:
         self._confirmation_request = None
         self._confirmation_samples = []
         self._reference_pose = None
+        self._startup_rotation_noise_deg = float(startup_rotation_noise_deg)
+        if not np.isfinite(self._startup_rotation_noise_deg) or not 0.0 <= self._startup_rotation_noise_deg < 5.0:
+            raise ValueError("startup rotation noise bound must be in [0, 5) degrees")
+        self._startup_rotation_pending = False
+        self._startup_rotation_count = 0
+        self._startup_rotation_sequence = -1
 
     @property
     def confirmation_pending(self) -> bool:
@@ -101,9 +108,50 @@ class TeleopControlGate:
                 "wrist_position_m": position.tolist(),
                 "palm_rotation_row_major": rotation.reshape(-1).tolist(),
             }
+            self._startup_rotation_pending = self._startup_rotation_noise_deg > 0.0
+            self._startup_rotation_count = 0
+            self._startup_rotation_sequence = sequence
             self._confirmation_request = None
             self._confirmation_samples = []
             return epoch
+
+    def filter_startup_orientation(self, packet: Mapping[str, Any]) -> Dict[str, Any]:
+        """Do not turn calibration noise into the first robot rotation.
+
+        Only the initial stationary interval after an explicit C is covered.
+        Three distinct observations beyond the measured quiet range release
+        the unchanged absolute pose map. There is no moving zero, angle-gain
+        reduction, or translation/rotation intent classification.
+        """
+        output = dict(packet)
+        with self._lock:
+            if not self._enabled or not self._startup_rotation_pending or self._reference_pose is None:
+                return output
+            if (packet.get("valid") is not True or packet.get("orientation_held", False)
+                    or not packet.get("orientation_channel_valid", True)):
+                self._startup_rotation_count = 0
+                return output
+            reference = np.asarray(self._reference_pose["palm_rotation_row_major"]).reshape(3, 3)
+            observed = np.asarray(packet["palm_rotation_row_major"]).reshape(3, 3)
+            angle = float(np.rad2deg(np.arccos(np.clip(
+                (np.trace(observed @ reference.T)-1.0)*0.5, -1.0, 1.0))))
+            sequence = int(packet["sequence"])
+            if sequence > self._startup_rotation_sequence:
+                self._startup_rotation_count = (self._startup_rotation_count + 1
+                    if angle > self._startup_rotation_noise_deg else 0)
+                self._startup_rotation_sequence = sequence
+            if self._startup_rotation_count >= 3:
+                self._startup_rotation_pending = False
+            output["reference_startup_rotation"] = {
+                "held": self._startup_rotation_pending, "observed_angle_deg": angle,
+                "quiet_bound_deg": self._startup_rotation_noise_deg,
+                "consecutive_clear_observations": self._startup_rotation_count,
+            }
+            if self._startup_rotation_pending:
+                output["palm_rotation_row_major"] = reference.reshape(-1).tolist()
+                output["orientation_held"] = True
+                output["confidence"] = list(packet["confidence"][:3]) + [0.0]*3
+            return output
 
     @property
     def enabled(self) -> bool:
@@ -181,6 +229,7 @@ class TeleopControlGate:
             self._reference_pose = None
             self._confirmation_request = None
             self._confirmation_samples = []
+            self._startup_rotation_pending = False
 
     def confirm(
         self,

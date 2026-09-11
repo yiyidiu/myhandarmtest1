@@ -13,6 +13,7 @@
 
 #include <ros/ros.h>
 #include <sensor_msgs/JointState.h>
+#include <geometry_msgs/PoseStamped.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float64MultiArray.h>
 #include <std_msgs/Float64.h>
@@ -194,6 +195,22 @@ public:
     {
       nh_.param("/shared_teleop/control/constrained_velocity_projection",
                 constrained_velocity_projection_, false);
+      double side_degrees = 90.0;
+      nh_.param("/shared_teleop/mapping/maximum_side_rotation_deg", side_degrees, 90.0);
+      maximum_side_angle_ = side_degrees * M_PI / 180.0;
+      if (!std::isfinite(maximum_side_angle_) || maximum_side_angle_ <= 0.0 ||
+          maximum_side_angle_ > M_PI)
+        throw std::runtime_error("invalid operator side-angle bound");
+      robot_zero_subscriber_ = nh_.subscribe<geometry_msgs::PoseStamped>(
+          "/shared_teleop/robot_zero_pose", 1,
+          [this](const geometry_msgs::PoseStampedConstPtr& message) {
+            if (message->header.frame_id != "base_link") return;
+            const auto& q = message->pose.orientation;
+            Eigen::Quaterniond rotation(q.w, q.x, q.y, q.z);
+            if (!rotation.coeffs().allFinite() || rotation.norm() < 1e-6) return;
+            robot_zero_rotation_ = rotation.normalized().toRotationMatrix();
+            have_robot_zero_ = true;
+          });
       bool simulation = false;
       nh_.param("/use_sim_time", simulation, false);
       if (constrained_velocity_projection_ && !simulation)
@@ -589,6 +606,60 @@ private:
           lower.push_back(-approach_rate * std::max(0.0,
               contact.distance - clearance_margin - tracking_margin - braking_margin));
         }
+      }
+    }
+    if (have_robot_zero_)
+    {
+      // A bounded target alone did not bound the measured side angle: the
+      // recorded arm passed -99 deg while its target remained at -88 deg.
+      // Constrain the derivative of the ACTUAL C-relative angle inside the
+      // same IK problem, including committed reference motion while braking.
+      const Eigen::Vector3d tool_z = state.getGlobalLinkTransform("tool0").linear().col(2);
+      const Eigen::Vector3d normal = robot_zero_rotation_.transpose() * tool_z;
+      const double denominator = normal.y()*normal.y() + normal.z()*normal.z();
+      Eigen::Matrix3d skew;
+      skew << 0.0, -tool_z.z(), tool_z.y(),
+              tool_z.z(), 0.0, -tool_z.x(),
+              -tool_z.y(), tool_z.x(), 0.0;
+      const Eigen::MatrixXd normal_jacobian =
+          -robot_zero_rotation_.transpose() * skew * jacobian.bottomRows(3);
+      if (denominator > 1e-6)
+      {
+        const double angle = std::atan2(-normal.y(), normal.z());
+        const Eigen::RowVectorXd angle_gradient =
+            (-normal.z()*normal_jacobian.row(1) + normal.y()*normal_jacobian.row(2)) / denominator;
+        for (double sign : {-1.0, 1.0})
+        {
+          double following_margin = 0.0, outward_speed = 0.0, braking_time = 0.0;
+          for (int joint = 0; joint < n; ++joint)
+          {
+            const auto reference = latest_arm_reference_.find(arm_joint_names_[joint]);
+            if (reference != latest_arm_reference_.end())
+              following_margin += std::abs(angle_gradient[joint]) * std::abs(
+                  reference->second - state.getVariablePosition(arm_joint_names_[joint]));
+            const auto rate = latest_reference_velocity_.find(arm_joint_names_[joint]);
+            const auto acceleration = reference_acceleration_.find(arm_joint_names_[joint]);
+            if (rate != latest_reference_velocity_.end())
+            {
+              outward_speed += sign * angle_gradient[joint] * rate->second;
+              if (acceleration != reference_acceleration_.end() && acceleration->second > 0.0)
+                braking_time = std::max(braking_time, std::abs(rate->second) / acceleration->second);
+            }
+          }
+          const double reserve = following_margin +
+              std::max(0.0, outward_speed) * (0.5*braking_time + 0.02);
+          rows.push_back(-sign * angle_gradient);
+          lower.push_back(-approach_rate * std::max(0.0,
+              maximum_side_angle_ - sign*angle - 0.5*M_PI/180.0 - reserve));
+        }
+      }
+      else if (maximum_side_angle_ <= M_PI/2.0 + 1e-8)
+      {
+        // At +/-90 deg tilt the Euler side angle is undefined. Its <=90
+        // domain is still the closed hemisphere normal.z >= 0; do not divide
+        // by the vanishing projection or invent a large angular correction.
+        rows.push_back(normal_jacobian.row(2));
+        lower.push_back(-approach_rate * std::max(0.0, normal.z()));
       }
     }
     const std::size_t linear_speed_rows = rows.size();
@@ -1200,6 +1271,8 @@ private:
         (selected.tail<3>() - requested.tail<3>()).norm() > 1e-9;
     stream << "{\"reason\":\"" << reason << "\",\"self_distance_m\":" << current.self
            << ",\"constrained_velocity_projection\":" << (constrained_velocity_projection_ ? "true" : "false")
+           << ",\"side_limit_reference_ready\":" << (have_robot_zero_ ? "true" : "false")
+           << ",\"maximum_side_angle_deg\":" << maximum_side_angle_ * 180.0/M_PI
            << ",\"projection_constraints\":" << projection_constraint_count
            << ",\"input_age_s\":" << age
            << ",\"input_valid\":" << (message->valid ? "true" : "false")
@@ -2307,6 +2380,10 @@ private:
   std::map<std::string, double> latest_reference_velocity_;
   std::map<std::string, double> reference_acceleration_;
   ros::Subscriber arm_reference_subscriber_;
+  ros::Subscriber robot_zero_subscriber_;
+  Eigen::Matrix3d robot_zero_rotation_{ Eigen::Matrix3d::Identity() };
+  bool have_robot_zero_{ false };
+  double maximum_side_angle_{ M_PI/2.0 };
   ros::WallTime latest_state_wall_time_;
   bool have_complete_state_{ false };
   bool fault_latched_{ false };

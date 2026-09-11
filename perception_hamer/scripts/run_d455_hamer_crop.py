@@ -1320,7 +1320,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--disable-forearm-fusion",
         action="store_true",
-        help="diagnostic MANO-only mode; normal single-HaMeR command enables fusion",
+        default=os.environ.get("TELEOP_FOREARM_FUSION", "false").lower() != "true",
+        help=("keep the MANO orientation channel; the intermittent forearm axis "
+              "is opt-in with TELEOP_FOREARM_FUSION=true"),
     )
     parser.add_argument(
         "--forearm-maximum-source-age-s",
@@ -1576,7 +1578,8 @@ def main() -> int:
     # heartbeats but may never cancel or silently replace the captured robot
     # reference; only another C or camera shutdown changes that reference.
     teleop_control_gate = TeleopControlGate(
-        retain_reference_until_operator_action=True
+        retain_reference_until_operator_action=True,
+        startup_rotation_noise_deg=1.5,
     )
     pending = PendingReinitialization()
     session_records = []
@@ -2230,6 +2233,13 @@ def main() -> int:
                             1.0 if finger_hand_visible else result.quality.get(
                                 "bbox_visible_fraction", 0.0)
                         )
+                        if (finger_presence.get("confirmed_detection") or {}).get(
+                                "fingers_inside_image") is False:
+                            # A visible palm can still provide a fresh arm
+                            # pose. Clipped fingers must not open/close the
+                            # gripper from the model's unobserved completion.
+                            estimates["teleop_finger_visible_fraction"] = 0.0
+                            estimates["teleop_fingers_visible"] = False
                         previous_quality_bbox = np.asarray(
                             packet.roi.bbox, dtype=np.float64
                         ).copy()
@@ -2458,7 +2468,8 @@ def main() -> int:
                         and not presence_state.get("transient_miss", False)
                         and float(presence_state.get("detection_age_s", float("inf"))) <= 0.10
                         and depth_detection.get("is_right") == bool(result.is_right)
-                        and depth_detection.get("landmarks_inside_image", False)
+                        and depth_detection.get("palm_inside_image",
+                                                depth_detection.get("landmarks_inside_image", False))
                     ):
                         # A detector observation seeds only the depth ROI.
                         # Neither its 2-D wrist location nor KLT extrapolation
@@ -2755,6 +2766,7 @@ def main() -> int:
             udp_payload = invalidate_stale_teleop_observation(
                 udp_payload, args.teleop_maximum_pipeline_latency_s
             )
+            udp_payload = teleop_control_gate.filter_startup_orientation(udp_payload)
             if udp_payload.get("valid") is True:
                 pose_delta = pose_display.update_from_packet(
                     udp_payload, presence_generation

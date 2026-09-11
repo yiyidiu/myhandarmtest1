@@ -14,6 +14,31 @@ from perception_hamer.src.hand_pose_overlay import RelativeWristPoseDisplay
 
 
 class TeleopControlGateTest(unittest.TestCase):
+    def test_startup_noise_hold_preserves_zero_and_releases_full_five_degrees(self):
+        gate = TeleopControlGate(startup_rotation_noise_deg=1.5)
+        gate.request_confirmation(0, now=0)
+        packet = {"valid": True, "wrist_position_m": [0., 0., .9],
+                  "hand_identity_present": True,
+                  "palm_rotation_row_major": np.eye(3).reshape(-1).tolist(),
+                  "confidence": [.8]*6, "presence_generation": 1,
+                  "active_hand_generation": 1, "hand_is_right": False,
+                  "finger_observation": {"valid": True, "flexion": [.1]*5}}
+        for seq in range(1, 5):
+            packet.update(sequence=seq, stamp=seq*.1)
+            gate.confirm_packet(packet, lambda: True, now=seq*.1)
+        reference = gate.decorate(packet, "startup")["control_reference_pose"]
+        for seq, degrees in [(5, .8), (6, -1.3), (7, 1.4), (8, 5.), (8, 5.), (9, 5.), (10, 5.)]:
+            angle = np.deg2rad(degrees)
+            rotation = np.array([[1,0,0],[0,np.cos(angle),-np.sin(angle)],
+                                 [0,np.sin(angle),np.cos(angle)]])
+            packet.update(sequence=seq, stamp=seq*.1, wrist_position_m=[.02, 0., .9],
+                          palm_rotation_row_major=rotation.reshape(-1).tolist())
+            output = gate.filter_startup_orientation(packet)
+            self.assertEqual(output["wrist_position_m"], [.02, 0., .9])
+            np.testing.assert_allclose(output["palm_rotation_row_major"],
+                                       (rotation if seq==10 else np.eye(3)).reshape(-1))
+            self.assertEqual(gate.decorate(output, "startup")["control_reference_pose"], reference)
+
     def test_c_rejects_depth_spike_and_uses_first_enabled_display_frame(self):
         gate = TeleopControlGate()
         display = RelativeWristPoseDisplay()

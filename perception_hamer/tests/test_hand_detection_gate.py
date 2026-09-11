@@ -1,11 +1,27 @@
 import unittest
+import numpy as np
 
 from perception_hamer.src.hand_detection_gate import (
     ConsecutiveHandDetectionGate, ContinuousHandPresenceGate, bbox_iou,
+    hand_landmark_visibility,
 )
 
 
 class HandDetectionGateTest(unittest.TestCase):
+    def test_clipped_fingertip_does_not_erase_a_visible_palm(self):
+        xy = np.tile([300., 420.], (21, 1))
+        xy[4, 1] = 482.
+        visibility = hand_landmark_visibility(xy, 640, 480)
+        self.assertTrue(visibility["palm_inside_image"])
+        self.assertFalse(visibility["fingers_inside_image"])
+        self.assertEqual(visibility["outside_landmark_indices"], [4])
+
+    def test_missing_wrist_or_palm_never_authorizes_partial_hand_pose(self):
+        for index in [0, 5, 9, 13, 17]:
+            xy = np.tile([300., 420.], (21, 1))
+            xy[index, 0] = 638.
+            self.assertFalse(hand_landmark_visibility(xy, 640, 480)["palm_inside_image"])
+
     def test_single_false_positive_never_confirms(self):
         gate = ConsecutiveHandDetectionGate(required_frames=3)
         self.assertIsNone(gate.observe({

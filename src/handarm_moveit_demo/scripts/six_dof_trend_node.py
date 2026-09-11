@@ -376,6 +376,8 @@ class SixDofTrendNode:
         self.diagnostics = rospy.Publisher(
             topics.get("trend_diagnostics", "/shared_teleop/trend_diagnostics"),
             String, queue_size=1)
+        self.robot_zero_publisher = rospy.Publisher(
+            "/shared_teleop/robot_zero_pose", PoseStamped, queue_size=1, latch=True)
         position_hold_topic = str(rospy.get_param(
             "~position_hold_topic", "")).strip()
         self.position_hold_publisher = (
@@ -1134,6 +1136,13 @@ class SixDofTrendNode:
                     self.robot_zero_position = robot_zero_position
                     self.robot_zero_rotation = robot_zero_rotation
                     self.reference_ready = True
+                zero_message = PoseStamped()
+                zero_message.header.stamp = rospy.Time.now()
+                zero_message.header.frame_id = "base_link"
+                zero_message.pose.position.x, zero_message.pose.position.y, zero_message.pose.position.z = robot_zero_position
+                zero_q = matrix_to_quaternion_xyzw(robot_zero_rotation)
+                zero_message.pose.orientation.x, zero_message.pose.orientation.y, zero_message.pose.orientation.z, zero_message.pose.orientation.w = zero_q
+                self.robot_zero_publisher.publish(zero_message)
             with self.lock:
                 robot_zero_position = self.robot_zero_position.copy()
                 robot_zero_rotation = self.robot_zero_rotation.copy()

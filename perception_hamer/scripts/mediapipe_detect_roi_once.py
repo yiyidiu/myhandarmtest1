@@ -12,10 +12,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
 import mediapipe as mp
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from perception_hamer.src.hand_detection_gate import hand_landmark_visibility
 
 def _read_exact(size: int):
     chunks = []
@@ -85,14 +88,10 @@ def _detect(
         # Padding outside the sensor is not missing hand evidence. Check the
         # unexpanded landmarks instead; keep the existing small inner margin
         # for the wrist/palm anchors, whose depth supports the control pose.
-        palm = xy[[0, 5, 9, 13, 17]]
-        edge = max(0.0, float(edge_margin_px))
-        if (not np.all(np.isfinite(xy)) or np.any(lower < 0.0)
-                or upper[0] >= width or upper[1] >= height
-                or np.any(palm < edge)
-                or np.any(palm[:, 0] >= width-edge)
-                or np.any(palm[:, 1] >= height-edge)):
-            candidate.update(valid=False, reason="hand_landmarks_outside_usable_image")
+        visibility = hand_landmark_visibility(xy, width, height, edge_margin_px)
+        candidate.update(visibility)
+        if not visibility["palm_inside_image"]:
+            candidate.update(valid=False)
             rejected.append(candidate)
             continue
         handedness = handedness_results[index].classification[0]
@@ -100,7 +99,6 @@ def _detect(
         # is not mirrored, so exchange Left/Right for the physical operator.
         media_pipe_label = handedness.label.lower()
         candidate.update({
-            "landmarks_inside_image": True,
             "is_right": media_pipe_label == "left",
             "confidence": float(handedness.score),
             "mediapipe_selfie_label": media_pipe_label,
