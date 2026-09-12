@@ -79,6 +79,8 @@ value={"status":"PREPARING_RECORDERS","created_host_wall_ns":time.time_ns(),"cre
  "forearm_control_fusion_enabled":False,
  "positive_view_bias_gain":float(os.environ.get("TELEOP_POSITIVE_VIEW_BIAS_GAIN","0")),
  "imu_calibrated_pose_enabled":os.environ.get("TELEOP_IMU_CALIBRATED_POSE","false").lower()=="true",
+ "precise_orientation_enabled":os.environ.get("TELEOP_PRECISE_ORIENTATION","false").lower()=="true",
+ "requested_camera_resolution":os.environ.get("TELEOP_CAMERA_RESOLUTION","640x480"),
  "position_accommodation_m":float(os.environ.get("TELEOP_POSITION_ACCOMMODATION_M","0")),
  "imu_used_by_controller":False,"audio_recorded":False}
 (p/'session.json').write_text(json.dumps(value,ensure_ascii=False,indent=2)+'\n')

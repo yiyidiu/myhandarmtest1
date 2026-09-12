@@ -43,6 +43,39 @@ class CropQualityTest(unittest.TestCase):
 
 
 class CausalWristSO3FilterTest(unittest.TestCase):
+    def test_consistency_mode_reduces_alternating_noise_without_a_deadzone(self):
+        filters = [CausalWristSO3Filter(), CausalWristSO3Filter(
+            CausalWristSO3FilterConfig(time_constant_s=.4,
+                                      motion_consistency_window_s=.4))]
+        traces = [[], []]
+        for i in range(90):
+            measurement = so3_exp([0., math.radians(2.0 if i % 2 else -2.0), 0.])
+            for j, active in enumerate(filters):
+                result = active.update(i/15., measurement, .8)
+                traces[j].append(rotation_distance_rad(result.rotation, np.eye(3)))
+        self.assertLess(np.mean(traces[1][-30:]), np.mean(traces[0][-30:])*.5)
+        # Both sub-degree and five-degree motions must eventually reach their
+        # full target; this mode contains no C event or angle deadzone.
+        for degrees in (.5, 5.):
+            active = filters[1]
+            active.reset()
+            active.update(0., np.eye(3), .8)
+            target = so3_exp([0., math.radians(degrees), 0.])
+            for i in range(1, 91):
+                result = active.update(i/15., target, .8)
+                self.assertTrue(result.valid)
+            self.assertLess(math.degrees(rotation_distance_rad(result.rotation, target)), .01)
+
+    def test_consistency_mode_preserves_a_continuous_fast_turn(self):
+        active = CausalWristSO3Filter(CausalWristSO3FilterConfig(
+            time_constant_s=.4, motion_consistency_window_s=.4))
+        for i in range(90):
+            degrees = max(0., min(90., (i/15.-1.)*180.))
+            target = so3_exp([math.radians(degrees), 0., 0.])
+            result = active.update(i/15., target, .8)
+            self.assertTrue(result.valid)
+        self.assertLess(math.degrees(rotation_distance_rad(result.rotation, target)), .05)
+
     def test_static_noise_is_reduced_on_so3(self):
         generator = np.random.default_rng(20260820)
         active = CausalWristSO3Filter()

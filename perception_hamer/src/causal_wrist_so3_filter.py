@@ -98,9 +98,11 @@ class CausalWristSO3FilterConfig:
     innovation_soft_deg: float = 25.0
     innovation_hard_deg: float = 45.0
     large_angle_mode: str = "reject"
+    motion_consistency_window_s: float = 0.0
 
     def validate(self) -> None:
         values = (
+            self.motion_consistency_window_s,
             self.time_constant_s,
             self.minimum_gain,
             self.maximum_gain,
@@ -113,6 +115,8 @@ class CausalWristSO3FilterConfig:
             raise ValueError("SO3 filter configuration must be finite")
         if self.time_constant_s <= 0.0:
             raise ValueError("time_constant_s must be positive")
+        if self.motion_consistency_window_s < 0.0:
+            raise ValueError("motion_consistency_window_s must be nonnegative")
         if not 0.0 <= self.minimum_gain <= self.maximum_gain <= 1.0:
             raise ValueError("SO3 filter gains must satisfy 0 <= min <= max <= 1")
         if not 0.0 <= self.motion_gain_start_deg < self.motion_gain_full_deg:
@@ -139,6 +143,7 @@ class CausalWristSO3FilterResult:
     reason: str
     large_angle_mode: str
     large_angle_passthrough: bool
+    motion_consistency: float = 1.0
 
     def as_dict(self) -> dict:
         return {
@@ -158,6 +163,7 @@ class CausalWristSO3FilterResult:
             "reason": str(self.reason),
             "large_angle_mode": str(self.large_angle_mode),
             "large_angle_passthrough": bool(self.large_angle_passthrough),
+            "motion_consistency": float(self.motion_consistency),
             "method": "quality_adaptive_causal_so3",
         }
 
@@ -175,6 +181,8 @@ class CausalWristSO3Filter:
     def reset(self) -> None:
         self._filtered: Optional[np.ndarray] = None
         self._last_timestamp_s: Optional[float] = None
+        self._motion_observations = []
+        self._motion_consistency = 1.0
 
     def _invalid(
         self,
@@ -223,6 +231,7 @@ class CausalWristSO3Filter:
             reason="",
             large_angle_mode=self.config.large_angle_mode,
             large_angle_passthrough=bool(large_angle_passthrough),
+            motion_consistency=self._motion_consistency,
         )
 
     def update(
@@ -256,6 +265,7 @@ class CausalWristSO3Filter:
         if self._filtered is None:
             self._filtered = observed
             self._last_timestamp_s = timestamp
+            self._motion_observations = [(timestamp, observed.copy())]
             return self._valid(timestamp, "initialized", quality, 1.0, 0.0)
 
         assert self._last_timestamp_s is not None
@@ -284,6 +294,25 @@ class CausalWristSO3Filter:
         ))
         motion_weight = motion_fraction * motion_fraction * (
             3.0 - 2.0 * motion_fraction)
+        if self.config.motion_consistency_window_s > 0.0:
+            # A fluctuating measurement is not evidence of a sustained turn.
+            # Only the responsive-gain boost is weighted: the ordinary
+            # low-pass always passes small/slow motion with unit DC gain.
+            self._motion_observations.append((timestamp, observed.copy()))
+            self._motion_observations = [
+                item for item in self._motion_observations
+                if timestamp-item[0] <= self.config.motion_consistency_window_s
+            ]
+            increments = [
+                _so3_log(b[1] @ a[1].T)
+                for a, b in zip(self._motion_observations, self._motion_observations[1:])
+            ]
+            travel = sum(float(np.linalg.norm(v)) for v in increments)
+            self._motion_consistency = (
+                float(np.clip(np.linalg.norm(np.sum(increments, axis=0))/travel, 0., 1.))
+                if travel > 1e-8 and len(increments) >= 2 else 0.0
+            )
+            motion_weight *= self._motion_consistency**2
         # At rest, retain the time-constant/quality low-pass. During a clear
         # intentional rotation, approach a quality-scaled responsive gain so
         # smoothing does not recreate the previous teleoperation latency.

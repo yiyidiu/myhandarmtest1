@@ -1397,6 +1397,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--imu-calibrated-pose", action="store_true",
                         default=os.environ.get("TELEOP_IMU_CALIBRATED_POSE", "false").lower() == "true",
                         help="opt-in RGB-D pose correction calibrated offline against IMU; no runtime IMU input")
+    parser.add_argument("--precise-orientation", action="store_true",
+                        default=os.environ.get("TELEOP_PRECISE_ORIENTATION", "false").lower() == "true",
+                        help="reduce noisy orientation updates; responsive gain requires a consistent recent turn")
+    parser.add_argument("--camera-resolution", choices=("640x480", "1280x720"),
+                        default=os.environ.get("TELEOP_CAMERA_RESOLUTION", "640x480"),
+                        help="native color and depth profile at 30 Hz; 1280x720 is an observation-quality trial")
     parser.add_argument("--countdown-s", type=float, default=1.0)
     parser.add_argument("--experiment", choices=EXPERIMENTS)
     parser.add_argument(
@@ -1473,6 +1479,10 @@ def main() -> int:
     args = _parse_args()
     if args.imu_calibrated_pose and args.positive_view_bias_gain != 0.0:
         raise SystemExit("--imu-calibrated-pose cannot be stacked with --positive-view-bias-gain")
+    if args.precise_orientation and (args.imu_calibrated_pose or args.positive_view_bias_gain != 0.0):
+        raise SystemExit("--precise-orientation uses the unfused wrist measurement; disable experimental view/depth corrections")
+    if args.imu_calibrated_pose and args.camera_resolution != "640x480":
+        raise SystemExit("the experimental RGB-D calibration is only defined for 640x480")
     _apply_process_cpu_affinity(args.inference_cpu_affinity)
     # KLT runs beside inference on the same small CPU set. OpenCV's default
     # 12-worker pool was competing with HaMeR and increasing frame-age tails.
@@ -1561,7 +1571,8 @@ def main() -> int:
         "mano_mean_params_exists")):
         raise SystemExit("HaMeR assets are incomplete: " + repr(asset_status))
 
-    capture = D455Capture(width=640, height=480, fps=30, require_superspeed=False,
+    camera_width, camera_height = map(int, args.camera_resolution.split("x"))
+    capture = D455Capture(width=camera_width, height=camera_height, fps=30, require_superspeed=False,
                          record_path=os.environ.get("TELEOP_RGBD_RECORDING_FILE"))
     output_dir: Optional[Path] = None
     records_file = None
@@ -1613,7 +1624,8 @@ def main() -> int:
     )
     orientation_filter = CausalWristSO3Filter(
         CausalWristSO3FilterConfig(
-            time_constant_s=args.orientation_filter_time_constant_s,
+            time_constant_s=.40 if args.precise_orientation else args.orientation_filter_time_constant_s,
+            motion_consistency_window_s=.40 if args.precise_orientation else 0.0,
             minimum_gain=args.orientation_filter_min_gain,
             maximum_gain=args.orientation_filter_max_gain,
             motion_gain_start_deg=args.orientation_filter_motion_start_deg,
@@ -3064,8 +3076,8 @@ def main() -> int:
         summary = {
             "schema_version": 2,
             "experiment": args.experiment,
-            "profile": "{} color RGB8 + aligned depth Z16, 640x480@30".format(
-                capture.device_metadata.get("device_model", "RealSense")
+            "profile": "{} color RGB8 + aligned depth Z16, {}@30".format(
+                capture.device_metadata.get("device_model", "RealSense"), args.camera_resolution
             ),
             "usb_type_descriptor": capture.device_metadata["usb_type_descriptor"],
             "device": capture.device_metadata,
@@ -3089,6 +3101,7 @@ def main() -> int:
             ),
             "forearm_fusion_enabled": False,
             "imu_calibrated_pose_enabled": bool(args.imu_calibrated_pose),
+            "precise_orientation_enabled": bool(args.precise_orientation),
             "imu_pose_calibration": "imu_guided_palm_20260912.json" if args.imu_calibrated_pose else None,
             "forearm_estimation_for_diagnostics_enabled": not args.disable_forearm_fusion,
             "wrist_depth_mode": args.wrist_depth_mode,
