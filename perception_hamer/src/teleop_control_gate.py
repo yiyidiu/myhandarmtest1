@@ -113,6 +113,14 @@ class TeleopControlGate:
                 "wrist_position_m": position.tolist(),
                 "palm_rotation_row_major": rotation.reshape(-1).tolist(),
             }
+            surface = packet.get("palm_surface_observation") or {}
+            if surface.get("valid"):
+                # Auxiliary geometry belongs to the very same C frame.
+                # Its absence does not add a C requirement or a motion hold.
+                self._reference_pose["palm_surface_observation"] = {
+                    "valid": True,
+                    "rotation_row_major": list(surface["rotation_row_major"]),
+                }
             self._startup_rotation_pending = self._startup_rotation_noise_deg > 0.0
             self._startup_rotation_count = 0
             self._startup_rotation_sequence = sequence

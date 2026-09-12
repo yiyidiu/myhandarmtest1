@@ -91,6 +91,7 @@ from perception_hamer.src.teleop_pose_packet import (
     invalidate_stale_teleop_observation,
 )
 from perception_hamer.src.teleop_control_gate import TeleopControlGate
+from perception_hamer.src.imu_calibrated_palm import ImuCalibratedPalmCorrector
 from perception_hamer.src.teleoperation_core_mano_renderer import (
     TeleoperationCoreRenderFrame,
     render_inference_frame,
@@ -1393,6 +1394,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--positive-view-bias-gain", type=float,
                         default=float(os.environ.get("TELEOP_POSITIVE_VIEW_BIAS_GAIN", "0")),
                         help="optional calibrated horizontal-view correction; zero preserves the previous estimator")
+    parser.add_argument("--imu-calibrated-pose", action="store_true",
+                        default=os.environ.get("TELEOP_IMU_CALIBRATED_POSE", "false").lower() == "true",
+                        help="opt-in RGB-D pose correction calibrated offline against IMU; no runtime IMU input")
     parser.add_argument("--countdown-s", type=float, default=1.0)
     parser.add_argument("--experiment", choices=EXPERIMENTS)
     parser.add_argument(
@@ -1467,6 +1471,8 @@ def _apply_thread_cpu_affinity(cpu_affinity: str) -> None:
 
 def main() -> int:
     args = _parse_args()
+    if args.imu_calibrated_pose and args.positive_view_bias_gain != 0.0:
+        raise SystemExit("--imu-calibrated-pose cannot be stacked with --positive-view-bias-gain")
     _apply_process_cpu_affinity(args.inference_cpu_affinity)
     # KLT runs beside inference on the same small CPU set. OpenCV's default
     # 12-worker pool was competing with HaMeR and increasing frame-age tails.
@@ -1585,6 +1591,10 @@ def main() -> int:
         retain_reference_until_operator_action=True,
     )
     view_bias_correction = CameraViewBiasCorrection(args.positive_view_bias_gain)
+    imu_calibrated_pose = ImuCalibratedPalmCorrector(
+        REPOSITORY_ROOT / "perception_hamer/config/imu_guided_palm_20260912.json",
+        enabled=args.imu_calibrated_pose,
+    )
     pending = PendingReinitialization()
     session_records = []
     session_timing_records = []
@@ -2519,6 +2529,21 @@ def main() -> int:
                     diagnostics = pose_packet_payload.get(
                         "position_diagnostics"
                     )
+                    if args.imu_calibrated_pose:
+                        depth_skew_ms = packet.frame.device_timestamp_skew_ms
+                        if (packet.frame.depth_timestamp_domain != packet.frame.color_timestamp_domain
+                                or depth_skew_ms > 1000.0 / (2.0 * capture.fps)):
+                            surface_observation = {"valid": False, "reason": "RGB_DEPTH_PAIR_TIME_MISMATCH"}
+                        else:
+                            surface_observation = imu_calibrated_pose.measure(
+                                packet.frame.aligned_depth_raw,
+                                packet.frame.depth_scale_m_per_unit,
+                                packet.frame.color_intrinsics,
+                                presence_state.get("confirmed_detection"),
+                                float(presence_state.get("detection_age_s", float("inf"))),
+                            )
+                        surface_observation["rgb_depth_skew_ms"] = depth_skew_ms
+                        pose_packet_payload["palm_surface_observation"] = surface_observation
                     if diagnostics is not None:
                         diagnostics["requested_depth_mode"] = args.wrist_depth_mode
                         diagnostics["palm_seed_supplied"] = depth_palm_pixels is not None
@@ -2677,26 +2702,6 @@ def main() -> int:
                     teleoperation_core_render,
                     args.mesh_renderer,
                 )
-            if args.show_wrist_axes and estimates is not None:
-                measured = pose_packet_payload or {}
-                confidence = np.asarray(measured.get("confidence", [0.]*6))
-                estimates["wrist_axes_observation"] = {
-                    "center_m": measured.get("wrist_position_m"),
-                    "processed_rotation": (
-                        np.asarray(measured["palm_rotation_row_major"]).reshape(3, 3)
-                        if measured.get("palm_rotation_row_major") is not None else None
-                    ),
-                    "processed_valid": bool(measured.get("valid") and np.all(confidence[3:] > 0)),
-                    "intrinsics": packet.frame.color_intrinsics,
-                    "capture_sequence": packet.capture_sequence,
-                }
-            overlay_state.update(
-                result, estimates, hamer_fps, failure_reason, mano_faces,
-                projection_source_bbox, teleoperation_core_render,
-                presence_generation,
-                packet.frame.rgb if result is not None else None,
-                packet.capture_sequence if result is not None else -1,
-            )
             publish_ready_monotonic = time.monotonic()
             dropped_capture_frames = (
                 0
@@ -2772,6 +2777,35 @@ def main() -> int:
                 udp_payload, args.teleop_maximum_pipeline_latency_s
             )
             udp_payload = view_bias_correction.apply(udp_payload, teleop_control_gate.reference_pose)
+            udp_payload = imu_calibrated_pose.apply(udp_payload, teleop_control_gate.reference_pose)
+            if args.imu_calibrated_pose:
+                publish_ready_monotonic = time.monotonic()
+                timing_payload["capture_to_publish_s"] = max(0.0, publish_ready_monotonic-capture_monotonic_s)
+                timing_payload["postprocess_s"] = max(0.0, publish_ready_monotonic-postprocess_started_monotonic)
+                udp_payload["timing"] = dict(timing_payload)
+                udp_payload = invalidate_stale_teleop_observation(
+                    udp_payload, args.teleop_maximum_pipeline_latency_s
+                )
+            if args.show_wrist_axes and estimates is not None:
+                confidence = np.asarray(udp_payload.get("confidence", [0.]*6))
+                estimates["wrist_axes_observation"] = {
+                    "center_m": udp_payload.get("wrist_position_m"),
+                    "imu_calibrated_pose": bool(args.imu_calibrated_pose),
+                    "processed_rotation": (
+                        np.asarray(udp_payload["palm_rotation_row_major"]).reshape(3, 3)
+                        if udp_payload.get("palm_rotation_row_major") is not None else None
+                    ),
+                    "processed_valid": bool(udp_payload.get("valid") and np.all(confidence[3:] > 0)),
+                    "intrinsics": packet.frame.color_intrinsics,
+                    "capture_sequence": packet.capture_sequence,
+                }
+            overlay_state.update(
+                result, estimates, hamer_fps, failure_reason, mano_faces,
+                projection_source_bbox, teleoperation_core_render,
+                presence_generation,
+                packet.frame.rgb if result is not None else None,
+                packet.capture_sequence if result is not None else -1,
+            )
             if udp_payload.get("valid") is True:
                 pose_delta = pose_display.update_from_packet(
                     udp_payload, presence_generation
@@ -3054,6 +3088,8 @@ def main() -> int:
                 "C_ZERO_MANO_WRIST_RING_16_REALSENSE_METRIC_SO3"
             ),
             "forearm_fusion_enabled": False,
+            "imu_calibrated_pose_enabled": bool(args.imu_calibrated_pose),
+            "imu_pose_calibration": "imu_guided_palm_20260912.json" if args.imu_calibrated_pose else None,
             "forearm_estimation_for_diagnostics_enabled": not args.disable_forearm_fusion,
             "wrist_depth_mode": args.wrist_depth_mode,
             "forearm_fusion_max_weight": float(

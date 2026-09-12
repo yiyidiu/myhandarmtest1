@@ -167,7 +167,9 @@ def draw_wrist_axes_diagnostic(rgb, raw_frame, observation, bbox=None):
     colors = ((0, 0, 255), (0, 220, 0), (255, 150, 40))
     frames = [(raw_frame or {}).get('rotation') if (raw_frame or {}).get('valid') else None,
               observation.get('processed_rotation') if observation.get('processed_valid') else None]
-    titles = ['RAW WRIST: before filtering', 'PROCESSED WRIST: filtered estimate']
+    titles = ['RAW WRIST: before filtering',
+              'PROCESSED WRIST: RGB-D corrected' if observation.get('imu_calibrated_pose')
+              else 'PROCESSED WRIST: filtered estimate']
     for index, (frame, title) in enumerate(zip(frames, titles)):
         offset = index * width
         cv2.putText(canvas, title, (offset+12, height+23), cv2.FONT_HERSHEY_SIMPLEX,

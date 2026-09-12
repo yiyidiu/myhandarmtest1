@@ -1,0 +1,17 @@
+{
+  "status": "opt_in_partial_measurement_correction",
+  "parameters": [10.305209937662346, 0.18568107251143778, 0.3650922691394861, 0.1402032858922025],
+  "parameter_names": ["positive_view_weight", "observer_disagreement_weight", "correction_time_constant_s", "large_camera_y_response_adjustment"],
+  "image_size": [640, 480],
+  "hand_is_right": false,
+  "fit_recording": "hand_motion_observation_20260911T153019_6Wdm",
+  "comparison_recording": "hand_motion_observation_20260911T202058_Ime9",
+  "supervision": "Measured IMU rotation distances; no translation-as-zero or intent labels at runtime",
+  "runtime_imu_used": false,
+  "limitations": [
+    "Partial correction, with residual left-translation overrotation and some regressions",
+    "Rotation-distance agreement is not independent per-axis orientation accuracy",
+    "The comparison recording has been inspected during development",
+    "Not validated for other camera profiles or users"
+  ]
+}

@@ -78,6 +78,7 @@ value={"status":"PREPARING_RECORDERS","created_host_wall_ns":time.time_ns(),"cre
  "forearm_fusion_requested":os.environ.get("TELEOP_FOREARM_FUSION","false").lower()=="true",
  "forearm_control_fusion_enabled":False,
  "positive_view_bias_gain":float(os.environ.get("TELEOP_POSITIVE_VIEW_BIAS_GAIN","0")),
+ "imu_calibrated_pose_enabled":os.environ.get("TELEOP_IMU_CALIBRATED_POSE","false").lower()=="true",
  "position_accommodation_m":float(os.environ.get("TELEOP_POSITION_ACCOMMODATION_M","0")),
  "imu_used_by_controller":False,"audio_recorded":False}
 (p/'session.json').write_text(json.dumps(value,ensure_ascii=False,indent=2)+'\n')
