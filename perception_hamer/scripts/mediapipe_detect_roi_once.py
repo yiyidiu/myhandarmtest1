@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """One-shot MediaPipe hand presence/2-D bbox/coarse-handedness sidecar.
 
-Raw RGB bytes are read from stdin.  Only the 2-D wrist and four palm-root
-pixels are exported in addition to the bounding box.  They seed the local
-RGB-D forearm search; MediaPipe z/world landmarks are deliberately never
-exported and cannot become the MANO wrist orientation.
+Raw RGB bytes are read from stdin. Image landmarks seed the local RGB-D
+search and preserve fingertip trajectories for temporal-motion analysis.
+MediaPipe z/world landmarks are deliberately never exported and cannot
+become the MANO wrist orientation.
 """
 
 from __future__ import annotations
@@ -77,6 +77,9 @@ def _detect(
             # aligned-depth forearm fit.  They are not a pose measurement.
             "wrist_pixel": xy[0].tolist(),
             "palm_mcp_pixels": xy[[5, 9, 13, 17]].tolist(),
+            # Already computed by the detector; this adds no model pass.
+            # Keep 2-D observations separate from HaMeR pose and real depth.
+            "hand_landmarks_pixels": xy.tolist(),
             "crop_margin_clipped": bool(
                 np.any(expanded_lower < 0.0)
                 or expanded_upper[0] > width or expanded_upper[1] > height),
@@ -106,7 +109,7 @@ def _detect(
             "handedness_label_exchanged_for_unmirrored_d455": True,
             "allowed_usage": (
                 "presence_2d_bbox_coarse_handedness_and_"
-                "rgbd_forearm_roi_seed_only"
+                "rgbd_roi_seeds_and_temporal_image_motion_diagnostics"
             ),
         })
         candidates.append(candidate)
