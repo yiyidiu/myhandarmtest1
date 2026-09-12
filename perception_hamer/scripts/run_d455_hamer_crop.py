@@ -1584,6 +1584,7 @@ def main() -> int:
     teleop_control_gate = TeleopControlGate(
         retain_reference_until_operator_action=True,
         startup_rotation_noise_deg=1.5,
+        startup_translation_noise_m=0.004,
     )
     view_bias_correction = CameraViewBiasCorrection(args.positive_view_bias_gain)
     pending = PendingReinitialization()
@@ -2772,7 +2773,7 @@ def main() -> int:
                 udp_payload, args.teleop_maximum_pipeline_latency_s
             )
             udp_payload = view_bias_correction.apply(udp_payload, teleop_control_gate.reference_pose)
-            udp_payload = teleop_control_gate.filter_startup_orientation(udp_payload)
+            udp_payload = teleop_control_gate.filter_startup_pose(udp_payload)
             if udp_payload.get("valid") is True:
                 pose_delta = pose_display.update_from_packet(
                     udp_payload, presence_generation

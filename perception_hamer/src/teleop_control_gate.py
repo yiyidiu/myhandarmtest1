@@ -21,6 +21,7 @@ class TeleopControlGate:
     def __init__(
         self, retain_reference_until_operator_action: bool = False,
         startup_rotation_noise_deg: float = 0.0,
+        startup_translation_noise_m: float = 0.0,
     ) -> None:
         self._lock = threading.RLock()
         self._retain_reference_until_operator_action = bool(
@@ -39,6 +40,13 @@ class TeleopControlGate:
         self._startup_rotation_pending = False
         self._startup_rotation_count = 0
         self._startup_rotation_sequence = -1
+        self._startup_translation_noise_m = float(startup_translation_noise_m)
+        if (not np.isfinite(self._startup_translation_noise_m) or
+                not 0.0 <= self._startup_translation_noise_m < 0.02):
+            raise ValueError("startup translation noise bound must be in [0, .02) metres")
+        self._startup_translation_pending = False
+        self._startup_translation_count = 0
+        self._startup_translation_sequence = -1
 
     @property
     def confirmation_pending(self) -> bool:
@@ -116,12 +124,15 @@ class TeleopControlGate:
             self._startup_rotation_pending = self._startup_rotation_noise_deg > 0.0
             self._startup_rotation_count = 0
             self._startup_rotation_sequence = sequence
+            self._startup_translation_pending = self._startup_translation_noise_m > 0.0
+            self._startup_translation_count = 0
+            self._startup_translation_sequence = sequence
             self._confirmation_request = None
             self._confirmation_samples = []
             return epoch
 
-    def filter_startup_orientation(self, packet: Mapping[str, Any]) -> Dict[str, Any]:
-        """Do not turn calibration noise into the first robot rotation.
+    def filter_startup_pose(self, packet: Mapping[str, Any]) -> Dict[str, Any]:
+        """Keep C's initial stationary position and orientation independent.
 
         Only the initial stationary interval after an explicit C is covered.
         Three distinct observations beyond the measured quiet range release
@@ -130,7 +141,39 @@ class TeleopControlGate:
         """
         output = dict(packet)
         with self._lock:
-            if not self._enabled or not self._startup_rotation_pending or self._reference_pose is None:
+            if not self._enabled or self._reference_pose is None:
+                return output
+            if packet.get("valid") is not True:
+                self._startup_translation_count = 0
+                self._startup_rotation_count = 0
+                return output
+            if self._startup_translation_pending:
+                reference_position = np.asarray(self._reference_pose["wrist_position_m"])
+                observed_position = np.asarray(packet["wrist_position_m"])
+                distance = float(np.linalg.norm(observed_position-reference_position))
+                sequence = int(packet["sequence"])
+                observed = (not packet.get("position_held", False) and
+                            np.all(np.asarray(packet["confidence"][:3]) > 0.0))
+                if not observed:
+                    self._startup_translation_count = 0
+                elif sequence > self._startup_translation_sequence:
+                    self._startup_translation_count = (self._startup_translation_count + 1
+                        if distance > self._startup_translation_noise_m else 0)
+                    self._startup_translation_sequence = sequence
+                if self._startup_translation_count >= 3:
+                    self._startup_translation_pending = False
+                output["reference_startup_translation"] = {
+                    "held": self._startup_translation_pending,
+                    "observed_position_m": observed_position.tolist(),
+                    "observed_displacement_m": distance,
+                    "quiet_bound_m": self._startup_translation_noise_m,
+                    "consecutive_clear_observations": self._startup_translation_count,
+                }
+                if self._startup_translation_pending:
+                    output["wrist_position_m"] = reference_position.tolist()
+                    output["position_held"] = True
+                    output["confidence"] = [0.0]*3 + list(output["confidence"][3:])
+            if not self._startup_rotation_pending:
                 return output
             if (packet.get("valid") is not True or packet.get("orientation_held", False)
                     or not packet.get("orientation_channel_valid", True)):
@@ -155,8 +198,12 @@ class TeleopControlGate:
             if self._startup_rotation_pending:
                 output["palm_rotation_row_major"] = reference.reshape(-1).tolist()
                 output["orientation_held"] = True
-                output["confidence"] = list(packet["confidence"][:3]) + [0.0]*3
+                output["confidence"] = list(output["confidence"][:3]) + [0.0]*3
             return output
+
+    # Saved recording analyses use the old name; their default translation
+    # bound remains zero, preserving those orientation-only comparisons.
+    filter_startup_orientation = filter_startup_pose
 
     @property
     def enabled(self) -> bool:
@@ -235,6 +282,7 @@ class TeleopControlGate:
             self._confirmation_request = None
             self._confirmation_samples = []
             self._startup_rotation_pending = False
+            self._startup_translation_pending = False
 
     def confirm(
         self,
