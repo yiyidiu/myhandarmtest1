@@ -195,6 +195,21 @@ public:
     {
       nh_.param("/shared_teleop/control/constrained_velocity_projection",
                 constrained_velocity_projection_, false);
+      nh_.param("/shared_teleop/control/position_accommodation_m",
+                position_accommodation_m_, 0.0);
+      if (!std::isfinite(position_accommodation_m_) || position_accommodation_m_ < 0.0)
+        throw std::runtime_error("position accommodation must be finite and nonnegative");
+      target_pose_subscriber_ = nh_.subscribe<geometry_msgs::PoseStamped>(
+          "/shared_teleop/pose_target", 1,
+          [this](const geometry_msgs::PoseStampedConstPtr& message) {
+            if (message->header.frame_id != "base_link") return;
+            const auto& p = message->pose.position;
+            Eigen::Vector3d position(p.x, p.y, p.z);
+            if (!position.allFinite()) return;
+            operator_target_position_ = position;
+            operator_target_received_ = ros::WallTime::now();
+            have_operator_target_ = true;
+          });
       double side_degrees = 90.0;
       nh_.param("/shared_teleop/mapping/maximum_side_rotation_deg", side_degrees, 90.0);
       maximum_side_angle_ = side_degrees * M_PI / 180.0;
@@ -210,6 +225,7 @@ public:
             if (!rotation.coeffs().allFinite() || rotation.norm() < 1e-6) return;
             robot_zero_rotation_ = rotation.normalized().toRotationMatrix();
             have_robot_zero_ = true;
+            position_accommodation_active_ = false;
           });
       bool simulation = false;
       nh_.param("/use_sim_time", simulation, false);
@@ -664,6 +680,30 @@ private:
     }
     const std::size_t linear_speed_rows = rows.size();
     const double requested_linear_speed = requested.head(3).norm();
+    const bool accommodation_enabled = position_accommodation_m_ > 0.0;
+    if (accommodation_enabled && (!have_operator_target_ ||
+        (ros::WallTime::now() - operator_target_received_).toSec() > 0.20))
+    {
+      reason = "WAITING_FOR_CURRENT_POSE_TARGET";
+      return false;
+    }
+    Eigen::Vector3d position_upper = Eigen::Vector3d::Constant(requested_linear_speed);
+    const Eigen::Vector3d position_error =
+        state.getGlobalLinkTransform("tool0").translation() - operator_target_position_;
+    if (accommodation_enabled)
+    {
+      // Borrow space only once translation has arrived near its target.
+      // Large fresh translations need the ordinary progress policy instead
+      // of pursuing orientation while leaving a distant position behind.
+      // Hysteresis keeps the allowed accommodation itself from switching
+      // the policy off at the edge of its envelope.
+      const double error = position_error.cwiseAbs().maxCoeff();
+      if (error > 1.5 * position_accommodation_m_)
+        position_accommodation_active_ = false;
+      else if (error < 0.5 * position_accommodation_m_ && requested.tail(3).norm() > 1e-9)
+        position_accommodation_active_ = true;
+    }
+    const bool position_envelope = accommodation_enabled && position_accommodation_active_;
     // A tiny position correction cannot authorize a fast sideways excursion
     // to achieve rotation. Directional progress alone admits arbitrarily
     // large perpendicular velocity, which accumulates drift at finite dt.
@@ -671,7 +711,37 @@ private:
     for (int axis = 0; axis < 3; ++axis)
     {
       rows.push_back(jacobian.row(axis));
-      lower.push_back(-requested_linear_speed);
+      if (!position_envelope)
+        lower.push_back(-requested_linear_speed);
+      else
+      {
+        // The envelope is anchored to the operator's target, not to every
+        // new robot sample. Reserve committed following/braking motion.
+        // Outside the envelope only non-worsening motion is allowed; a
+        // moving or unreachable hand target must never force a snap-back.
+        double following = 0.0, speed = 0.0, brake_time = 0.0;
+        for (int joint = 0; joint < n; ++joint)
+        {
+          const auto reference = latest_arm_reference_.find(arm_joint_names_[joint]);
+          if (reference != latest_arm_reference_.end())
+            following += std::abs(jacobian(axis, joint)) * std::abs(
+                reference->second - state.getVariablePosition(arm_joint_names_[joint]));
+          const auto rate = latest_reference_velocity_.find(arm_joint_names_[joint]);
+          const auto acceleration = reference_acceleration_.find(arm_joint_names_[joint]);
+          if (rate != latest_reference_velocity_.end())
+          {
+            speed += jacobian(axis, joint) * rate->second;
+            if (acceleration != reference_acceleration_.end() && acceleration->second > 0.0)
+              brake_time = std::max(brake_time, std::abs(rate->second) / acceleration->second);
+          }
+        }
+        const double positive_reserve = following + std::max(0.0, speed) * (0.5*brake_time + 0.02);
+        const double negative_reserve = following + std::max(0.0, -speed) * (0.5*brake_time + 0.02);
+        lower.push_back(-approach_rate * std::max(0.0,
+            position_accommodation_m_ + position_error[axis] - negative_reserve));
+        position_upper[axis] = approach_rate * std::max(0.0,
+            position_accommodation_m_ - position_error[axis] - positive_reserve);
+      }
     }
     const std::size_t collision_rows = rows.size();
     // Require progress toward each requested task, rather than fixing the
@@ -682,6 +752,7 @@ private:
     // An unrequested task remains fixed (e.g. no rotation during translation).
     for (int block = 0; block < 2; ++block)
     {
+      if (block == 0 && position_envelope) continue;
       const Eigen::Vector3d direction = requested.segment<3>(3 * block);
       if (direction.norm() > 1e-9)
       {
@@ -743,10 +814,11 @@ private:
     for (std::size_t i = 0; i < rows.size(); ++i) matrix.row(i) = rows[i];
     std::vector<double> lb(n), ub(n), upper(rows.size(), qpOASES::INFTY);
     for (int axis = 0; axis < 3; ++axis)
-      upper[linear_speed_rows + axis] = requested_linear_speed;
+      upper[linear_speed_rows + axis] = position_upper[axis];
     std::size_t task_row = collision_rows;
     for (int block = 0; block < 2; ++block)
     {
+      if (block == 0 && position_envelope) continue;
       if (requested.segment<3>(3 * block).norm() > 1e-9)
         task_row += block == 0 ? 5 : 1;
       else
@@ -820,7 +892,7 @@ private:
       // Replace the single angular-progress row, avoiding redundant equality
       // constraints. Collision and positional-progress rows are unchanged.
       const std::size_t angular_row = collision_rows +
-          (requested.head(3).norm() > 1e-9 ? 5 : 3);
+          (position_envelope ? 0 : requested.head(3).norm() > 1e-9 ? 5 : 3);
       matrix.conservativeResize(angular_row + 3, n);
       lower.resize(angular_row + 3);
       upper.resize(angular_row + 3);
@@ -1273,6 +1345,8 @@ private:
            << ",\"constrained_velocity_projection\":" << (constrained_velocity_projection_ ? "true" : "false")
            << ",\"side_limit_reference_ready\":" << (have_robot_zero_ ? "true" : "false")
            << ",\"maximum_side_angle_deg\":" << maximum_side_angle_ * 180.0/M_PI
+           << ",\"position_accommodation_m\":" << position_accommodation_m_
+           << ",\"position_accommodation_active\":" << (position_accommodation_active_ ? "true" : "false")
            << ",\"projection_constraints\":" << projection_constraint_count
            << ",\"input_age_s\":" << age
            << ",\"input_valid\":" << (message->valid ? "true" : "false")
@@ -2381,6 +2455,12 @@ private:
   std::map<std::string, double> reference_acceleration_;
   ros::Subscriber arm_reference_subscriber_;
   ros::Subscriber robot_zero_subscriber_;
+  ros::Subscriber target_pose_subscriber_;
+  Eigen::Vector3d operator_target_position_{ Eigen::Vector3d::Zero() };
+  ros::WallTime operator_target_received_;
+  bool have_operator_target_{ false };
+  double position_accommodation_m_{ 0.0 };
+  mutable bool position_accommodation_active_{ false };
   Eigen::Matrix3d robot_zero_rotation_{ Eigen::Matrix3d::Identity() };
   bool have_robot_zero_{ false };
   double maximum_side_angle_{ M_PI/2.0 };

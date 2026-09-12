@@ -85,6 +85,7 @@ from perception_hamer.src.realtime_hamer_pipeline import (
 from perception_hamer.src.roi_provider import KLTTrackerROIProvider
 from perception_hamer.src.teleop_pose_packet import (
     ProximalWristDepthFilter,
+    CameraViewBiasCorrection,
     build_invalid_teleop_packet,
     build_live_teleop_packet,
     invalidate_stale_teleop_observation,
@@ -1389,6 +1390,9 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--duration-s", type=float, default=0.0,
                         help="0 means run until q/ESC outside experiment mode")
+    parser.add_argument("--positive-view-bias-gain", type=float,
+                        default=float(os.environ.get("TELEOP_POSITIVE_VIEW_BIAS_GAIN", "0")),
+                        help="optional calibrated horizontal-view correction; zero preserves the previous estimator")
     parser.add_argument("--countdown-s", type=float, default=1.0)
     parser.add_argument("--experiment", choices=EXPERIMENTS)
     parser.add_argument(
@@ -1581,6 +1585,7 @@ def main() -> int:
         retain_reference_until_operator_action=True,
         startup_rotation_noise_deg=1.5,
     )
+    view_bias_correction = CameraViewBiasCorrection(args.positive_view_bias_gain)
     pending = PendingReinitialization()
     session_records = []
     session_timing_records = []
@@ -2766,6 +2771,7 @@ def main() -> int:
             udp_payload = invalidate_stale_teleop_observation(
                 udp_payload, args.teleop_maximum_pipeline_latency_s
             )
+            udp_payload = view_bias_correction.apply(udp_payload, teleop_control_gate.reference_pose)
             udp_payload = teleop_control_gate.filter_startup_orientation(udp_payload)
             if udp_payload.get("valid") is True:
                 pose_delta = pose_display.update_from_packet(

@@ -83,6 +83,7 @@ setsid "${simulation_affinity_arguments[@]}" roslaunch handarm_moveit_demo \
   grasp_alignment_views:="${TELEOP_ALIGNMENT_VIEWS:-true}" \
   input_source:=udp \
   constrained_velocity_projection:="$constrained_velocity_projection" \
+  position_accommodation_m:="${TELEOP_POSITION_ACCOMMODATION_M:-0.0}" \
   mapping_profile:=current_linear \
   hamer_input_timeout_s:=0.40 \
   hamer_maximum_pipeline_latency_s:=0.25 \

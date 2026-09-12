@@ -17,6 +17,62 @@ from .realtime_hamer_pipeline import (
 from .rgbd_rigid_tracker import deproject_pixels
 
 
+class CameraViewBiasCorrection:
+    """Optional calibrated correction for the recorded physical-left hand.
+
+    Only the positive horizontal camera ray is calibrated. C is the zero of
+    the correction, so rotations at the C position keep the existing axes
+    and gains. This is an empirical view-bias model, not independent truth.
+    """
+
+    def __init__(self, positive_gain: float = 0.0):
+        self.positive_gain = float(positive_gain)
+        if not np.isfinite(self.positive_gain) or not 0.0 <= self.positive_gain <= 3.0:
+            raise ValueError("positive view-bias gain must be in [0, 3]")
+        self.reference_key = None
+        self.last_rotation = None
+
+    def apply(self, packet: Mapping[str, Any], reference: Any) -> dict:
+        output = dict(packet)
+        if reference is None:
+            self.reference_key = None
+            self.last_rotation = None
+            return output
+        if (self.positive_gain == 0.0 or packet.get("valid") is not True
+                or packet.get("hand_is_right") is not False):
+            return output
+        key = (reference["sequence"], reference["stamp"])
+        if key != self.reference_key:
+            self.reference_key = key
+            self.last_rotation = np.asarray(reference["palm_rotation_row_major"], dtype=float).reshape(3, 3)
+        held = packet.get("orientation_held", False) or not packet.get("orientation_channel_valid", True)
+        if held:
+            output["palm_rotation_row_major"] = self.last_rotation.reshape(-1).tolist()
+            output["view_bias_correction"] = {"held": True, "positive_gain": self.positive_gain}
+            return output
+        position = np.asarray(packet["wrist_position_m"], dtype=float)
+        zero = np.asarray(reference["wrist_position_m"], dtype=float)
+        if (position.shape != (3,) or zero.shape != (3,) or
+                not np.all(np.isfinite(position)) or not np.all(np.isfinite(zero)) or
+                min(position[2], zero[2]) <= 0):
+            raise ValueError("view correction requires valid camera-frame positions")
+        ray = max(0.0, float(np.arctan2(position[0], position[2])))
+        zero_ray = max(0.0, float(np.arctan2(zero[0], zero[2])))
+        angle = self.positive_gain * (ray-zero_ray)
+        c, s = float(np.cos(angle)), float(np.sin(angle))
+        correction = np.array([[c, 0., s], [0., 1., 0.], [-s, 0., c]])
+        rotation = correction @ np.asarray(packet["palm_rotation_row_major"], dtype=float).reshape(3, 3)
+        self.last_rotation = rotation.copy()
+        output["palm_rotation_row_major"] = rotation.reshape(-1).tolist()
+        output["view_bias_correction"] = {
+            "held": False, "positive_gain": self.positive_gain,
+            "reference_ray_rad": zero_ray, "current_ray_rad": ray,
+            "correction_deg": float(np.rad2deg(angle)),
+            "scope": "EMPIRICAL_POSITIVE_HORIZONTAL_VIEW_PHYSICAL_LEFT_HAND",
+        }
+        return output
+
+
 class ProximalWristDepthFilter:
     """Keep observed surface motion current; smooth its model depth offset.
 

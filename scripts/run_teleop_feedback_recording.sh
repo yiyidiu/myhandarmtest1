@@ -76,6 +76,8 @@ value={"status":"PREPARING_RECORDERS","created_host_wall_ns":time.time_ns(),"cre
  "wrist_axes_diagnostics":os.environ.get("TELEOP_WRIST_DIAGNOSTICS","false")=="true",
  "wrist_depth_mode":os.environ.get("TELEOP_WRIST_DEPTH_MODE","visible-surface"),
  "forearm_fusion_requested":os.environ.get("TELEOP_FOREARM_FUSION","false").lower()=="true",
+ "positive_view_bias_gain":float(os.environ.get("TELEOP_POSITIVE_VIEW_BIAS_GAIN","0")),
+ "position_accommodation_m":float(os.environ.get("TELEOP_POSITION_ACCOMMODATION_M","0")),
  "imu_used_by_controller":False,"audio_recorded":False}
 (p/'session.json').write_text(json.dumps(value,ensure_ascii=False,indent=2)+'\n')
 PY
@@ -193,6 +195,7 @@ setsid "${recording_affinity_arguments[@]}" rosbag record --buffsize=64 -O "$ses
   /shared_teleop/hamer_pose /shared_teleop/raw_hand_command \
   /shared_teleop/safe_twist /shared_teleop/trend_diagnostics \
   /shared_teleop/robot_zero_pose \
+  /shared_teleop/pose_target \
   /shared_teleop/output_diagnostics /shared_teleop/assist_diagnostics \
   /servo_server/status /servo_server/internal/collision_velocity_scale \
   /tf /tf_static /joint_states /clock \

@@ -45,6 +45,11 @@ class TeleopControlGate:
         with self._lock:
             return self._confirmation_request is not None
 
+    @property
+    def reference_pose(self):
+        with self._lock:
+            return None if self._reference_pose is None else dict(self._reference_pose)
+
     def request_confirmation(self, after_sequence: int, now=None) -> None:
         """The display requests C; only inference may choose its pose frame."""
         with self._lock:
