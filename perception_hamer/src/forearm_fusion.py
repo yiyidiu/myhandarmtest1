@@ -1161,6 +1161,7 @@ def apply_forearm_fusion_to_packet(
     packet: Mapping[str, Any],
     observation: Optional[ForearmObservation],
     config: Optional[ForearmFusionConfig] = None,
+    diagnostic_only: bool = False,
 ) -> Dict[str, Any]:
     """Return a packet with fused rotation and explicit audit diagnostics."""
 
@@ -1185,6 +1186,16 @@ def apply_forearm_fusion_to_packet(
         config,
     )
     output["forearm_fusion"] = diagnostics
+    if diagnostic_only:
+        # Availability/freshness changes must not switch the orientation
+        # definition between the C reference and subsequent control samples.
+        # Keep the estimate for inspection, but publish the same MANO channel.
+        diagnostics["candidate_applied"] = diagnostics["applied"]
+        diagnostics["candidate_correction_deg"] = diagnostics["correction_deg"]
+        diagnostics["candidate_rotation_row_major"] = fused.reshape(-1).tolist()
+        diagnostics.update(applied=False, fusion_weight=0.0, correction_deg=0.0,
+                           control_usage="DIAGNOSTIC_ONLY")
+        return output
     if diagnostics["applied"]:
         output["palm_rotation_row_major"] = fused.reshape(-1).tolist()
         output["orientation_source"] = (

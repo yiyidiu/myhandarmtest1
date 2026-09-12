@@ -14,59 +14,6 @@ from perception_hamer.src.hand_pose_overlay import RelativeWristPoseDisplay
 
 
 class TeleopControlGateTest(unittest.TestCase):
-    def test_c_position_noise_and_spike_hold_then_full_motion_without_rezero(self):
-        gate = TeleopControlGate(startup_translation_noise_m=.004)
-        gate.request_confirmation(0, now=0)
-        packet = {"valid": True, "hand_identity_present": True,
-                  "wrist_position_m": [0., 0., .9],
-                  "palm_rotation_row_major": np.eye(3).reshape(-1).tolist(),
-                  "confidence": [.8]*6, "presence_generation": 1,
-                  "active_hand_generation": 1, "hand_is_right": False,
-                  "finger_observation": {"valid": True, "flexion": [.1]*5}}
-        for seq in range(1, 5):
-            packet.update(sequence=seq, stamp=seq*.1)
-            gate.confirm_packet(packet, lambda: True, now=seq*.1)
-        reference = gate.reference_pose
-        angle = np.deg2rad(5)
-        rotation = np.array([[1.,0,0],[0,np.cos(angle),-np.sin(angle)],
-                             [0,np.sin(angle),np.cos(angle)]])
-        for seq, offset in [(5,.003), (6,.007), (7,.002),
-                            (8,.008), (8,.008), (9,.008), (10,.008),
-                            (11,0.), (12,.002)]:
-            packet.update(sequence=seq, stamp=seq*.1,
-                          wrist_position_m=[offset,0.,.9],
-                          palm_rotation_row_major=rotation.reshape(-1).tolist())
-            output = gate.filter_startup_pose(packet)
-            self.assertEqual(output['wrist_position_m'],
-                             [offset if seq>=10 else 0.,0.,.9])
-            np.testing.assert_allclose(output['palm_rotation_row_major'],rotation.reshape(-1))
-            self.assertEqual(gate.reference_pose,reference)
-        gate.request_confirmation(12, now=1.3)
-        for seq in range(13,17):
-            packet.update(sequence=seq, stamp=seq*.1,wrist_position_m=[.1,0.,.9])
-            gate.confirm_packet(packet, lambda: True, now=seq*.1)
-        packet.update(sequence=17,stamp=1.7,wrist_position_m=[.103,0.,.9])
-        self.assertEqual(gate.filter_startup_pose(packet)['wrist_position_m'],[.1,0.,.9])
-
-    def test_position_and_rotation_startup_holds_keep_both_confidences_zero(self):
-        gate = TeleopControlGate(startup_rotation_noise_deg=1.5,
-                                startup_translation_noise_m=.004)
-        gate.request_confirmation(0,now=0)
-        packet = {"valid": True, "wrist_position_m": [0.,0.,.9],
-                  "palm_rotation_row_major": np.eye(3).reshape(-1).tolist(),
-                  "confidence": [.8]*6, "presence_generation": 1,
-                  "active_hand_generation": 1, "hand_is_right": False,
-                  "finger_observation": {"valid": True, "flexion": [.1]*5}}
-        for seq in range(1,5):
-            packet.update(sequence=seq,stamp=seq*.1)
-            gate.confirm_packet(packet,lambda:True,now=seq*.1)
-        packet.update(sequence=5,stamp=.5,wrist_position_m=[.003,0.,.9])
-        output=gate.filter_startup_pose(packet)
-        self.assertEqual(output['confidence'],[0.]*6)
-        self.assertTrue(output['valid'])
-        self.assertTrue(output['position_held'])
-        self.assertTrue(output['orientation_held'])
-
     def test_startup_noise_hold_preserves_zero_and_releases_full_five_degrees(self):
         gate = TeleopControlGate(startup_rotation_noise_deg=1.5)
         gate.request_confirmation(0, now=0)
@@ -86,7 +33,7 @@ class TeleopControlGateTest(unittest.TestCase):
                                  [0,np.sin(angle),np.cos(angle)]])
             packet.update(sequence=seq, stamp=seq*.1, wrist_position_m=[.02, 0., .9],
                           palm_rotation_row_major=rotation.reshape(-1).tolist())
-            output = gate.filter_startup_pose(packet)
+            output = gate.filter_startup_orientation(packet)
             self.assertEqual(output["wrist_position_m"], [.02, 0., .9])
             np.testing.assert_allclose(output["palm_rotation_row_major"],
                                        (rotation if seq==10 else np.eye(3)).reshape(-1))

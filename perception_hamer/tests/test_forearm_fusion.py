@@ -73,6 +73,29 @@ def _observation(axis, confidence=0.9, valid=True):
 
 
 class RGBDForearmTest(unittest.TestCase):
+    def test_live_diagnostic_forearm_availability_cannot_change_c_or_motion(self):
+        packet = {"valid": True, "wrist_position_m": [.02,.1,.9],
+                  "palm_rotation_row_major": np.eye(3).reshape(-1).tolist(),
+                  "orientation_source": "MANO_WRIST_RING",
+                  "confidence": [.8]*6}
+        observation = _observation([-.5,0,1.],confidence=.23)
+        legacy = apply_forearm_fusion_to_packet(packet,observation)
+        self.assertGreater(legacy['forearm_fusion']['correction_deg'],.1)
+        reference = apply_forearm_fusion_to_packet(packet,observation,diagnostic_only=True)
+        for obs in [None,observation,_observation([-.5,0,1.],confidence=.05)]:
+            current = apply_forearm_fusion_to_packet(packet,obs,diagnostic_only=True)
+            self.assertEqual(current['palm_rotation_row_major'],reference['palm_rotation_row_major'])
+            self.assertEqual(current['confidence'],packet['confidence'])
+            self.assertEqual(current['wrist_position_m'],packet['wrist_position_m'])
+            self.assertFalse(current['forearm_fusion']['applied'])
+        angle=math.radians(5)
+        rotation=np.array([[math.cos(angle),0,math.sin(angle)],[0,1.,0],
+                           [-math.sin(angle),0,math.cos(angle)]])
+        moved=dict(packet,palm_rotation_row_major=rotation.reshape(-1).tolist())
+        output=apply_forearm_fusion_to_packet(moved,observation,diagnostic_only=True)
+        np.testing.assert_allclose(output['palm_rotation_row_major'],rotation.reshape(-1))
+        self.assertEqual(output['orientation_source'],packet['orientation_source'])
+
     def test_metric_depth_fits_elbow_to_wrist_axis(self):
         result = estimate_forearm_from_rgbd(
             _synthetic_forearm_depth(),

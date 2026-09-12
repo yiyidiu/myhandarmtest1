@@ -1314,16 +1314,16 @@ def _parse_args() -> argparse.Namespace:
         type=float,
         default=0.20,
         help=(
-            "maximum low-weight RGB-D forearm anchor applied to the MANO "
-            "longitudinal axis; roll always remains MANO-derived"
+            "maximum RGB-D forearm weight in the diagnostic candidate; "
+            "the live control orientation remains MANO-derived"
         ),
     )
     parser.add_argument(
         "--disable-forearm-fusion",
         action="store_true",
         default=os.environ.get("TELEOP_FOREARM_FUSION", "false").lower() != "true",
-        help=("keep the MANO orientation channel; the intermittent forearm axis "
-              "is opt-in with TELEOP_FOREARM_FUSION=true"),
+        help=("skip forearm diagnostic estimation; TELEOP_FOREARM_FUSION=true "
+              "enables diagnostics only, never a live orientation source switch"),
     )
     parser.add_argument(
         "--forearm-maximum-source-age-s",
@@ -1583,8 +1583,6 @@ def main() -> int:
     # reference; only another C or camera shutdown changes that reference.
     teleop_control_gate = TeleopControlGate(
         retain_reference_until_operator_action=True,
-        startup_rotation_noise_deg=1.5,
-        startup_translation_noise_m=0.004,
     )
     view_bias_correction = CameraViewBiasCorrection(args.positive_view_bias_gain)
     pending = PendingReinitialization()
@@ -2573,6 +2571,7 @@ def main() -> int:
                         pose_packet_payload,
                         forearm_observation,
                         forearm_fusion_config,
+                        diagnostic_only=True,
                     )
                     pose_packet_payload["forearm_fusion"][
                         "async_runtime"
@@ -2773,7 +2772,6 @@ def main() -> int:
                 udp_payload, args.teleop_maximum_pipeline_latency_s
             )
             udp_payload = view_bias_correction.apply(udp_payload, teleop_control_gate.reference_pose)
-            udp_payload = teleop_control_gate.filter_startup_pose(udp_payload)
             if udp_payload.get("valid") is True:
                 pose_delta = pose_display.update_from_packet(
                     udp_payload, presence_generation
@@ -3053,10 +3051,10 @@ def main() -> int:
             "obj_export_enabled": False,
             "hand_pose_6d_display_enabled": not args.no_display,
             "hand_pose_6d_reference": (
-                "C_ZERO_MANO_WRIST_RING_16_REALSENSE_METRIC_SO3_"
-                "PLUS_LOW_WEIGHT_RGBD_FOREARM_AXIS"
+                "C_ZERO_MANO_WRIST_RING_16_REALSENSE_METRIC_SO3"
             ),
-            "forearm_fusion_enabled": not args.disable_forearm_fusion,
+            "forearm_fusion_enabled": False,
+            "forearm_estimation_for_diagnostics_enabled": not args.disable_forearm_fusion,
             "wrist_depth_mode": args.wrist_depth_mode,
             "forearm_fusion_max_weight": float(
                 args.forearm_fusion_max_weight

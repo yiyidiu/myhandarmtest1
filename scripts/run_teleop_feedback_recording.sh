@@ -76,6 +76,7 @@ value={"status":"PREPARING_RECORDERS","created_host_wall_ns":time.time_ns(),"cre
  "wrist_axes_diagnostics":os.environ.get("TELEOP_WRIST_DIAGNOSTICS","false")=="true",
  "wrist_depth_mode":os.environ.get("TELEOP_WRIST_DEPTH_MODE","visible-surface"),
  "forearm_fusion_requested":os.environ.get("TELEOP_FOREARM_FUSION","false").lower()=="true",
+ "forearm_control_fusion_enabled":False,
  "positive_view_bias_gain":float(os.environ.get("TELEOP_POSITIVE_VIEW_BIAS_GAIN","0")),
  "position_accommodation_m":float(os.environ.get("TELEOP_POSITION_ACCOMMODATION_M","0")),
  "imu_used_by_controller":False,"audio_recorded":False}
