@@ -69,9 +69,16 @@ def main():
                         help='retain signed global/relative image motion and cross-modal agreement')
     parser.add_argument('--absolute-residual', action='store_true',
                         help='predict a bounded correction to the fixed-C pose, without integrating retained increments')
+    parser.add_argument('--video-features', type=Path,
+                        help='cached causal video features from the frozen image encoder, with per-split validity')
+    parser.add_argument('--relative-trajectory-loss', action='store_true',
+                        help='constrain intended changes, not preservation of a potentially biased segment-start pose; annotated C holds target zero')
+    parser.add_argument('--name-suffix',default='',help='descriptive suffix to preserve a separate offline comparison')
     args = parser.parse_args()
     if args.absolute_residual and not args.current_pose:
         parser.error('--absolute-residual requires --current-pose')
+    if args.video_features and args.clean_motion_constraint:
+        parser.error('Ideal geometry examples have no corresponding raw video; do not fabricate image features for them')
     run_name = 'feedback_trajectory' if args.adapt_current_feedback else 'trajectory_intent'
     if args.clean_motion_constraint:
         run_name += '_clean'
@@ -83,6 +90,16 @@ def main():
         run_name += '_visual'
     if args.absolute_residual:
         run_name += '_absolute'
+    if args.video_features:
+        run_name += '_video'
+    if args.relative_trajectory_loss:
+        if not args.absolute_residual:
+            parser.error('--relative-trajectory-loss requires fixed-C absolute output')
+        run_name += '_relative_loss'
+    if args.name_suffix:
+        if not args.name_suffix.replace('_','').isalnum():
+            parser.error('--name-suffix must contain only letters, numbers and underscores')
+        run_name+='_'+args.name_suffix
     torch.set_num_threads(2)
     torch.manual_seed(19)
     np.random.seed(19)
@@ -102,14 +119,21 @@ def main():
             features[split]=np.column_stack([past_features(adjusted,split,SOURCE,args.visual_motion),a['position_delta'],a['angles']])
     elif args.visual_motion:
         features={s:past_features(data,s,SOURCE,True) for s in angle_data}
+    video_valid={s:np.ones(len(features[s]),dtype=bool) for s in features}
+    if args.video_features:
+        cached_video=np.load(args.video_features)
+        for split in features:
+            features[split]=np.column_stack([features[split],cached_video[split]])
+            video_valid[split]=cached_video[split+'_valid']
     known = (data['train_y'] >= 0) & (data['train_y'] < 5) & binding['train_valid']
     feedback_training_groups = [2, 4, 6, 11, 12, 14]
     feedback_validation_groups = [3, 5, 7, 8, 9, 13]
     if args.current_pose:
         known &= binding['train_enabled']
+    known &= video_valid['train']
     fitting_features = [features['train'][known]]
     if args.adapt_current_feedback:
-        current = np.isin(data['test_group'], feedback_training_groups) & binding['test_valid']
+        current = np.isin(data['test_group'], feedback_training_groups) & binding['test_valid'] & video_valid['test']
         fitting_features.append(features['test'][current])
     mean = np.concatenate(fitting_features).mean(0)
     std = np.maximum(.03, np.concatenate(fitting_features).std(0))
@@ -124,6 +148,7 @@ def main():
             ids = np.flatnonzero((data[split + '_group'] == a['id']) & binding[split + '_valid'])
             if args.current_pose:
                 ids=ids[binding[split+'_enabled'][ids]]
+            ids=ids[video_valid[split][ids]]
             if args.decision_lag_frames:
                 ids=ids[ids+args.decision_lag_frames<len(x)]
                 ids=ids[binding[split+'_valid'][ids+args.decision_lag_frames] &
@@ -204,6 +229,17 @@ def main():
         prediction = (direct_pose_correction(e['angles'], model(e['x'])) if args.absolute_residual
                       else torch.cumsum(model(e['x']) * e['delta'], dim=0))
         target = e['absolute_target'] if args.absolute_residual else e['target']
+        if args.relative_trajectory_loss:
+            if e['annotation']['label']=='still':
+                # Still annotations here describe the calibration pose,
+                # including a return to it. This is an intended zero target,
+                # not a claim of physically exact human orientation. The
+                # reference is C, not the
+                # first sample left after trimming annotation boundaries.
+                target=torch.zeros_like(prediction)
+            else:
+                prediction=prediction-prediction[:1]
+                target=e['target']
         error = ((prediction-target) / e['scale'])**2
         return (error.mean(0)*e['axis_weights']).sum()/e['axis_weights'].sum()
 
@@ -279,6 +315,8 @@ def main():
                   current_pose=args.current_pose,
                   visual_motion=args.visual_motion,
                   absolute_residual=args.absolute_residual,
+                  video_features=str(args.video_features) if args.video_features else None,
+                  relative_trajectory_loss=args.relative_trajectory_loss,
                   nominal_additional_decision_delay_s=args.decision_lag_frames/15.,
                   curve_error_scope='Source-associated angle-path error; excludes the explicitly reported decision delay',
                   splits={})
@@ -293,6 +331,7 @@ def main():
         records = []
         for a in spec['annotations'][split]:
             ids = np.flatnonzero((data[split + '_group'] == a['id']) & binding[split + '_valid'])
+            ids=ids[video_valid[split][ids]]
             if len(ids) < 3:
                 continue
             axis = AXES.index(a['label']) if a['label'] in AXES else 2 if split == 'train' and a['label'] == 'combined' else None
@@ -312,7 +351,9 @@ def main():
                             **angle_data[split])
     torch.save(dict(state_dict=state, mean=mean, std=std, thresholds=thresholds, window=WINDOW,
                     axes=AXES, decision_lag_frames=args.decision_lag_frames, current_pose=args.current_pose,
-                    visual_motion=args.visual_motion, absolute_residual=args.absolute_residual, deployed=False), OUTPUT / (run_name + '.pt'))
+                    visual_motion=args.visual_motion, absolute_residual=args.absolute_residual,
+                    relative_trajectory_loss=args.relative_trajectory_loss,
+                    video_features=str(args.video_features) if args.video_features else None,deployed=False), OUTPUT / (run_name + '.pt'))
     (OUTPUT / (run_name + '_results.json')).write_text(json.dumps(report, ensure_ascii=False, indent=2))
     print('Selected', selected, 'thresholds', thresholds)
     for r in report['splits']['test']:
