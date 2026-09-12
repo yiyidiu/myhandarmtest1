@@ -1,4 +1,23 @@
-# 单 RGB-D 手部遥操作 Gazebo：2026-09-10 代码快照
+# 单 RGB-D 手部遥操作：2026-09-12 姿态修正试验基线
+
+当前固定基线：`teleop-rgbd-pose-baseline-20260912`，开发分支：`codex/imu-guided-pose-measurement-20260912`。
+
+保存的是 RGB-D 姿态修正试验版。左移误转和静止抖动仍未解决，不能视为精细遥操作已验收。IMU 用于离线校准和运行时参考记录，不参与运行时控制；修正功能由专用入口显式开启。
+
+在已配置依赖并编译的本机运行截图对应版本：
+
+```bash
+cd /home/dongtian/myhandarmtest1-teleop-repair
+TELEOP_MOTION_CONTROLLER=constrained ./scripts/run_imu_calibrated_hand_observation.sh
+```
+
+完整的保存范围、依赖边界、编译、录制及回退步骤见 [基线说明](docs/versions/teleop-rgbd-pose-baseline-20260912.md)。离线对照结果见 [姿态修正记录](docs/imu_guided_pose_measurement_20260912.md)。
+
+---
+
+## 2026-09-10 历史快照说明
+
+以下内容描述此前快照；当前试验基线的入口及限制以上文和基线说明为准。
 
 此分支保存 2026-09-10 最新的相机 → HaMeR → 位姿映射 → 六轴机械臂与三指手控制链路，以及配套录屏、RGB-D、控制数据和 IMU 记录功能。
 
