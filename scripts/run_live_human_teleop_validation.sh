@@ -16,6 +16,11 @@ case "$motion_controller" in
 esac
 
 conda_executable="${TELEOP_CONDA_EXECUTABLE:-/home/dongtian/anaconda3/bin/conda}"
+if [[ -n "${TELEOP_HAMER_PYTHON:-}" ]]; then
+  hamer_command=("$TELEOP_HAMER_PYTHON")
+else
+  hamer_command=("$conda_executable" run --no-capture-output -n hamer_rtx2060 python)
+fi
 asset_root="${TELEOP_HAMER_ASSET_ROOT:-/home/dongtian/myhandarmtest1-v1.0.1-ubuntu2004/perception_hamer/_DATA}"
 checkpoint="$asset_root/hamer_ckpts/checkpoints/hamer.ckpt"
 empty_motion_scene="${TELEOP_EMPTY_SCENE:-false}"
@@ -28,7 +33,7 @@ fi
 runtime_directory="$workspace/.runtime/live_human_validation_$(date +%Y%m%dT%H%M%S)"
 mkdir -p "$runtime_directory"
 
-for required in "$conda_executable" "$checkpoint" "$asset_root/data/mano/MANO_RIGHT.pkl"; do
+for required in "${hamer_command[0]}" "$checkpoint" "$asset_root/data/mano/MANO_RIGHT.pkl"; do
   if [[ ! -e "$required" ]]; then
     echo "缺少运行文件：$required" >&2
     exit 2
@@ -158,8 +163,7 @@ if command -v taskset >/dev/null 2>&1 && (( $(nproc) >= 12 )); then
     --capture-cpu-affinity 2-3
   )
 fi
-"$conda_executable" run --no-capture-output -n hamer_rtx2060 \
-  python perception_hamer/scripts/run_d455_hamer_crop.py \
+"${hamer_command[@]}" perception_hamer/scripts/run_d455_hamer_crop.py \
   --auto-roi-mediapipe \
   --mediapipe-min-detection-confidence 0.50 \
   --mesh-renderer teleoperation-core \

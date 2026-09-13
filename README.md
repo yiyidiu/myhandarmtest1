@@ -1,4 +1,22 @@
-# 单 RGB-D 手部遥操作：2026-09-12 姿态修正试验基线
+# 单 RGB-D 手部遥操作：当前开发版与固定保存版
+
+2026-09-14：当前控制实现为 `dac3518`（9 月 13 日延迟、运动时钟和手臂自碰撞修复之后）。本机的固定运行副本保存在 `/home/dongtian/teleop_versions/20260914_dac3518/`，包含独立源码、编译程序、模型和两个 Python 环境：
+
+```bash
+bash /home/dongtian/teleop_versions/20260914_dac3518/run.sh
+```
+
+这是固定版本保存，**不表示全部遥操作问题均已验收**。本机固定副本不随开发目录改动。其完整恢复说明和系统依赖边界见该目录的 `使用与恢复.md`。该副本及模型资产不在 GitHub 源码 ZIP 内。
+
+继续运行开发目录（后续修改会生效）：
+
+```bash
+bash /home/dongtian/myhandarmtest1-teleop-repair/scripts/run_grasp_feedback_recording.sh
+```
+
+以下是历史说明，旧标签和旧入口不代表上述当前开发版。
+
+## 2026-09-12 姿态修正试验基线（历史）
 
 当前固定基线：`teleop-rgbd-pose-baseline-20260912`，开发分支：`codex/imu-guided-pose-measurement-20260912`。
 
