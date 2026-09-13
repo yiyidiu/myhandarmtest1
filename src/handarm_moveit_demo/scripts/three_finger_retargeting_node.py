@@ -61,6 +61,8 @@ class ThreeFingerRetargetingNode:
         self.command_topic = rospy.get_param(
             "~command_topic", "/controller_gazebo_hand/command"
         )
+        if shared.get("control", {}).get("constrained_velocity_projection", False):
+            self.command_topic = "/full_robot_self_collision_guard/requested_hand_command"
         self.diagnostic_topic = topics.get(
             "finger_diagnostics", "/shared_teleop/finger_diagnostics"
         )

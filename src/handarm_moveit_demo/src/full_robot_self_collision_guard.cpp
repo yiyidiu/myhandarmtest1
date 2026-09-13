@@ -186,7 +186,6 @@ public:
     strict_acm_.reset(new collision_detection::AllowedCollisionMatrix(
         scene_->getAllowedCollisionMatrix()));
     configureStrictAllowedCollisionMatrix();
-
     latest_state_.reset(new moveit::core::RobotState(model_));
     latest_state_->setToDefaultValues();
     latest_state_->update();
@@ -315,6 +314,17 @@ public:
         hand_command_topic_, 1,
         &FullRobotSelfCollisionGuard::handCommandCallback, this,
         ros::TransportHints().tcpNoDelay());
+    if (constrained_velocity_projection_)
+    {
+      checked_hand_publisher_ = nh_.advertise<trajectory_msgs::JointTrajectory>(
+          hand_command_topic_, 1);
+      hand_safety_diagnostic_publisher_ = nh_.advertise<std_msgs::String>(
+          "/full_robot_self_collision_guard/hand_diagnostic", 1, true);
+      requested_hand_subscriber_ = nh_.subscribe(
+          "/full_robot_self_collision_guard/requested_hand_command", 1,
+          &FullRobotSelfCollisionGuard::requestedHandCommandCallback, this,
+          ros::TransportHints().tcpNoDelay());
+    }
     const auto arm_reference_topic = private_nh_.param<std::string>(
         "arm_position_reference_topic", "");
     if (!arm_reference_topic.empty())
@@ -1236,6 +1246,31 @@ private:
           projected_command_safe = predictedVelocityIsSafe(projected_joint_velocity,
               state, hand_reference, arm_reference, reason);
         prediction_ms = (ros::WallTime::now() - prediction_began).toSec() * 1000.0;
+        if (!projected_command_safe && projected_joint_velocity.size() == arm_joint_names_.size() &&
+            reason.find("PREDICTED_SELF_COLLISION:") == 0)
+        {
+          const std::string names = reason.substr(std::string("PREDICTED_SELF_COLLISION:").size());
+          const auto comma = names.find(',');
+          const auto end = names.find(':');
+          const std::string first = names.substr(0, comma);
+          const std::string second = comma == std::string::npos ? "" :
+              names.substr(comma + 1, end == std::string::npos ? end : end - comma - 1);
+          if ((linkMovesWithHand(first) || linkMovesWithHand(second)) &&
+              handMotionNeedsBrake(state, hand_reference, arm_reference))
+          {
+            // An earlier accepted opening can become unsafe as the arm
+            // moves. Stopping qdot alone leaves that motor trajectory
+            // running. Brake the hand as well, then retain any checked arm
+            // escape with the frozen fingers. Never clear a measured fault.
+            publishHandHold(state, true);
+            std_msgs::String hand_status;
+            hand_status.data = "HAND_PATH_SELF_COLLISION:" + first + "," + second;
+            hand_safety_diagnostic_publisher_.publish(hand_status);
+            hand_reference = frozen_hand_safety_target_;
+            projected_command_safe = predictedVelocityIsSafe(projected_joint_velocity,
+                state, hand_reference, arm_reference, reason);
+          }
+        }
         bool translation_retreat = false;
         if (!projected_command_safe && requested.head<3>().norm() > 1e-9 &&
             (reason.find("PREDICTED_WORLD_COLLISION:") == 0 ||
@@ -1826,14 +1861,14 @@ private:
                                moveit::core::RobotState& start,
                                const std::map<std::string, double>& hand_reference,
                                const std::map<std::string, double>& arm_reference,
-                               std::string& reason) const
+                               std::string& reason, bool check_world = true) const
   {
     // An incidental fingertip contact must not make every retreat impossible.
     // Compare contact depth along the actual bounded reference prediction;
     // merely remaining in contact for the first part of a retreat is not a
     // reason to reject it. Never permit a new pair or a deeper existing pair.
     std::map<std::pair<std::string, std::string>, double> starting_contacts;
-    if (constrained_velocity_projection_)
+    if (constrained_velocity_projection_ && check_world)
     {
       const auto contacts = worldContacts(start);
       if (contacts.contact_count >= 200 || (contacts.collision && contacts.contacts.empty()))
@@ -1883,7 +1918,7 @@ private:
       return v0 * ramp + 0.5 * a * ramp * ramp + target * (t - ramp);
     };
     const auto check_scenario = [this, &start, &reason, &arm_reference, &reference_travel,
-                                &starting_contacts](
+                                &starting_contacts, check_world](
         const std::map<std::string, double>& predicted_velocity,
         const std::string& source) -> bool
     {
@@ -1957,7 +1992,7 @@ private:
           reason = stream.str();
           return false;
         }
-        if (constrained_velocity_projection_)
+        if (constrained_velocity_projection_ && check_world)
         {
           const auto world_result = worldContacts(candidate);
           if (world_result.contact_count >= 200 ||
@@ -2157,14 +2192,14 @@ private:
     publishCommandStatus(true, "SAFE");
   }
 
-  void handCommandCallback(
-      const trajectory_msgs::JointTrajectoryConstPtr& message)
+  bool decodeHandCommand(const trajectory_msgs::JointTrajectoryConstPtr& message,
+                         std::map<std::string, double>& accepted) const
   {
     if (message->points.empty())
     {
       ROS_ERROR_STREAM_THROTTLE(
           1.0, "Collision guard rejected empty hand trajectory");
-      return;
+      return false;
     }
     const trajectory_msgs::JointTrajectoryPoint& point =
         message->points.back();
@@ -2172,7 +2207,7 @@ private:
     {
       ROS_ERROR_STREAM_THROTTLE(
           1.0, "Collision guard rejected malformed hand trajectory");
-      return;
+      return false;
     }
     std::map<std::string, double> values;
     for (std::size_t index = 0; index < message->joint_names.size(); ++index)
@@ -2183,10 +2218,9 @@ private:
       {
         ROS_ERROR_STREAM_THROTTLE(
             1.0, "Collision guard rejected invalid hand trajectory value");
-        return;
+        return false;
       }
     }
-    std::map<std::string, double> accepted;
     for (const std::string& name : hand_reference_joint_names_)
     {
       const auto value = values.find(name);
@@ -2194,21 +2228,150 @@ private:
       {
         ROS_ERROR_STREAM_THROTTLE(
             1.0, "Collision guard rejected incomplete hand trajectory");
-        return;
+        return false;
       }
       const moveit::core::JointModel* joint = model_->getJointOfVariable(name);
       if (!joint->satisfiesPositionBounds(&value->second, 0.0))
       {
         ROS_ERROR_STREAM_THROTTLE(
             1.0, "Collision guard rejected out-of-bounds hand trajectory");
-        return;
+        return false;
       }
       accepted[name] = value->second;
     }
+    return true;
+  }
+
+  void handCommandCallback(const ros::MessageEvent<const trajectory_msgs::JointTrajectory>& event)
+  {
+    // This node commits its checked target before publishing. Re-reading an
+    // older message from our own publisher could roll that reference back
+    // while the physical hand has already received the newer target.
+    if (constrained_velocity_projection_ && event.getPublisherName() == ros::this_node::getName()) return;
+    const auto& message = event.getMessage();
+    std::map<std::string, double> accepted;
+    if (!decodeHandCommand(message, accepted)) return;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       latest_hand_reference_ = accepted;
     }
+  }
+
+  bool linkMovesWithHand(const std::string& name) const
+  {
+    if (!model_->hasLinkModel(name)) return false;
+    const auto* link = model_->getLinkModel(name);
+    while (link)
+    {
+      const auto* joint = link->getParentJointModel();
+      if (joint && std::find(hand_reference_joint_names_.begin(),
+            hand_reference_joint_names_.end(), joint->getName()) != hand_reference_joint_names_.end())
+        return true;
+      link = link->getParentLinkModel();
+    }
+    return false;
+  }
+
+  std::map<std::string, double> measuredHandReference(const moveit::core::RobotState& state) const
+  {
+    std::map<std::string, double> target;
+    for (const auto& name : hand_reference_joint_names_)
+    {
+      const auto& bound = model_->getVariableBounds(name);
+      target[name] = std::max(bound.min_position_,
+          std::min(bound.max_position_, state.getVariablePosition(name)));
+    }
+    return target;
+  }
+
+  bool handMotionNeedsBrake(moveit::core::RobotState& state,
+                            const std::map<std::string, double>& hand_reference,
+                            const std::map<std::string, double>& arm_reference) const
+  {
+    // Preserve an existing grasp preload when only the ARM direction is
+    // unsafe. Change the finger target only if continuing it is unsafe even
+    // with the arm stopping, and freezing the fingers resolves that hazard.
+    const std::vector<double> stop_arm(arm_joint_names_.size(), 0.0);
+    std::string reason;
+    if (predictedVelocityIsSafe(stop_arm, state, hand_reference, arm_reference, reason, false))
+      return false;
+    return predictedVelocityIsSafe(stop_arm, state, measuredHandReference(state),
+                                    arm_reference, reason, false);
+  }
+
+  void publishHandHold(const moveit::core::RobotState& state, bool reanchor = false)
+  {
+    if (!hand_safety_holding_ || reanchor)
+    {
+      frozen_hand_safety_target_ = measuredHandReference(state);
+      hand_safety_holding_ = true;
+    }
+    trajectory_msgs::JointTrajectory hold;
+    hold.header.stamp = ros::Time::now();
+    hold.joint_names = hand_reference_joint_names_;
+    trajectory_msgs::JointTrajectoryPoint point;
+    for (const auto& name : hold.joint_names) point.positions.push_back(frozen_hand_safety_target_.at(name));
+    // Replace the old motor trajectory immediately; a slow interpolation
+    // from its old OPEN target would keep opening while nominally holding.
+    point.time_from_start = ros::Duration(0.004);
+    hold.points.push_back(point);
+    latest_hand_reference_ = frozen_hand_safety_target_;
+    checked_hand_publisher_.publish(hold);
+  }
+
+  void requestedHandCommandCallback(const trajectory_msgs::JointTrajectoryConstPtr& message)
+  {
+    std::map<std::string, double> target;
+    if (!decodeHandCommand(message, target) || message->points.size() != 1) return;
+    if (!hand_safety_holding_ && target == latest_hand_reference_ && !fault_latched_)
+    {
+      std_msgs::String status; status.data = "HAND_PATH_ALLOWED";
+      hand_safety_diagnostic_publisher_.publish(status);
+      return;  // The actuator already holds this accepted target.
+    }
+    refreshRobotFeedback();
+    std::string reason;
+    const bool ready = have_complete_state_ && !fault_latched_ &&
+        (ros::WallTime::now() - latest_state_wall_time_).toSec() <= state_timeout_s_;
+    const auto began = ros::WallTime::now();
+    // Reuse the existing arm/hand swept prediction, including the arm's
+    // committed motion. A separate long hand-path calculation would block
+    // command renewal. Grasp-object contacts retain their existing policy;
+    // this hand output gate adds self protection, not a no-contact gripper.
+    std::vector<double> arm_rates(arm_joint_names_.size(), 0.0);
+    for (std::size_t i = 0; i < arm_joint_names_.size(); ++i)
+    {
+      const auto found = latest_reference_velocity_.find(arm_joint_names_[i]);
+      if (found != latest_reference_velocity_.end()) arm_rates[i] = found->second;
+    }
+    bool safe = ready && predictedVelocityIsSafe(arm_rates, *latest_state_, target,
+        latest_arm_reference_, reason, false);
+    if (safe && ((ros::Time::now() - latest_state_ros_time_).toSec() >= prediction_horizon_s_ ||
+                 (ros::WallTime::now() - began).toSec() >= command_timeout_s_))
+    {
+      safe = false;
+      reason = "HAND_CHECK_EXPIRED";
+    }
+    if (safe)
+    {
+      // Commit the checked hand reference before the next arm solve; the
+      // physical hand never receives the unchecked request.
+      latest_hand_reference_ = target;
+      hand_safety_holding_ = false;
+      checked_hand_publisher_.publish(*message);
+    }
+    else
+    {
+      if (!ready) reason = "HAND_WAITING_FOR_SAFE_ROBOT_STATE";
+      if (have_complete_state_ && (!ready ||
+          handMotionNeedsBrake(*latest_state_, latest_hand_reference_, latest_arm_reference_)))
+        publishHandHold(*latest_state_, ready);
+    }
+    std_msgs::String diagnostic;
+    diagnostic.data = safe ? "HAND_PATH_ALLOWED" :
+        reason.find("PREDICTED_SELF_COLLISION:") == 0 ?
+        "HAND_PATH_SELF_COLLISION:" + reason.substr(std::string("PREDICTED_SELF_COLLISION:").size()) : reason;
+    hand_safety_diagnostic_publisher_.publish(diagnostic);
   }
 
   bool setHandMotionActive(std_srvs::SetBool::Request& request,
@@ -2539,6 +2702,10 @@ private:
   std::unique_ptr<collision_detection::AllowedCollisionMatrix> strict_acm_;
   moveit::core::RobotStatePtr latest_state_;
   std::mutex mutex_;
+  ros::Subscriber requested_hand_subscriber_;
+  ros::Publisher checked_hand_publisher_, hand_safety_diagnostic_publisher_;
+  bool hand_safety_holding_{false};
+  std::map<std::string, double> frozen_hand_safety_target_;
   ros::CallbackQueue feedback_queue_;
   std::mutex feedback_mutex_;
   std::array<sensor_msgs::JointStateConstPtr, 2> pending_states_;

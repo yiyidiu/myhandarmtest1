@@ -32,6 +32,8 @@ class LiveTeleopTerminalMonitor:
         self.finger_closure = None
         self.grip_latched = False
         self.release_phase = None
+        self.hand_safety_status = ""
+        self.robot_safety_status = ""
         self.feedback_file = rospy.get_param("~feedback_file", "")
         self.last_feedback_write = 0.0
         self.direction_blocked_since = None
@@ -39,6 +41,10 @@ class LiveTeleopTerminalMonitor:
                          self.geometry_callback, queue_size=1)
         rospy.Subscriber("/shared_teleop/finger_diagnostics", String,
                          self.finger_callback, queue_size=1)
+        rospy.Subscriber("/full_robot_self_collision_guard/hand_diagnostic", String,
+                         lambda m: setattr(self, 'hand_safety_status', m.data), queue_size=1)
+        rospy.Subscriber("/full_robot_self_collision_guard/diagnostic", String,
+                         lambda m: setattr(self, 'robot_safety_status', m.data), queue_size=1)
         rospy.Subscriber(
             "/shared_teleop/trend_diagnostics",
             String,
@@ -170,8 +176,14 @@ class LiveTeleopTerminalMonitor:
             status, level = "控制状态未更新，等待连接", "waiting"
         elif not d.get("reference_ready"):
             status, level = "张手放稳后按 C，建立零位", "waiting"
+        elif self.robot_safety_status.startswith(("SELF_COLLISION:", "INVALID_JOINT_STATE:")):
+            status, level = "机器人自身保护已锁定，请结束本轮并检查", "limited"
         elif not d.get("valid") or d.get("position_reference_hold_active"):
             status, level = "手部输入暂不可用，机械臂保持", "limited"
+        elif self.hand_safety_status.startswith("HAND_PATH_SELF_COLLISION:"):
+            status, level = "手指开合受本体空间限制，请先将末端移开", "limited"
+        elif self.hand_safety_status == "HAND_CHECK_EXPIRED":
+            status, level = "手指安全检查暂未完成，保持原指令", "limited"
         elif direction_blocked:
             status, level = "当前指令方向受限，请撤回或换方向；等待不会自动到达", "limited"
         elif limited and g.get("self_distance_m", 1) < 0.005:
@@ -186,7 +198,9 @@ class LiveTeleopTerminalMonitor:
                      motion_direction_blocked=direction_blocked,
                      target_gap_cm=gap, actual_position_m=p,
                      closure=self.finger_closure, grip_latched=self.grip_latched,
-                     release_phase=self.release_phase)
+                     release_phase=self.release_phase,
+                     hand_safety_status=self.hand_safety_status,
+                     robot_safety_status=self.robot_safety_status)
         path = Path(self.feedback_file)
         temporary = path.with_suffix(".tmp")
         temporary.write_text(json.dumps(value, ensure_ascii=False))
