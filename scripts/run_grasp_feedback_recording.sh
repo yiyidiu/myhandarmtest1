@@ -11,6 +11,7 @@ export TELEOP_PRECISE_ORIENTATION=false
 export TELEOP_CAMERA_RESOLUTION=640x480
 export TELEOP_ALIGNMENT_VIEWS=false
 export TELEOP_WRIST_DIAGNOSTICS=true
+export TELEOP_LIVE_RGB_PREVIEW=true
 export TELEOP_RECORDING_PREFIX=teleop_feedback
 
 exec bash "$script_directory/run_teleop_feedback_recording.sh" "$@"

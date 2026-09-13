@@ -74,6 +74,7 @@ value={"status":"PREPARING_RECORDERS","created_host_wall_ns":time.time_ns(),"cre
  "alignment_views_requested":os.environ.get("TELEOP_ALIGNMENT_VIEWS","true"),
  "empty_motion_scene":os.environ.get("TELEOP_EMPTY_SCENE","false")=="true",
  "wrist_axes_diagnostics":os.environ.get("TELEOP_WRIST_DIAGNOSTICS","false")=="true",
+ "live_rgb_preview":os.environ.get("TELEOP_LIVE_RGB_PREVIEW","false").lower()=="true",
  "wrist_depth_mode":os.environ.get("TELEOP_WRIST_DEPTH_MODE","visible-surface"),
  "forearm_fusion_requested":os.environ.get("TELEOP_FOREARM_FUSION","false").lower()=="true",
  "forearm_control_fusion_enabled":False,
@@ -165,7 +166,12 @@ echo "本次操作日志：$session_directory"
 echo "回放视频：$session_directory/screen.mp4"
 echo "原始RGB-D：$session_directory/rgbd.db3"
 if [[ "${TELEOP_WRIST_DIAGNOSTICS:-false}" == true ]]; then
-  echo "腕口轴：红X、绿Y、蓝Z；左侧原始估计，右侧处理后估计。原始逐帧数值：$session_directory/perception/"
+  if [[ "${TELEOP_LIVE_RGB_PREVIEW:-false}" == true ]]; then
+    echo "左侧为实时相机画面，底部保留原始腕口轴；右侧为姿态计算所用画面。轴颜色：红X、绿Y、蓝Z。"
+  else
+    echo "腕口轴：红X、绿Y、蓝Z；左侧原始估计，右侧处理后估计。"
+  fi
+  echo "原始逐帧数值：$session_directory/perception/"
 fi
 if [[ "${TELEOP_EMPTY_SCENE:-false}" == true ]]; then
   echo "本次场景：机械臂、三指手与地面；桌子和物体关闭。"

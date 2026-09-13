@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 from perception_hamer.src.hand_pose_overlay import (  # noqa: E402
     RelativeWristPoseDisplay,
     draw_hand_pose_panel,
+    draw_wrist_axes_diagnostic,
     matrix_to_euler_zyx_deg,
 )
 
@@ -50,6 +51,23 @@ def _packet(sequence, position, rotation, confidence=None):
 
 
 class RelativeWristPoseDisplayTest(unittest.TestCase):
+    def test_live_rgb_stays_current_without_projecting_old_axes_on_it(self):
+        import cv2
+        estimate_rgb = np.full((240, 320, 3), [160, 30, 20], dtype=np.uint8)
+        current_rgb = np.full_like(estimate_rgb, [20, 130, 40])
+        observation = dict(
+            center_m=[0., 0., 0.6], processed_rotation=np.eye(3),
+            processed_valid=True, capture_sequence=5,
+            intrinsics=dict(fx=300., fy=300., ppx=160., ppy=120., coeffs=[0.]*5))
+        canvas = draw_wrist_axes_diagnostic(
+            estimate_rgb, dict(valid=True, rotation=np.eye(3)), observation,
+            live_rgb=current_rgb)
+        np.testing.assert_array_equal(canvas[:240, :320],
+                                      cv2.cvtColor(current_rgb, cv2.COLOR_RGB2BGR))
+        # The other half retains the estimate's own RGB and its projected axes.
+        np.testing.assert_array_equal(canvas[10, 330], [20, 30, 160])
+        self.assertFalse(np.array_equal(canvas[120, 480], [20, 30, 160]))
+
     def test_held_orientation_updates_position_but_c_waits_for_fresh_rotation(self):
         display = RelativeWristPoseDisplay()
         held = _packet(1, [0.1, 0.2, 0.6], np.eye(3))

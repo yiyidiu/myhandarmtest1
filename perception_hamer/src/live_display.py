@@ -18,6 +18,16 @@ import cv2
 import numpy as np
 
 
+def write_all(stream, payload: bytes) -> None:
+    """Finish a frame even when an unbuffered pipe write is interrupted."""
+    pending = memoryview(payload)
+    while pending:
+        count = stream.write(pending)
+        if count is None or count <= 0:
+            raise BrokenPipeError("frame pipe stopped accepting bytes")
+        pending = pending[count:]
+
+
 def opencv_gui_available(build_information: Optional[str] = None) -> bool:
     """Return whether this OpenCV build reports a usable GUI backend."""
 
@@ -135,8 +145,8 @@ class LiveDisplay:
             return False
         payload = encoded.tobytes()
         try:
-            process.stdin.write(struct.pack("!I", len(payload)))
-            process.stdin.write(payload)
+            write_all(process.stdin, struct.pack("!I", len(payload)))
+            write_all(process.stdin, payload)
             return True
         except (BrokenPipeError, OSError):
             return False

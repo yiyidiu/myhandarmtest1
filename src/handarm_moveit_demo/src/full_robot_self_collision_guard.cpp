@@ -256,13 +256,14 @@ public:
           "/shared_teleop/geometric_filter_diagnostics", 1);
       geometric_command_subscriber_ = nh_.subscribe(
           "/shared_teleop/shaped_command", 1,
-          &FullRobotSelfCollisionGuard::filterCartesianCommand, this);
+          &FullRobotSelfCollisionGuard::filterCartesianCommand, this,
+          ros::TransportHints().tcpNoDelay());
       planning_scene_subscriber_ = nh_.subscribe<moveit_msgs::PlanningScene>(
           "/move_group/monitored_planning_scene", 1,
           [this](const moveit_msgs::PlanningSceneConstPtr& message) {
             if (!message->is_diff || have_scene_snapshot_)
               have_scene_snapshot_ = scene_->usePlanningSceneMsg(*message);
-          });
+          }, ros::VoidConstPtr(), ros::TransportHints().tcpNoDelay());
     }
 
     safe_publisher_ = nh_.advertise<std_msgs::Bool>(
@@ -312,7 +313,7 @@ public:
               if (message->data.size() == 2 * arm_joint_names_.size())
                 latest_reference_velocity_[arm_joint_names_[i]] = message->data[i + arm_joint_names_.size()];
             }
-          });
+          }, ros::VoidConstPtr(), ros::TransportHints().tcpNoDelay());
     }
     service_ = nh_.advertiseService(
         service_name_, &FullRobotSelfCollisionGuard::checkCandidate, this);

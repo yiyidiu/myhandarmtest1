@@ -145,16 +145,19 @@ def rotation_geodesic_deg(rotation: Any) -> float:
     return math.degrees(math.acos(cosine))
 
 
-def draw_wrist_axes_diagnostic(rgb, raw_frame, observation, bbox=None):
+def draw_wrist_axes_diagnostic(rgb, raw_frame, observation, bbox=None,
+                               live_rgb=None, live_bbox=None):
     """Display-only wrist axes on their exact inference RGB, plus a fixed view.
 
     The on-hand arrows are perspective projections of 8 cm camera-frame axes.
     The footer is an orthographic orientation view at a fixed origin; unlike
     the on-hand projection it does not change merely because the hand moves.
-    Neither drawing feeds back into pose estimation or robot control.
+    An optional current RGB preview replaces the left image only. Its axes
+    remain in the explicitly labelled estimate-frame footer, never projected
+    onto a different camera frame. Neither drawing feeds back into control.
     """
     height, width = rgb.shape[:2]
-    canvas = np.zeros((height + 120, width * 2, 3), dtype=np.uint8)
+    canvas = np.zeros((height + (144 if live_rgb is not None else 120), width * 2, 3), dtype=np.uint8)
     bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
     for offset in (0, width):
         canvas[:height, offset:offset+width] = bgr
@@ -163,6 +166,14 @@ def draw_wrist_axes_diagnostic(rgb, raw_frame, observation, bbox=None):
             box = np.rint(bbox).astype(int)
             cv2.rectangle(canvas, (box[0]+offset, box[1]),
                           (box[2]+offset, box[3]), (70, 255, 70), 1)
+    if live_rgb is not None:
+        if live_rgb.shape != rgb.shape:
+            raise ValueError("live and estimate RGB dimensions differ")
+        canvas[:height, :width] = cv2.cvtColor(live_rgb, cv2.COLOR_RGB2BGR)
+        if live_bbox is not None:
+            box = np.rint(live_bbox).astype(int)
+            cv2.rectangle(canvas, tuple(box[:2]), tuple(box[2:]),
+                          (70, 255, 70), 1)
     observation = observation or {}
     colors = ((0, 0, 255), (0, 220, 0), (255, 150, 40))
     frames = [(raw_frame or {}).get('rotation') if (raw_frame or {}).get('valid') else None,
@@ -170,6 +181,8 @@ def draw_wrist_axes_diagnostic(rgb, raw_frame, observation, bbox=None):
     titles = ['RAW WRIST: before filtering',
               'PROCESSED WRIST: RGB-D corrected' if observation.get('imu_calibrated_pose')
               else 'PROCESSED WRIST: filtered estimate']
+    if live_rgb is not None:
+        titles[0] = 'LIVE CAMERA / raw orientation below'
     for index, (frame, title) in enumerate(zip(frames, titles)):
         offset = index * width
         cv2.putText(canvas, title, (offset+12, height+23), cv2.FONT_HERSHEY_SIMPLEX,
@@ -178,7 +191,9 @@ def draw_wrist_axes_diagnostic(rgb, raw_frame, observation, bbox=None):
                     cv2.FONT_HERSHEY_SIMPLEX, .5, (220, 220, 220), 1, cv2.LINE_AA)
         cv2.putText(canvas, 'Fixed camera view: orientation only', (offset+155, height+76),
                     cv2.FONT_HERSHEY_SIMPLEX, .46, (180, 180, 180), 1, cv2.LINE_AA)
-        cv2.putText(canvas, 'RGB / axes frame: %s' % observation.get('capture_sequence', '?'),
+        frame_label = ('Axes estimate frame: ' if live_rgb is not None and index == 0
+                       else 'RGB / axes frame: ')
+        cv2.putText(canvas, frame_label + str(observation.get('capture_sequence', '?')),
                     (offset+155, height+100), cv2.FONT_HERSHEY_SIMPLEX, .46,
                     (180, 180, 180), 1, cv2.LINE_AA)
         if frame is None:
@@ -193,6 +208,8 @@ def draw_wrist_axes_diagnostic(rgb, raw_frame, observation, bbox=None):
                             color, 2, tipLength=.22)
             cv2.putText(canvas, 'XYZ'[axis], tuple(np.rint(end+[4, -3]).astype(int)),
                         cv2.FONT_HERSHEY_SIMPLEX, .47, color, 1, cv2.LINE_AA)
+        if live_rgb is not None and index == 0:
+            continue
         origin = observation.get('center_m')
         intrinsics = observation.get('intrinsics')
         if origin is None or intrinsics is None:

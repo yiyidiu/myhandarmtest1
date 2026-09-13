@@ -96,39 +96,43 @@ class EgmPositionReferenceAdapter:
         diagnostic_topic = rospy.get_param(
             "~diagnostic_topic", "/egm_position_reference/diagnostics")
         self.reference_publisher = rospy.Publisher(
-            controller_topic, Float64MultiArray, queue_size=1)
+            controller_topic, Float64MultiArray, queue_size=1, tcp_nodelay=True)
         # One atomic snapshot for the swept gate: committed positions followed
         # by the integrator's acceleration-limited velocities, in arm order.
         self.command_state_publisher = rospy.Publisher(
-            "/egm_position_reference/command_state", Float64MultiArray, queue_size=1)
+            "/egm_position_reference/command_state", Float64MultiArray,
+            queue_size=1, tcp_nodelay=True)
         self.diagnostic_publisher = rospy.Publisher(
             diagnostic_topic, String, queue_size=1)
         rospy.Subscriber(
-            "/joint_states", JointState, self.joint_state_callback, queue_size=1)
+            "/joint_states", JointState, self.joint_state_callback,
+            queue_size=1, tcp_nodelay=True)
         rospy.Subscriber(
-            raw_topic, Float64MultiArray, self.velocity_callback, queue_size=1)
+            raw_topic, Float64MultiArray, self.velocity_callback,
+            queue_size=1, tcp_nodelay=True)
         rospy.Subscriber(
             rospy.get_param("~servo_status_topic", "/servo_server/status"),
-            Int8, self.servo_status_callback, queue_size=1)
+            Int8, self.servo_status_callback, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber(
             rospy.get_param(
                 "~collision_scale_topic",
                 "/servo_server/internal/collision_velocity_scale"),
-            Float64, self.collision_scale_callback, queue_size=1)
+            Float64, self.collision_scale_callback, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber(
             rospy.get_param(
                 "~retreat_authorization_topic",
                 "/shared_teleop/collision_retreat_authorized"),
-            Bool, self.retreat_authorization_callback, queue_size=1)
+            Bool, self.retreat_authorization_callback, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber(
             rospy.get_param(
                 "~strict_command_safe_topic",
                 "/full_robot_self_collision_guard/command_safe"),
-            Bool, self.strict_command_safe_callback, queue_size=1)
+            Bool, self.strict_command_safe_callback, queue_size=1, tcp_nodelay=True)
         self.timer = rospy.Timer(
             rospy.Duration.from_sec(1.0 / self.rate_hz), self.tick)
         rospy.Subscriber("/full_robot_self_collision_guard/command_diagnostic",
-                         String, self.guard_detail_callback, queue_size=1)
+                         String, self.guard_detail_callback, queue_size=1,
+                         tcp_nodelay=True)
         rospy.on_shutdown(self.shutdown)
         rospy.logwarn(
             "Gazebo EGM position-reference emulation enabled: latest-only %.1f Hz, "

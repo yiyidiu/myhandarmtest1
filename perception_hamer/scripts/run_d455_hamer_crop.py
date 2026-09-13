@@ -66,7 +66,7 @@ from perception_hamer.src.hand_pose_overlay import (
     draw_wrist_axes_diagnostic,
 )
 from perception_hamer.src.hamer_palm_frame import RobustBetasCalibrator
-from perception_hamer.src.live_display import LiveDisplay
+from perception_hamer.src.live_display import LiveDisplay, write_all
 from perception_hamer.src.mano_wrist_reference import (
     build_mano_wrist_definition,
     estimate_mano_wrist_frame,
@@ -222,34 +222,54 @@ class GPUMemorySampler:
         self.samples = 0
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._process: Optional[subprocess.Popen] = None
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def _run(self) -> None:
-        while not self._stop.is_set():
-            try:
-                output = subprocess.check_output(
-                    [
-                        "nvidia-smi",
-                        "--query-gpu=memory.used",
-                        "--format=csv,noheader,nounits",
-                    ],
-                    text=True,
-                    timeout=2.0,
-                )
-                used = int(output.strip().splitlines()[0])
+        process = None
+        try:
+            # Reuse one read-only monitor. Forking the large CUDA/Python
+            # process every 200 ms added avoidable work during live inference.
+            process = subprocess.Popen(
+                ["nvidia-smi", "--id=0", "--query-gpu=memory.used",
+                 "--format=csv,noheader,nounits",
+                 "--loop-ms={}".format(max(1, round(self.period_s * 1000)))],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, bufsize=1,
+            )
+            self._process = process
+            while not self._stop.is_set():
+                line = process.stdout.readline()
+                if not line:
+                    break
+                try:
+                    used = int(line.strip())
+                except ValueError:
+                    continue
                 self.peak_used_mib = (
                     used if self.peak_used_mib is None else max(self.peak_used_mib, used)
                 )
                 self.samples += 1
-            except Exception:
-                pass
-            self._stop.wait(self.period_s)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        finally:
+            if process is not None:
+                if process.poll() is None:
+                    process.terminate()
+                try:
+                    process.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=2.0)
+                process.stdout.close()
 
     def stop(self) -> None:
         self._stop.set()
+        if self._process is not None and self._process.poll() is None:
+            self._process.terminate()
         if self._thread is not None:
             self._thread.join(timeout=3.0)
 
@@ -473,7 +493,7 @@ class MediaPipeDetectionSidecar:
         if process.poll() is not None or process.stdin is None or process.stdout is None:
             raise RuntimeError("persistent MediaPipe sidecar exited")
         try:
-            process.stdin.write(np.ascontiguousarray(frame).tobytes())
+            write_all(process.stdin, np.ascontiguousarray(frame).tobytes())
             line = process.stdout.readline()
         except (BrokenPipeError, OSError) as exc:
             raise RuntimeError("persistent MediaPipe sidecar pipe failed") from exc
@@ -1014,6 +1034,7 @@ def _display_worker(
     mesh_renderer: str,
     maximum_display_rate_hz: float,
     show_wrist_axes: bool = False,
+    live_rgb_preview: bool = False,
 ) -> None:
     last_version = 0
     displayed = 0
@@ -1120,6 +1141,9 @@ def _display_worker(
                 estimates.get("control_wrist_frame_raw") if visible else None,
                 estimates.get("wrist_axes_observation") if visible else None,
                 result.requested_bbox_xyxy if visible else None,
+                live_rgb=packet.frame.rgb if live_rgb_preview else None,
+                live_bbox=(packet.roi.bbox if live_rgb_preview and hand_presence_valid
+                           and roi_matches_detected_hand and not packet.roi.lost else None),
             )
         else:
             canvas = make_overlay(
@@ -1179,6 +1203,8 @@ def _display_worker(
         display_hz = displayed/max(1.0e-9, time.monotonic()-started)
         cv2.putText(
             canvas, (
+                "LIVE image={:.1f} Hz  POSE={:.1f} Hz"
+                if show_wrist_axes and live_rgb_preview else
                 "exact-pair display loop={:.1f} Hz (new MANO={:.1f} Hz)"
                 if mesh_renderer == "teleoperation-core"
                 else "D455 display={:.1f} Hz (HaMeR mesh={:.1f} Hz)"
@@ -1188,6 +1214,8 @@ def _display_worker(
         )
         if not display.show(canvas):
             print("HaMeR display sidecar exited.", file=sys.stderr, flush=True)
+            display.stop_requested = True
+            stop.set()
             break
         if display.stop_requested:
             stop.set()
@@ -1380,6 +1408,9 @@ def _parse_args() -> argparse.Namespace:
                         help="disable the MANO mesh overlay")
     parser.add_argument("--show-wrist-axes", action="store_true",
                         help="exact-frame raw/processed wrist axes and fixed-origin orientation views")
+    parser.add_argument("--live-rgb-preview", action="store_true",
+                        default=os.environ.get("TELEOP_LIVE_RGB_PREVIEW", "false").lower() == "true",
+                        help="current camera image beside the exact-frame pose diagnostic; no old axes on new RGB")
     parser.add_argument(
         "--mesh-renderer",
         choices=("teleoperation-core", "legacy-depth"),
@@ -1484,6 +1515,11 @@ def main() -> int:
     if args.imu_calibrated_pose and args.camera_resolution != "640x480":
         raise SystemExit("the experimental RGB-D calibration is only defined for 640x480")
     _apply_process_cpu_affinity(args.inference_cpu_affinity)
+    # Capture, display and GPU submission share this Python process. The
+    # default 5 ms interpreter handoff repeatedly delayed GPU submissions
+    # under the recorded concurrent workload. Bound that wait without
+    # changing inference, frame freshness or any motion/filter parameter.
+    sys.setswitchinterval(min(sys.getswitchinterval(), 0.001))
     # KLT runs beside inference on the same small CPU set. OpenCV's default
     # 12-worker pool was competing with HaMeR and increasing frame-age tails.
     # The same image operations remain in place; only CPU scheduling changes.
@@ -1607,7 +1643,9 @@ def main() -> int:
         enabled=args.imu_calibrated_pose,
     )
     pending = PendingReinitialization()
-    session_records = []
+    # Full frames already stream to JSONL. Keeping their meshes and nested
+    # diagnostics alive only to count them made memory/GC work grow per run.
+    session_record_count = 0
     session_timing_records = []
     previous_joint_quaternion = None
     previous_control_quaternion = None
@@ -1827,8 +1865,7 @@ def main() -> int:
                         (18, 164), cv2.FONT_HERSHEY_SIMPLEX, 0.58,
                         (0, 0, 255), 2, cv2.LINE_AA,
                     )
-                    display.show(preview)
-                    if display.stop_requested:
+                    if not display.show(preview) or display.stop_requested:
                         return 0
                 confirmed_by_user = bool(
                     args.auto_confirm_hand or not args.require_hand_confirmation
@@ -1915,6 +1952,7 @@ def main() -> int:
                     args.mesh_renderer,
                     args.display_rate_hz,
                     args.show_wrist_axes,
+                    args.live_rgb_preview,
                 ),
                 name="hamer-live-preview",
                 daemon=True,
@@ -3013,7 +3051,7 @@ def main() -> int:
                     if overlay is None:
                         raise RuntimeError("experiment overlay was not rendered")
                     video.write(overlay)
-                session_records.append(record)
+                session_record_count += 1
             session_timing_records.append({
                 **dict(record["timing"]),
                 "capture_monotonic_s": capture_monotonic_s,
@@ -3035,7 +3073,7 @@ def main() -> int:
                     ),
                     "wall_time_ns": time.time_ns(),
                     "processed_frames": processed,
-                    "recorded_frames": len(session_records),
+                    "recorded_frames": session_record_count,
                     "first_control_reference_token": experiment_reference_token,
                     "latest_control_reference_token": latest_reference_token,
                 },
@@ -3137,7 +3175,7 @@ def main() -> int:
                 experiment_recording_started_wall_ns
             ),
             "experiment_reference_token": experiment_reference_token,
-            "experiment_recorded_frames": len(session_records),
+            "experiment_recorded_frames": session_record_count,
             "orientation_filter_large_angle_mode": (
                 args.orientation_filter_large_angle_mode
             ),
