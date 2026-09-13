@@ -1,4 +1,4 @@
-# Green cylinder moved another 30 mm toward base; shorter, narrower front carton.
+# Left cylinder diameter 90 mm; front carton resting on its largest face.
 schema_version: 1
 frame_id: world
 units:
@@ -50,8 +50,8 @@ objects:
       - 0.0
       - 0.0
     size:
-    - 0.06
-    - 0.06
+    - 0.09
+    - 0.09
     - 0.15666666666666665
     mass: 0.27
     static: false
@@ -123,10 +123,10 @@ objects:
       position:
       - 0.425
       - 0
-      - 0.17933333333333334
+      - 0.1555
       orientation_rpy:
       - 0
-      - 0
+      - 1.5707963267948966
       - 1.5707963267948966
     size:
     - 0.069

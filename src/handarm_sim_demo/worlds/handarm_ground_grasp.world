@@ -33,9 +33,9 @@
         <inertial>
           <mass>0.27</mass>
           <inertia>
-            <ixx>0.0006129999999999999</ixx>
-            <iyy>0.0006129999999999999</iyy>
-            <izz>0.0001215</izz>
+            <ixx>0.0006889374999999999</ixx>
+            <iyy>0.0006889374999999999</iyy>
+            <izz>0.000273375</izz>
           </inertia>
         </inertial>
         <collision name="collision">
@@ -59,7 +59,7 @@
           </surface>
           <geometry>
             <cylinder>
-              <radius>0.03</radius>
+              <radius>0.045</radius>
               <length>0.15666666666666665</length>
             </cylinder>
           </geometry>
@@ -81,7 +81,7 @@
           <pose>0.0 0.0 -0.008173913046666665 0.0 0.0 0.0</pose>
           <geometry>
             <cylinder>
-              <radius>0.03</radius>
+              <radius>0.045</radius>
               <length>0.1403188405797101</length>
             </cylinder>
           </geometry>
@@ -95,7 +95,7 @@
           <pose>0.0 0.0 -0.07492753619999999 0.0 0.0 0.0</pose>
           <geometry>
             <cylinder>
-              <radius>0.030133333333333</radius>
+              <radius>0.0451999999999995</radius>
               <length>0.00544927536231884</length>
             </cylinder>
           </geometry>
@@ -109,7 +109,7 @@
           <pose>0.0 0.0 0.07015942026666666 0.0 0.0 0.0</pose>
           <geometry>
             <cylinder>
-              <radius>0.030133333333333</radius>
+              <radius>0.0451999999999995</radius>
               <length>0.01634782608695652</length>
             </cylinder>
           </geometry>
@@ -123,7 +123,7 @@
           <pose>0.0 0.0 0.059260869566666666 0.0 0.0 0.0</pose>
           <geometry>
             <cylinder>
-              <radius>0.030133333333333</radius>
+              <radius>0.0451999999999995</radius>
               <length>0.00544927536231884</length>
             </cylinder>
           </geometry>
@@ -137,7 +137,7 @@
           <pose>0.0 0.0 -0.010217391306666667 0.0 0.0 0.0</pose>
           <geometry>
             <cylinder>
-              <radius>0.030133333333333</radius>
+              <radius>0.0451999999999995</radius>
               <length>0.033376811594202895</length>
             </cylinder>
           </geometry>
@@ -361,7 +361,7 @@
     </model>
     <model name="ground_object_right">
       <static>false</static>
-      <pose>0.425 0 0.17933333333333334 0 0 1.570796326794897</pose>
+      <pose>0.425 0 0.1555 0 1.5707963267948966 1.5707963267948966</pose>
       <link name="object_link">
         <inertial>
           <mass>0.1028</mass>
