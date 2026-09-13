@@ -88,6 +88,8 @@ class EgmPositionReferenceAdapter:
         self.diagnostic_divisor = max(1, int(round(self.rate_hz / 20.0)))
         self.tick_count = 0
         self.prediction_valid_until_wall_s = float("inf")
+        self.prediction_valid_until_ros_s = float("inf")
+        self.simulation_time = bool(rospy.get_param('/use_sim_time', False))
 
         raw_topic = rospy.get_param(
             "~raw_velocity_topic", "/egm_position_reference/raw_joint_velocity")
@@ -150,21 +152,30 @@ class EgmPositionReferenceAdapter:
             self.latest_actual = actual
 
     def velocity_callback(self, message):
-        if len(message.data) not in (len(self.joints), len(self.joints) + 1):
+        if len(message.data) not in (len(self.joints), len(self.joints) + 1,
+                                    len(self.joints) + 2):
             rospy.logwarn_throttle(
                 1.0, "EGM reference rejected velocity array of size %d; expected %d",
                 len(message.data), len(self.joints))
             return
         try:
             with self.lock:
-                deadline = (float(message.data[-1])
-                            if len(message.data) == len(self.joints) + 1 else
+                deadline = (float(message.data[len(self.joints)])
+                            if len(message.data) >= len(self.joints) + 1 else
                             time.time() + self.model.command_timeout_s)
                 if not np.isfinite(deadline):
                     raise ValueError("non-finite prediction expiry")
+                motion_deadline = float("inf")
+                if len(message.data) == len(self.joints) + 2:
+                    if not (self.constrained_velocity_projection and self.simulation_time):
+                        raise ValueError("simulation deadline outside Gazebo constrained mode")
+                    motion_deadline = float(message.data[-1])
+                    if not np.isfinite(motion_deadline):
+                        raise ValueError("non-finite simulation prediction expiry")
                 self.model.update_velocity(
                     message.data[:len(self.joints)], rospy.Time.now().to_sec())
                 self.prediction_valid_until_wall_s = deadline
+                self.prediction_valid_until_ros_s = motion_deadline
         except ValueError as exc:
             rospy.logwarn_throttle(1.0, "EGM reference rejected velocity: %s", exc)
 
@@ -230,9 +241,13 @@ class EgmPositionReferenceAdapter:
                     self.last_strict_command_safe_monotonic))
             strict_command_monitor_stale = bool(
                 strict_command_age_s > self.strict_command_safe_timeout_s)
-            prediction_expired = time.time() >= self.prediction_valid_until_wall_s
+            prediction_wall_remaining_s = self.prediction_valid_until_wall_s - time.time()
+            prediction_motion_remaining_s = self.prediction_valid_until_ros_s - now
+            prediction_expired = bool(prediction_wall_remaining_s <= 0.0 or
+                                      prediction_motion_remaining_s <= 0.0)
+            strict_command_safe = self.strict_command_safe
             projected_motion_checked = bool(
-                self.constrained_velocity_projection and self.strict_command_safe and
+                self.constrained_velocity_projection and strict_command_safe and
                 not strict_command_monitor_stale and not prediction_expired)
             # A fresh constrained command already passed full arm/hand/world
             # prediction, including the direction of a contact retreat. The
@@ -248,7 +263,7 @@ class EgmPositionReferenceAdapter:
             hard_safety_hold = bool(
                 (not self.constrained_velocity_projection and
                  self.latest_servo_status in (2, 4, 5)) or proximity_hold or
-                collision_monitor_stale or not self.strict_command_safe or
+                collision_monitor_stale or not strict_command_safe or
                 strict_command_monitor_stale or prediction_expired)
             if hard_safety_hold and self.latest_actual is not None:
                 if self.constrained_velocity_projection:
@@ -311,9 +326,10 @@ class EgmPositionReferenceAdapter:
         state_key = (
             output.command_fresh, output.limit_clamped, output.time_reset,
             hard_safety_hold, collision_monitor_stale,
-            strict_command_monitor_stale, self.strict_command_safe,
+            strict_command_monitor_stale, strict_command_safe,
             self.latest_servo_status)
-        if state_key != self.last_state_key:
+        state_changed = state_key != self.last_state_key
+        if state_changed:
             rospy.loginfo(
                 "Hybrid reference state: command=%s limit_clamped=%s "
                 "time_reset=%s servo_status=%d collision_scale=%.3f",
@@ -324,7 +340,9 @@ class EgmPositionReferenceAdapter:
             self.last_state_key = state_key
 
         self.tick_count += 1
-        if self.tick_count % self.diagnostic_divisor == 0:
+        # A one-tick hold still resets the reference velocity. Sampling only
+        # at 20 Hz hid the recorded 4 ms stops; always record transitions.
+        if state_changed or self.tick_count % self.diagnostic_divisor == 0:
             finite_age = (
                 output.command_age_s if np.isfinite(output.command_age_s) else None)
             self.diagnostic_publisher.publish(String(data=json.dumps({
@@ -349,6 +367,12 @@ class EgmPositionReferenceAdapter:
                 "collision_velocity_scale": self.latest_collision_scale,
                 "hard_safety_hold": hard_safety_hold,
                 "prediction_expired": prediction_expired,
+                "prediction_motion_remaining_s": (
+                    prediction_motion_remaining_s
+                    if np.isfinite(prediction_motion_remaining_s) else None),
+                "prediction_wall_remaining_s": (
+                    prediction_wall_remaining_s
+                    if np.isfinite(prediction_wall_remaining_s) else None),
                 "projected_motion_checked": projected_motion_checked,
                 "safety_reference_latched": self.hard_safety_hold_active,
                 "collision_reference_resets": self.collision_reference_resets,
@@ -357,7 +381,7 @@ class EgmPositionReferenceAdapter:
                 "collision_scale_age_s": (
                     collision_scale_age_s
                     if np.isfinite(collision_scale_age_s) else None),
-                "strict_command_safe": self.strict_command_safe,
+                "strict_command_safe": strict_command_safe,
                 "strict_command_monitor_stale": strict_command_monitor_stale,
                 "strict_command_age_s": (
                     strict_command_age_s

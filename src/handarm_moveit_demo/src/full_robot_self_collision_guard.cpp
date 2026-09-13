@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <ros/ros.h>
+#include <ros/callback_queue.h>
 #include <sensor_msgs/JointState.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <std_msgs/Bool.h>
@@ -278,9 +279,34 @@ public:
         "/full_robot_self_collision_guard/command_safe", 1, true);
     command_diagnostic_publisher_ = nh_.advertise<std_msgs::String>(
         "/full_robot_self_collision_guard/command_diagnostic", 1, true);
-    state_subscriber_ = nh_.subscribe(
-        joint_state_topic_, 2, &FullRobotSelfCollisionGuard::stateCallback, this,
-        ros::TransportHints().tcpNoDelay());
+    if (constrained_velocity_projection_)
+    {
+      // Receiving feedback must not wait behind a swept geometry check.
+      // This thread only stores the latest arm/hand samples. RobotState,
+      // scene access and validation remain on the original control thread.
+      ros::NodeHandle feedback_nh(nh_);
+      feedback_nh.setCallbackQueue(&feedback_queue_);
+      state_subscriber_ = feedback_nh.subscribe<sensor_msgs::JointState>(
+          joint_state_topic_, 4,
+          [this](const sensor_msgs::JointStateConstPtr& message) {
+            std::lock_guard<std::mutex> lock(feedback_mutex_);
+            const bool arm = std::any_of(message->name.begin(), message->name.end(),
+                [this](const std::string& name) {
+                  return std::find(arm_joint_names_.begin(), arm_joint_names_.end(), name) !=
+                         arm_joint_names_.end();
+                });
+            pending_states_[arm ? 0 : 1] = message;
+            pending_state_received_[arm ? 0 : 1] = ros::WallTime::now();
+          }, ros::VoidConstPtr(), ros::TransportHints().tcpNoDelay());
+      feedback_spinner_.reset(new ros::AsyncSpinner(1, &feedback_queue_));
+      feedback_spinner_->start();
+    }
+    else
+      state_subscriber_ = nh_.subscribe<sensor_msgs::JointState>(
+          joint_state_topic_, 2,
+          [this](const sensor_msgs::JointStateConstPtr& message) {
+            applyJointState(message, ros::WallTime::now());
+          }, ros::VoidConstPtr(), ros::TransportHints().tcpNoDelay());
     raw_velocity_subscriber_ = nh_.subscribe(
         raw_velocity_topic_, 1,
         &FullRobotSelfCollisionGuard::rawVelocityCallback, this,
@@ -336,7 +362,35 @@ public:
                         "disabled (MoveIt Servo is authoritative)"));
   }
 
+  ~FullRobotSelfCollisionGuard()
+  {
+    if (feedback_spinner_) feedback_spinner_->stop();
+  }
+
 private:
+  void refreshRobotFeedback()
+  {
+    std::array<sensor_msgs::JointStateConstPtr, 2> messages;
+    std::array<ros::WallTime, 2> received;
+    {
+      std::lock_guard<std::mutex> lock(feedback_mutex_);
+      messages.swap(pending_states_);
+      received = pending_state_received_;
+    }
+    // Gazebo publishes arm and finger states separately on /joint_states.
+    // One latest-message slot would discard one half. Merge the newest of
+    // BOTH before evaluating the complete physical arm/hand configuration.
+    if (messages[0] && messages[1])
+    {
+      const int first = received[0] < received[1] ? 0 : 1;
+      applyJointState(messages[first], received[first], false);
+      applyJointState(messages[1-first], received[1-first]);
+    }
+    else
+      for (int i = 0; i < 2; ++i)
+        if (messages[i]) applyJointState(messages[i], received[i]);
+  }
+
   struct Clearance
   {
     double self;
@@ -967,6 +1021,7 @@ private:
   // shaper after this gate could reintroduce an obsolete blocked approach.
   void filterCartesianCommand(const handarm_moveit_demo::HandCommandConstPtr& message)
   {
+    refreshRobotFeedback();
     const auto began = ros::WallTime::now();
     auto output = *message;
     Eigen::Matrix<double, 6, 1> requested;
@@ -979,6 +1034,8 @@ private:
     std::vector<double> projected_joint_velocity;
     bool projected_command_safe = false;
     double projected_deadline = 0.0;
+    double projected_motion_deadline = 0.0, state_age_at_check_s = 0.0;
+    double projection_ms = 0.0, prediction_ms = 0.0;
     std::size_t projection_constraint_count = 0;
     std::map<std::string, double> finger_object_clearance;
     Clearance current{ 0.0, 0.0 };
@@ -1003,6 +1060,19 @@ private:
       hand_reference = latest_hand_reference_;
       arm_reference = latest_arm_reference_;
       projected_deadline = latest_state_wall_time_.toSec() + prediction_horizon_s_;
+      state_age_at_check_s = (began - latest_state_wall_time_).toSec();
+      if (constrained_velocity_projection_)
+      {
+        // The Gazebo reference integrator and this swept trajectory both
+        // use simulation seconds. A wall-clock 80 ms expiry stopped the
+        // reference early whenever rendering slowed simulation. Keep the
+        // SAME motion horizon, starting at the measured joint-state stamp,
+        // and retain separate wall-clock communication/state watchdogs.
+        projected_motion_deadline = latest_state_ros_time_.toSec() + prediction_horizon_s_;
+        projected_deadline = std::min(
+            latest_state_wall_time_.toSec() + state_timeout_s_,
+            began.toSec() + command_timeout_s_);
+      }
     }
     const double age = (ros::Time::now() - message->header.stamp).toSec();
     // /clock is delivered independently to each process. Allow at most one
@@ -1157,11 +1227,15 @@ private:
       };
       if (constrained_velocity_projection_)
       {
+        const auto projection_began = ros::WallTime::now();
         projected_command_safe = projectJointVelocity(state, jacobian, requested,
             projected_joint_velocity, projection_constraint_count, reason);
+        projection_ms = (ros::WallTime::now() - projection_began).toSec() * 1000.0;
+        const auto prediction_began = ros::WallTime::now();
         if (projected_command_safe)
           projected_command_safe = predictedVelocityIsSafe(projected_joint_velocity,
               state, hand_reference, arm_reference, reason);
+        prediction_ms = (ros::WallTime::now() - prediction_began).toSec() * 1000.0;
         bool translation_retreat = false;
         if (!projected_command_safe && requested.head<3>().norm() > 1e-9 &&
             (reason.find("PREDICTED_WORLD_COLLISION:") == 0 ||
@@ -1317,11 +1391,13 @@ private:
       // scaling must not undo an already constrained escape command.
       last_raw_command_wall_time_ = began;
       have_raw_command_ = true;
-      if (projected_command_safe && ros::WallTime::now().toSec() < projected_deadline)
+      if (projected_command_safe && ros::WallTime::now().toSec() < projected_deadline &&
+          ros::Time::now().toSec() < projected_motion_deadline)
       {
         std_msgs::Float64MultiArray safe;
         safe.data = projected_joint_velocity;
         safe.data.push_back(projected_deadline);
+        safe.data.push_back(projected_motion_deadline);
         safe_velocity_publisher_.publish(safe);
         publishCommandStatus(true, "SAFE_CONSTRAINED_VELOCITY");
       }
@@ -1351,6 +1427,14 @@ private:
            << ",\"projection_constraints\":" << projection_constraint_count
            << ",\"input_age_s\":" << age
            << ",\"input_valid\":" << (message->valid ? "true" : "false")
+           << ",\"state_age_at_check_ms\":"
+           << state_age_at_check_s * 1000.0
+           << ",\"projection_ms\":" << projection_ms
+           << ",\"prediction_ms\":" << prediction_ms
+           << ",\"prediction_remaining_ms\":"
+           << (projected_deadline - ros::WallTime::now().toSec()) * 1000.0
+           << ",\"prediction_motion_remaining_ms\":"
+           << (projected_motion_deadline - ros::Time::now().toSec()) * 1000.0
            << ",\"world_distance_m\":" << current.world << ",\"processing_ms\":"
            << (ros::WallTime::now() - began).toSec() * 1000.0
            << ",\"filtered\":" << ((selected - requested).norm() > 1e-9 ? "true" : "false")
@@ -2145,7 +2229,9 @@ private:
     return true;
   }
 
-  void stateCallback(const sensor_msgs::JointStateConstPtr& message)
+  void applyJointState(const sensor_msgs::JointStateConstPtr& message,
+                       const ros::WallTime& received_at,
+                       bool validate_complete_state = true)
   {
     // /joint_states may be split across several publishers.  The physical
     // grasp hand, for example, publishes its eight joints independently from
@@ -2195,7 +2281,7 @@ private:
       }
     }
 
-    const ros::WallTime received_at = ros::WallTime::now();
+    ros::Time measured_at = message->header.stamp;
     sensor_msgs::JointState merged;
     moveit::core::RobotState candidate(model_);
     {
@@ -2228,7 +2314,9 @@ private:
         latest_independent_positions_[item.first] = item.second;
         latest_independent_velocities_[item.first] = measured_velocity;
         latest_joint_wall_times_[item.first] = received_at;
+        latest_joint_ros_times_[item.first] = message->header.stamp;
       }
+      if (!validate_complete_state) return;
       for (const std::string& name : required_joint_names_)
       {
         const auto position = latest_independent_positions_.find(name);
@@ -2238,6 +2326,7 @@ private:
             (received_at - stamp->second).toSec() > state_timeout_s_)
           return;
         merged.name.push_back(name);
+        measured_at = std::min(measured_at, latest_joint_ros_times_.at(name));
         merged.position.push_back(position->second);
         const auto measured_velocity =
             latest_independent_velocities_.find(name);
@@ -2255,6 +2344,7 @@ private:
           if (position == latest_independent_positions_.end()) continue;
           if ((received_at - latest_joint_wall_times_.at(name)).toSec() > state_timeout_s_) return;
           merged.name.push_back(name);
+          measured_at = std::min(measured_at, latest_joint_ros_times_.at(name));
           merged.position.push_back(position->second);
           merged.velocity.push_back(latest_independent_velocities_.at(name));
         }
@@ -2310,6 +2400,7 @@ private:
       std::lock_guard<std::mutex> lock(mutex_);
       *latest_state_ = candidate;
       latest_state_wall_time_ = received_at;
+      latest_state_ros_time_ = measured_at;
       have_complete_state_ = true;
       transient_state_reason_ = permitted_hand_deflection ?
           "SIMULATED_HAND_DEFLECTION_ARM_GEOMETRY_VALID" : "";
@@ -2376,6 +2467,7 @@ private:
 
   void statusTimer(const ros::TimerEvent&)
   {
+    refreshRobotFeedback();
     // The monitored topic normally publishes diffs. Obtain one complete
     // starting snapshot, then apply its subsequent diffs in the subscriber.
     if (geometric_command_filter_ && !have_scene_snapshot_ &&
@@ -2447,9 +2539,15 @@ private:
   std::unique_ptr<collision_detection::AllowedCollisionMatrix> strict_acm_;
   moveit::core::RobotStatePtr latest_state_;
   std::mutex mutex_;
+  ros::CallbackQueue feedback_queue_;
+  std::mutex feedback_mutex_;
+  std::array<sensor_msgs::JointStateConstPtr, 2> pending_states_;
+  std::array<ros::WallTime, 2> pending_state_received_;
+  std::unique_ptr<ros::AsyncSpinner> feedback_spinner_;
   std::map<std::string, double> latest_independent_positions_;
   std::map<std::string, double> latest_independent_velocities_;
   std::map<std::string, ros::WallTime> latest_joint_wall_times_;
+  std::map<std::string, ros::Time> latest_joint_ros_times_;
   std::map<std::string, double> latest_hand_reference_;
   std::map<std::string, double> latest_arm_reference_;
   std::map<std::string, double> latest_reference_velocity_;
@@ -2466,6 +2564,7 @@ private:
   bool have_robot_zero_{ false };
   double maximum_side_angle_{ M_PI/2.0 };
   ros::WallTime latest_state_wall_time_;
+  ros::Time latest_state_ros_time_;
   bool have_complete_state_{ false };
   bool fault_latched_{ false };
   bool recover_simulated_hand_limit_transients_{ false };

@@ -55,6 +55,7 @@
         name="full_robot_self_collision_guard"
         pkg="handarm_moveit_demo"
         type="full_robot_self_collision_guard"
+        launch-prefix="$(optenv TELEOP_CONTROL_LAUNCH_PREFIX)"
         output="screen"
         required="true">
     <param name="state_timeout_s" value="0.25" />
@@ -79,7 +80,8 @@
 
   <node if="$(arg legacy_moveit_servo_reference)"
         pkg="handarm_moveit_demo" type="egm_position_reference_adapter.py"
-        name="egm_position_reference_adapter" output="screen" required="true">
+        name="egm_position_reference_adapter" output="screen" required="true"
+        launch-prefix="$(optenv TELEOP_CONTROL_LAUNCH_PREFIX)">
     <param name="rate_hz" value="250.0" />
     <param name="raw_velocity_topic"
            value="/egm_position_reference/collision_checked_joint_velocity" />

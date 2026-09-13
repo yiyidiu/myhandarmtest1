@@ -72,9 +72,11 @@ else
 fi
 simulation_affinity_arguments=()
 if command -v taskset >/dev/null 2>&1 && (( $(nproc) >= 12 )); then
-  # Reserve the two physical cores used by HaMeR (8-11). Pinning only HaMeR
-  # still let ROS, Gazebo and recording compete on those same cores.
-  simulation_affinity_arguments=(taskset -c 0-7)
+  # On this 12-thread host, keep one physical core for collision checking
+  # and reference generation. Rendering/capture/recording must not take its
+  # short command-renewal budget; HaMeR retains its existing cores 8-11.
+  simulation_affinity_arguments=(taskset -c 2-7)
+  export TELEOP_CONTROL_LAUNCH_PREFIX="${TELEOP_CONTROL_LAUNCH_PREFIX:-taskset -c 0-1}"
 fi
 setsid "${simulation_affinity_arguments[@]}" roslaunch handarm_moveit_demo \
   live_human_ground_gazebo_egm_teleop.launch \
@@ -149,10 +151,11 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 camera_affinity_arguments=()
 if command -v taskset >/dev/null 2>&1 && (( $(nproc) >= 12 )); then
   # i5-12400F: HaMeR gets the final two physical cores while the GUI and
-  # MediaPipe use the preceding two. ROS/Gazebo stay on cores 0-7 above.
+  # MediaPipe use the preceding two. Capture stays off the control core.
   camera_affinity_arguments+=(
     --inference-cpu-affinity 8-11
     --sidecar-cpu-affinity 4-7
+    --capture-cpu-affinity 2-3
   )
 fi
 "$conda_executable" run --no-capture-output -n hamer_rtx2060 \

@@ -12,7 +12,7 @@ source /opt/ros/noetic/setup.bash
 source "$workspace/devel/setup.bash"
 recording_affinity_arguments=()
 if command -v taskset >/dev/null 2>&1 && (( $(nproc) >= 12 )); then
-  recording_affinity_arguments=(taskset -c 0-7)
+  recording_affinity_arguments=(taskset -c 2-7)
 fi
 
 if (( $# > 1 )); then
@@ -215,6 +215,8 @@ setsid "${recording_affinity_arguments[@]}" rosbag record --buffsize=64 -O "$ses
   /full_robot_self_collision_guard/command_diagnostic \
   /egm_position_reference/diagnostics \
   /egm_position_reference/command_state \
+  /egm_position_reference/collision_checked_joint_velocity \
+  /full_robot_self_collision_guard/command_safe \
   /shared_teleop/finger_diagnostics /controller_gazebo_hand/command \
   /gazebo/model_states /handarm_sim_demo/target_contacts \
   > "$session_directory/recorder.log" 2>&1 &
