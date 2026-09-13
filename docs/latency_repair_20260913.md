@@ -33,6 +33,8 @@
 
 正常运行并录屏、尝试接收 IMU：
 
+后续按用户要求，默认同时打开正面、侧面两个抓取小窗，每个按 8 Hz 刷新，支持滚轮缩放。在观察小窗中按 Esc 会关闭双视图并移除辅助相机，主遥操作继续。上表是在辅助视图关闭时测得，不能直接代表开启双视图后的延迟。
+
 ```bash
 bash /home/dongtian/myhandarmtest1-teleop-repair/scripts/run_grasp_feedback_recording.sh
 ```
