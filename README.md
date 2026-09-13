@@ -1,76 +1,57 @@
-# 单 RGB-D 手部遥操作：当前开发版与固定保存版
+# 当前遥操作完整工程源码 · 2026-09-14
 
-2026-09-14：当前控制实现为 `dac3518`（9 月 13 日延迟、运动时钟和手臂自碰撞修复之后）。本机的固定运行副本保存在 `/home/dongtian/teleop_versions/20260914_dac3518/`，包含独立源码、编译程序、模型和两个 Python 环境：
+这份快照固定当前实际运行的工程代码、有效配置、启动命令和依赖来源，供下载后继续使用同一版。控制实现基线为 `dac3518`，本机保存基线为 `da8c63d`。
 
-```bash
-bash /home/dongtian/teleop_versions/20260914_dac3518/run.sh
-```
+**固定标签：[teleop-complete-code-20260914](https://github.com/yiyidiu/myhandarmtest1/releases/tag/teleop-complete-code-20260914)。** 不要用旧 main 或 9 月 12 日的标签替代这个快照。
 
-这是固定版本保存，**不表示全部遥操作问题均已验收**。本机固定副本不随开发目录改动。其完整恢复说明和系统依赖边界见该目录的 `使用与恢复.md`。该副本及模型资产不在 GitHub 源码 ZIP 内。
+控制器、视觉处理、滤波、映射、碰撞几何、物体布局和 CPU 调度逻辑保持本机保存版。工程未引入新的安装器或新的 CPU 调度方案。本次补齐外部 HaMeR 实际源码、运行配置记录、依赖版本，以及换电脑时的路径配置和源码 ZIP 录制兼容。
 
-继续运行开发目录（后续修改会生效）：
+## 下载当前工程
 
 ```bash
-bash /home/dongtian/myhandarmtest1-teleop-repair/scripts/run_grasp_feedback_recording.sh
+git clone --branch teleop-complete-code-20260914 --single-branch https://github.com/yiyidiu/myhandarmtest1.git
+cd myhandarmtest1
 ```
 
-以下是历史说明，旧标签和旧入口不代表上述当前开发版。
+也可以在该标签的发布页下载 Source code ZIP 并完整解压。Release 的环境备份附件是可选依赖备份，工程源码以此标签的 Source code 为准。
 
-## 2026-09-12 姿态修正试验基线（历史）
+## 运行命令保持原入口
 
-当前固定基线：`teleop-rgbd-pose-baseline-20260912`，开发分支：`codex/imu-guided-pose-measurement-20260912`。
-
-保存的是 RGB-D 姿态修正试验版。左移误转和静止抖动仍未解决，不能视为精细遥操作已验收。IMU 用于离线校准和运行时参考记录，不参与运行时控制；修正功能由专用入口显式开启。
-
-在已配置依赖并编译的本机运行截图对应版本：
+在已配置对应 ROS、Python 环境和模型文件的电脑上：
 
 ```bash
-cd /home/dongtian/myhandarmtest1-teleop-repair
-TELEOP_MOTION_CONTROLLER=constrained ./scripts/run_imu_calibrated_hand_observation.sh
+bash scripts/run_grasp_feedback_recording.sh
 ```
 
-完整的保存范围、依赖边界、编译、录制及回退步骤见 [基线说明](docs/versions/teleop-rgbd-pose-baseline-20260912.md)。离线对照结果见 [姿态修正记录](docs/imu_guided_pose_measurement_20260912.md)。
+相机、Gazebo、两个抓取观察窗、视频录像、RGB-D、控制数据和 IMU 记录一起启动。张手放稳后按 C 才启用控制；按 Q 退出并等待录制完成。数据保存在本工程 `.runtime/teleop_feedback_日期T时间_随机后缀/`。
 
----
+## 换电脑时只配置本机路径并编译
 
-## 2026-09-10 历史快照说明
-
-以下内容描述此前快照；当前试验基线的入口及限制以上文和基线说明为准。
-
-此分支保存 2026-09-10 最新的相机 → HaMeR → 位姿映射 → 六轴机械臂与三指手控制链路，以及配套录屏、RGB-D、控制数据和 IMU 记录功能。
-
-- 分支：`codex/teleop-snapshot-20260910`
-- 固定标签：`teleop-snapshot-20260910`
-- 平台：Ubuntu 20.04、ROS Noetic、Gazebo 仿真、单 RGB-D 相机、HaMeR。
-- 默认机械臂控制：`constrained`。IMU 只记录，不参与控制。
-
-这是可追溯的当前修复快照，**不是所有问题均已解决的版本**。超出工作范围或接近自碰撞边界时仍可能停住；最新完整真人抓取尚未验收。
-
-## 运行当前快照
-
-在已配置相机、模型资产和 Python 环境的本机：
+目标平台是 Ubuntu 20.04 x86_64 + NVIDIA 显卡、ROS Noetic、Gazebo 11。在新电脑第一次使用，复制路径模板并按实际模型与环境位置编辑：
 
 ```bash
-cd /home/dongtian/myhandarmtest1-teleop-repair
-TELEOP_MOTION_CONTROLLER=constrained ./scripts/run_teleop_feedback_recording.sh
+cp teleop_machine.env.example teleop_machine.env
 ```
 
-相机中张手放稳后按 `C` 建立零位；按 `Q` 结束。终端打印录像目录和 IMU 实际接收状态。默认结果目录为 `.runtime/teleop_feedback_日期T时间_随机后缀/`，包括 `screen.mp4`、`control_chain.bag`、`rgbd.db3`、手部位姿与 IMU CSV。
+模板只配置 Python、模型和 SDK 路径，不调整控制参数。它默认使用本人的 `$HOME/anaconda3/envs/hamer_rtx2060`、`mediapipe_env` 和本工程 `perception_hamer/_DATA`；你的依赖不在那里时修改对应路径即可。新电脑没有对应依赖时，先按 [完整性与复现说明](reproduction/20260914/README.md) 还原固定环境，不要直接装一套未锁版本的依赖。
 
-首次检出或切换到此版本后，先重新编译：
+重新下载或切换源码后，必须在当前工程编译，不能复制旧目录的 devel：
 
 ```bash
 source /opt/ros/noetic/setup.bash
 catkin_make -DCMAKE_BUILD_TYPE=Release -j3 -l3
-source devel/setup.bash
 ```
 
-## 版本内容
+随后仍运行上面的原入口。当前电脑原有的固定保存版及开发版继续保留。
 
-- 保留机械臂初始关节位姿 `[0, 0, 0, 0, π/2, 0]`；三指根启动与张手目标统一为 **5°**。
-- 左偏航手约 **35° → 末端名义90°**，右侧保持 **70° → 名义90°**；目标保留原有 2° 超调余量。横滚保持 3 倍。
-- 前方纸盒约 **6.9 × 7.6 × 11.67 cm**；左侧圆柱直径 **6 cm**、Y=**−0.41 m**。
-- 修正完整张手被越界背景裁剪框错误扣低置信度、导致一直保留闭合目标的问题。
-- 纳入实际使用的 MoveIt Servo 局部修改、qpOASES 源码、碰撞外形和录制脚本，避免依赖未提交的源码。
+## 本次保存得更完整的部分
 
-完整配置、验证结果、已知限制及从固定标签恢复的方法见 [版本说明](docs/versions/teleop-snapshot-20260910.md)。本次录像的问题定位见 [诊断记录](docs/versions/teleop_diagnosis_20260910.md)。较早的说明保存在 [v0.3 历史说明](docs/versions/README_v0.3_history.md)，其中旧参数不代表当前默认值。
+- 全部机械臂/三指手控制源码、自定义 MoveIt Servo、qpOASES 和 Gazebo 插件源码。
+- 相机处理、坐标映射、滤波、场景、机器人模型、碰撞形状和标定配置。
+- 实际安装环境里的 HaMeR 源码副本及 MIT 许可，位于 `third_party/hamer_runtime`。
+- 实际 ROS 参数、关键系统包版本、两个 Python 环境版本和模型内容校验，位于 `reproduction/20260914`。
+- Release 中保存两个原运行环境的可迁移备份分卷，避免在另一台电脑上凭感觉重新安装依赖。
+
+MANO 授权模型无法放入公开仓库，SMPL-X 也不重新分发。它们的原始来源、导入方法和版本列在复现说明中。训练权重按原始来源提供，不把历史录屏、临时实验和账号凭据混入源码。
+
+相同代码不能消除硬件和系统负载差异。本次固定的是代码、配置和运行依赖，不能据此承诺不同电脑有完全相同的延迟，也不表示此前所有控制问题均已修好。

@@ -1,0 +1,87 @@
+{
+  "release_tag": "teleop-complete-code-20260914",
+  "github_repository": "yiyidiu/myhandarmtest1",
+  "control_revision": "dac351836e236e77589e5fc969f4a4ae60493c7c",
+  "source_base_revision": "da8c63d44a14dd9305fc502ad724dda7fecc0a16",
+  "platform": "Ubuntu 20.04 x86_64, ROS Noetic, X11, supported NVIDIA CUDA GPU",
+  "environments": {
+    "hamer_rtx2060": {
+      "parts": [
+        {
+          "name": "hamer_rtx2060.tar.gz.part00",
+          "size": 1572864000,
+          "sha256": "18e89e4dc94ffb5a6a40a4a71c9b3e091dfdb1530de1fc4da54c8024eee413f8"
+        },
+        {
+          "name": "hamer_rtx2060.tar.gz.part01",
+          "size": 1572864000,
+          "sha256": "5c8562913a200e5e4efdf6ff6b7cd632f4f4e0c184449584668822ca0d5d1acc"
+        },
+        {
+          "name": "hamer_rtx2060.tar.gz.part02",
+          "size": 261951882,
+          "sha256": "95a54fb706f0ef12f37aa91e2f7744e9af81b5ee9f3abb25bf666e8c8cc92ce5"
+        }
+      ],
+      "public_exclusions": [
+        "smplx",
+        "smplx-0.1.28.dist-info"
+      ],
+      "origin": "Local running environment frozen 2026-09-14; conda-pack 0.8.1 relocatable archive"
+    },
+    "mediapipe_env": {
+      "parts": [
+        {
+          "name": "mediapipe_env.tar.gz.part00",
+          "size": 1572864000,
+          "sha256": "e5dcd4319da23819f13e54956784f2dade22e54ce448701b181278cf4a26d5a9"
+        },
+        {
+          "name": "mediapipe_env.tar.gz.part01",
+          "size": 1572864000,
+          "sha256": "24054d39d660bf3b29a84ca3a717b37c3fb3d7347100a00d6f9ec4d6e141bd9a"
+        },
+        {
+          "name": "mediapipe_env.tar.gz.part02",
+          "size": 439593134,
+          "sha256": "0f298eac3dac09bb2ebfb41c0d28e02cb2606b28fb66cd8cf05a9a2ee24d1183"
+        }
+      ],
+      "public_exclusions": [
+        "smplx",
+        "smplx-0.1.28.dist-info"
+      ],
+      "origin": "Local running environment frozen 2026-09-14; conda-pack 0.8.1 relocatable archive"
+    }
+  },
+  "model_files": {
+    "hamer_ckpts/checkpoints/hamer.ckpt": {
+      "size": 2689536166,
+      "sha256": "e5cc06f294d88a92dee24e603480aab04de532b49f0e08200804ee7d90e16f53",
+      "source": "HaMeR official model archive"
+    },
+    "hamer_ckpts/model_config.yaml": {
+      "size": 2072,
+      "sha256": "0e5eeb82752e47dfd01db8e13ccc4c5eba9bf83f53da8285523b8d3e87247aa3",
+      "source": "HaMeR official model archive"
+    },
+    "data/mano_mean_params.npz": {
+      "size": 1178,
+      "sha256": "efc0ec58e4a5cef78f3abfb4e8f91623b8950be9eff8b8e0dbb0d036ebc63988",
+      "source": "HaMeR official model archive"
+    },
+    "data/mano/MANO_RIGHT.pkl": {
+      "size": 3821356,
+      "sha256": "45d60aa3b27ef9107a7afd4e00808f307fd91111e1cfa35afd5c4a62de264767",
+      "source": "user-supplied licensed MANO"
+    }
+  },
+  "official_model_archive_url": "https://www.cs.utexas.edu/~pavlakos/hamer/data/hamer_demo_data.tar.gz",
+  "smplx": {
+    "filename": "smplx-0.1.28-py3-none-any.whl",
+    "url": "https://files.pythonhosted.org/packages/c9/33/bd37416aec828e7465652d9e2525fe52de0a29a581f1519cc51a74485091/smplx-0.1.28-py3-none-any.whl",
+    "sha256": "e8ff3d278a015c097dc86d44a38475da4ac170042943c84c08eee433629406a7",
+    "license_url": "https://github.com/vchoutas/smplx/blob/main/LICENSE"
+  },
+  "purpose": "Reference for the existing code and optional original runtime backups; no alternate installer or control strategy"
+}

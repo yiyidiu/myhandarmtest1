@@ -7,6 +7,7 @@
 /log/
 /logs/
 /.runtime/
+/teleop_machine.env
 /src/CMakeLists.txt
 
 # Editor and agent-local state

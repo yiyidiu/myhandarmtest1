@@ -2,6 +2,9 @@
 # Match the 2026-09-12 observation settings, with the grasp scene restored.
 set -Eeuo pipefail
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$script_directory/../teleop_machine.env" ]]; then
+  source "$script_directory/../teleop_machine.env"
+fi
 
 export TELEOP_MOTION_CONTROLLER=constrained
 export TELEOP_EMPTY_SCENE=false

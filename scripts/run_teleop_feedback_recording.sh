@@ -43,9 +43,16 @@ if [[ "${TELEOP_WRIST_DIAGNOSTICS:-false}" == true ]]; then
 fi
 export TELEOP_RGBD_RECORDING_FILE="$session_directory/rgbd.db3"
 export TELEOP_WRIST_DIAGNOSTICS_DIRECTORY="$session_directory/perception"
-git rev-parse HEAD > "$session_directory/commit.txt"
-git status --porcelain -uno > "$session_directory/tracked_changes.txt"
-git diff HEAD -- > "$session_directory/code_changes.patch"
+git_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ "$git_root" == "$workspace" ]]; then
+  git rev-parse HEAD > "$session_directory/commit.txt"
+  git status --porcelain -uno > "$session_directory/tracked_changes.txt"
+  git diff HEAD -- > "$session_directory/code_changes.patch"
+else
+  printf '%s\n' 'SOURCE_ARCHIVE: consult VERSION.md; Git revision unavailable' > "$session_directory/commit.txt"
+  printf '%s\n' 'Git metadata unavailable in this source archive.' > "$session_directory/tracked_changes.txt"
+  : > "$session_directory/code_changes.patch"
+fi
 if [[ -d "$workspace/src/moveit_servo" ]]; then
   mkdir -p "$session_directory/controller_source"
   cp -a "$workspace/src/moveit_servo" "$session_directory/controller_source/"
