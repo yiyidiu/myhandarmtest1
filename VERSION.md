@@ -1,4 +1,18 @@
-# v0.3.0-egm-stable-hold
+# 当前保存基线：2026-09-14
+
+控制与视觉实现固定于 `dac3518`。之后的保存工作仅修正启动环境选择、从全新终端加载 ROS 以及旧版说明，不调整运动或姿态参数。
+
+本机独立运行目录：`/home/dongtian/teleop_versions/20260914_dac3518/`。
+
+```bash
+bash /home/dongtian/teleop_versions/20260914_dac3518/run.sh
+```
+
+确切源码提交和环境清单见保存目录内的 `manifest.json`；完整恢复包仅在本机，未上传 GitHub。当前版本仍有真人遥操作待验收问题，保存不等于控制效果已经全部合格。
+
+以下为历史重建记录，不是当前版本标识。
+
+## 历史：v0.3.0-egm-stable-hold
 
 重建自 2026-08-24 18:31:22（Asia/Shanghai）的稳定 EGM 位置参考检查点。
 

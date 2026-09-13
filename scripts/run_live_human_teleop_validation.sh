@@ -5,8 +5,12 @@ script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 workspace="$(cd "$script_directory/.." && pwd)"
 cd "$workspace"
 
+# ROS Noetic setup hooks read optional variables before defining them.
+# A fresh shell must work as well as a terminal with ROS already sourced.
+set +u
 source /opt/ros/noetic/setup.bash
 source devel/setup.bash
+set -u
 
 motion_controller="${TELEOP_MOTION_CONTROLLER:-constrained}"
 case "$motion_controller" in

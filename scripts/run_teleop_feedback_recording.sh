@@ -8,8 +8,10 @@ helpers="$script_directory/feedback_capture"
 imu_python="${TELEOP_IMU_PYTHON:-/home/dongtian/anaconda3/envs/mediapipe_env/bin/python}"
 reconstruction="$helpers/reconstruct_wt901_sample_time.py"
 cd "$workspace"
+set +u
 source /opt/ros/noetic/setup.bash
 source "$workspace/devel/setup.bash"
+set -u
 recording_affinity_arguments=()
 if command -v taskset >/dev/null 2>&1 && (( $(nproc) >= 12 )); then
   recording_affinity_arguments=(taskset -c 2-7)
