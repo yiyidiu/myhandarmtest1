@@ -14,7 +14,7 @@
 - 默认带抓取场景、正面和侧面两个观察小窗；Gazebo中使用约束速度控制和QP求解。
 - 本入口仅运行Gazebo仿真，不启用实物ABB输出。
 
-控制与场景保存点是 `a4ba647`；后续封装只补依赖、可移植路径和恢复入口。详细坐标/历史验证见 [技术说明](docs/palm_axes_teleop_20260917/README.md)。
+控制与场景保存点是 `a4ba647`；后续封装只补依赖、可移植路径、恢复入口和准确的启动方法标识。详细坐标/历史验证见 [技术说明](docs/palm_axes_teleop_20260917/README.md)。
 
 ## 下载固定版本
 
@@ -83,6 +83,8 @@ TELEOP_REVERSE_PALM_TURN=false bash scripts/run_five_point_axes_teleop.sh
 ```
 
 ## 版本控制与验证范围
+
+本次已从GitHub重新克隆、恢复固定依赖、独立编译，并实际启动相机、Gazebo和两个观察窗，见 [恢复与启动记录](reproduction/20260917/VALIDATION.md)。
 
 固定标签不随以后开发变动；新改动应使用新提交和新标签。`teleop_machine.env`、模型、环境、编译产物及运行录像不提交到Git。公开发布不包含个人回放截图和原始实验录像，它们不影响在线运行。
 

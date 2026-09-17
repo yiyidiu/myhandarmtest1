@@ -1,0 +1,60 @@
+{
+  "source": "Fresh clone from GitHub release branch",
+  "environment_source": "Restored fixed public environment volumes in this checkout",
+  "model_source": "Imported owner-authorized baseline model files into this checkout",
+  "five_point_startup_message": true,
+  "camera_window_open": true,
+  "observer_images_received": {
+    "front": 62,
+    "side": 64
+  },
+  "observer_windows": [
+    "0x6c00006 \"D455 HaMeR/MANO - teleoperation_ubuntu_core renderer\": ()  2240x1200+20+90  +144+140",
+    "0x6a00007 \"侧面观察｜滚轮缩放｜Esc关闭视图\": (\"正面观察｜滚轮缩放｜Esc关闭视图\" \"正面观察｜滚轮缩放｜Esc关闭视图\")  480x360+20+90  +700+1114",
+    "0x6a00003 \"正面观察｜滚轮缩放｜Esc关闭视图\": (\"正面观察｜滚轮缩放｜Esc关闭视图\" \"正面观察｜滚轮缩放｜Esc关闭视图\")  480x360+20+90  +180+1114"
+  ],
+  "left_hand_ready_event_observed": false,
+  "pressed_C": false,
+  "human_grasp_test_performed": false,
+  "mapping_profile": "palm_axes_base_translation",
+  "reverse_palm_turn": true,
+  "rotation_gain": [
+    1.2857142857142858,
+    1.0,
+    3.0
+  ],
+  "models": [
+    "ground_plane",
+    "target_object",
+    "ground_object_left",
+    "ground_object_right",
+    "work_table",
+    "left_work_table",
+    "right_work_table",
+    "teleop_front_camera",
+    "robot",
+    "teleop_side_camera"
+  ],
+  "tables": {
+    "work_table": [
+      0.53,
+      0.0,
+      0.1025
+    ],
+    "left_work_table": [
+      0.08,
+      -0.45,
+      0.0725
+    ],
+    "right_work_table": [
+      0.08,
+      0.45,
+      0.0725
+    ]
+  },
+  "package_paths": {
+    "handarm_moveit_demo": "${CHECKOUT}/src/handarm_moveit_demo",
+    "handarm_sim_demo": "${CHECKOUT}/src/handarm_sim_demo",
+    "moveit_servo": "${CHECKOUT}/src/moveit_servo"
+  }
+}
