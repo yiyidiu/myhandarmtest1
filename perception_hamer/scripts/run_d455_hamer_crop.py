@@ -1806,8 +1806,12 @@ def main() -> int:
                     physical_is_right,
                 )
             print(
-                "control reference: MANO wrist-opening ring "
-                "(16 vertices, robust Kabsch; joint 0 is diagnostic only)",
+                ("control reference: MANO FIVE-POINT PALM, wrist joint 0 origin; "
+                 "X=palm-out, Y=index-to-little, Z=wrist-to-MCP-mean; "
+                 "wrist loop used only for shared depth positioning"
+                 if args.control_reference == "mano-five-point-palm" else
+                 "control reference: MANO wrist-opening ring "
+                 "(16 vertices, robust Kabsch; joint 0 is diagnostic only)"),
                 flush=True,
             )
         else:
