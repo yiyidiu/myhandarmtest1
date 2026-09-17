@@ -65,7 +65,9 @@ from perception_hamer.src.hand_pose_overlay import (
     draw_hand_pose_panel,
     draw_wrist_axes_diagnostic,
 )
-from perception_hamer.src.hamer_palm_frame import RobustBetasCalibrator
+from perception_hamer.src.hamer_palm_frame import (
+    RobustBetasCalibrator, build_hamer_five_point_palm_frame,
+)
 from perception_hamer.src.live_display import LiveDisplay, write_all
 from perception_hamer.src.mano_wrist_reference import (
     build_mano_wrist_definition,
@@ -465,6 +467,7 @@ class MediaPipeDetectionSidecar:
         height: int,
         minimum_confidence: float,
         cpu_affinity: str = "",
+        fixed_left_hand: bool = False,
     ) -> None:
         helper = SCRIPT_DIR / "mediapipe_detect_roi_once.py"
         self.width = int(width)
@@ -475,6 +478,8 @@ class MediaPipeDetectionSidecar:
             "--min-detection-confidence", str(float(minimum_confidence)),
             "--stream",
         ]
+        if fixed_left_hand:
+            command.append("--fixed-left-hand")
         if str(cpu_affinity).strip():
             command = ["taskset", "-c", str(cpu_affinity).strip()] + command
         self._process = subprocess.Popen(
@@ -647,6 +652,38 @@ def _draw_axes(
                 (255, 255, 255), 1, cv2.LINE_AA)
 
 
+def _draw_user_palm_axes(image, result, control, panel_offsets=(0,)):
+    """Project the actual control axes at wrist joint 0, including depth sign."""
+    rotation = np.asarray(control["rotation"], dtype=float)
+    wrist = np.asarray(result.pred_keypoints_3d_source_camera_axes[0], dtype=float)
+    source_points = np.vstack((wrist, wrist[None, :] + .055 * rotation.T))
+    canonical = source_points.copy()
+    if not result.is_right:
+        canonical[:, 0] *= -1
+    pixels, _ = project_hamer_vertices_to_original(
+        canonical, result.hamer_crop_projection_translation,
+        result.hamer_nominal_crop_focal_length,
+        result.quality["affine_original_to_crop"], 256)
+    for offset in panel_offsets:
+        points = np.asarray(pixels) + [offset, 0]
+        start = tuple(np.rint(points[0]).astype(int))
+        cv2.circle(image, start, 4, (255, 255, 255), -1)
+        for axis, color in enumerate(((0, 0, 255), (0, 255, 0), (255, 80, 0))):
+            end = tuple(np.rint(points[axis+1]).astype(int))
+            if np.linalg.norm(points[axis+1] - points[0]) < 7:
+                cv2.circle(image, start, 7, color, 2)
+                if rotation[2, axis] < 0:
+                    cv2.circle(image, start, 2, color, -1)  # toward viewer
+                else:
+                    cv2.line(image, (start[0]-4,start[1]-4), (start[0]+4,start[1]+4), color, 1)
+                    cv2.line(image, (start[0]-4,start[1]+4), (start[0]+4,start[1]-4), color, 1)
+                end = (start[0]+10, start[1]-10)
+            else:
+                cv2.arrowedLine(image, start, end, color, 2, tipLength=.22)
+            cv2.putText(image, '+'+'XYZ'[axis], (end[0]+4,end[1]-4),
+                        cv2.FONT_HERSHEY_SIMPLEX, .55, color, 2, cv2.LINE_AA)
+
+
 def _roi_detector_alignment(roi: Any, presence: Dict[str, Any]) -> dict:
     if not presence.get("valid"):
         return {
@@ -774,11 +811,19 @@ def _make_teleoperation_core_overlay(
                 # Display diagnostics never bypass the control packet's strict
                 # validation and never keep a stale reference marker.
                 pass
+        if (hand_presence_valid and roi_matches_detected_hand and result is not None
+                and control is not None and control.get("valid")
+                and control_reference_label == "MANO_FIVE_POINT_PALM_USER_XYZ"):
+            try:
+                _draw_user_palm_axes(canvas, result, control, (0, int(rgb.shape[1])))
+            except (ValueError, IndexError, FloatingPointError):
+                pass
 
     panel_width = int(rgb.shape[1])
     cv2.putText(
         canvas,
-        "HaMeR inference RGB",
+        ("Camera + new palm axes" if control_reference_label == "MANO_FIVE_POINT_PALM_USER_XYZ"
+         else "HaMeR inference RGB"),
         (8, canvas.shape[0] - 12),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.52,
@@ -788,7 +833,8 @@ def _make_teleoperation_core_overlay(
     )
     cv2.putText(
         canvas,
-        "teleoperation_ubuntu_core MANO 778 vertices / 1538 faces",
+        ("New palm control axes" if control_reference_label == "MANO_FIVE_POINT_PALM_USER_XYZ"
+         else "teleoperation_ubuntu_core MANO 778 vertices / 1538 faces"),
         (panel_width + 8, canvas.shape[0] - 12),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.47,
@@ -825,7 +871,23 @@ def _make_teleoperation_core_overlay(
             control_reference_label
         ),
     ]
-    if estimates is not None:
+    if control_reference_label == "MANO_FIVE_POINT_PALM_USER_XYZ":
+        header = canvas[:115, :min(canvas.shape[1], 640)].copy()
+        cv2.rectangle(canvas, (0, 0), (min(canvas.shape[1], 640)-1, 114), (0, 0, 0), -1)
+        cv2.addWeighted(header, .20, canvas[:115, :header.shape[1]], .80, 0,
+                        canvas[:115, :header.shape[1]])
+        spatial_translation = os.environ.get("TELEOP_MAPPING_PROFILE") == "palm_axes_base_translation"
+        status_lines = [
+            "NEW PALM AXES | LEFT HAND | red X, green Y, blue Z",
+            "X: palm-out   Y: index-to-little   Z: wrist-to-fingers",
+            ("MOVE: hand forward -> robot forward | hand up -> robot up"
+             if spatial_translation else "MOVE: hand +X -> tool +X | +Y -> -Y | +Z -> +Z"),
+            ("TURN: hand +X -> tool -X | +Y -> -Y | +Z -> +Z"
+             if os.environ.get("TELEOP_REVERSE_PALM_TURN") == "true"
+             else "TURN: hand +X -> tool +X | +Y -> -Y | +Z -> +Z"),
+            "C: set new zero   Q: quit | HaMeR {:.1f} Hz".format(processed_fps),
+        ]
+    if estimates is not None and control_reference_label != "MANO_FIVE_POINT_PALM_USER_XYZ":
         filter_diagnostics = estimates.get("palm_orientation_filter") or {}
         innovation = filter_diagnostics.get("innovation_deg")
         status_lines.append(
@@ -1330,12 +1392,13 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--control-reference",
-        choices=("mano-wrist-ring", "mano-joint-palm"),
+        choices=("mano-wrist-ring", "mano-joint-palm", "mano-five-point-palm"),
         default="mano-wrist-ring",
         help=(
             "mano-wrist-ring uses the archive's robust 16-vertex wrist-opening "
             "centre/frame (default); mano-joint-palm keeps the former joint-0 "
-            "and MCP-axis baseline"
+            "and MCP-axis baseline; mano-five-point-palm uses left-hand "
+            "X=palm-out, Y=index-to-little, Z=wrist-to-mean-MCPs"
         ),
     )
     parser.add_argument(
@@ -1373,6 +1436,8 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--left-hand", action="store_true")
+    parser.add_argument("--fixed-left-hand", action="store_true",
+                        help="lock all live detection, inference and pose identity to the known left hand")
     parser.add_argument("--no-display", action="store_true")
     parser.add_argument(
         "--display-backend", choices=("auto", "local", "sidecar"), default="auto",
@@ -1591,7 +1656,9 @@ def main() -> int:
         raise SystemExit(
             "--record-after-control-enabled requires --experiment and live UDP"
         )
-    is_right = not args.left_hand
+    is_right = False if args.fixed_left_hand else not args.left_hand
+    if args.fixed_left_hand:
+        print("Hand identity: FIXED LEFT (raw detector labels are diagnostic only).", flush=True)
     runner = HamerCropInference(
         args.checkpoint,
         data_root=args.data_root,
@@ -1727,7 +1794,7 @@ def main() -> int:
         )
         mano_topology = runner.mano_faces()
         wrist_definitions = {}
-        if args.control_reference == "mano-wrist-ring":
+        if args.control_reference in ("mano-wrist-ring", "mano-five-point-palm"):
             for physical_is_right in (False, True):
                 neutral_vertices, neutral_joints = runner.neutral_mano_geometry(
                     physical_is_right
@@ -1773,6 +1840,7 @@ def main() -> int:
                 seed_frame.rgb.shape[1], seed_frame.rgb.shape[0],
                 args.mediapipe_min_detection_confidence,
                 cpu_affinity=args.sidecar_cpu_affinity,
+                fixed_left_hand=args.fixed_left_hand,
             )
             async_detector = AsyncMediaPipeDetection(
                 detector_sidecar,
@@ -2268,6 +2336,16 @@ def main() -> int:
                                 wrist_definitions[bool(result.is_right)],
                                 previous_control_quaternion,
                             ).as_dict()
+                        elif args.control_reference == "mano-five-point-palm":
+                            raw_control = build_hamer_five_point_palm_frame(
+                                result.pred_keypoints_3d_source_camera_axes,
+                                bool(result.is_right), previous_control_quaternion,
+                            ).as_dict()
+                            raw_control["reference_kind"] = "MANO_FIVE_POINT_PALM_USER_XYZ"
+                            # Reuse the recorded experiment's RGB-D wrist-0
+                            # position estimator, never its wrist-ring axes.
+                            raw_control["quality"]["wrist_loop_vertex_indices"] = (
+                                wrist_definitions[False].wrist_loop.tolist())
                         else:
                             raw_control = {
                                 **raw_joint,
@@ -2349,6 +2427,8 @@ def main() -> int:
                                     "HAMER_MANO_JOINT_PALM_FRAME_"
                                     "QUALITY_ADAPTIVE_CAUSAL_SO3"
                                 )
+                                if args.control_reference == "mano-five-point-palm":
+                                    control["orientation_source"] = "HAMER_FIVE_POINT_PALM_USER_XYZ_CAUSAL_SO3"
                                 control["raw_rotation_preserved_in"] = (
                                     "control_wrist_frame_raw"
                                 )
@@ -2571,7 +2651,9 @@ def main() -> int:
                         required_reference_kind=(
                             "MANO_WRIST_RING_16"
                             if args.control_reference == "mano-wrist-ring"
-                            else "MANO_JOINT_0_PALM_FRAME_LEGACY"
+                            else ("MANO_FIVE_POINT_PALM_USER_XYZ"
+                                  if args.control_reference == "mano-five-point-palm"
+                                  else "MANO_JOINT_0_PALM_FRAME_LEGACY")
                         ),
                         palm_anchor_pixels=depth_palm_pixels,
                         depth_filter=wrist_depth_filter,

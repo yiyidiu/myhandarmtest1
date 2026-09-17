@@ -7,7 +7,6 @@
 /log/
 /logs/
 /.runtime/
-/teleop_machine.env
 /src/CMakeLists.txt
 
 # Editor and agent-local state
@@ -50,6 +49,9 @@ __pycache__/
 # ROS/Gazebo runtime output and local calibration
 *.log
 /camera_workspace_measured.yaml
+/teleop_machine.env
+/teleop_machine.env.previous
+/.venvs/
 
 # Accidental download residue seen in the original workspace
 /]+.deb[^'<> ]*

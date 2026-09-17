@@ -35,6 +35,7 @@ def _read_exact(size: int):
 def _detect(
     detector, rgb: np.ndarray, width: int, height: int, margin: float,
     minimum_bbox_area_fraction: float, edge_margin_px: float,
+    fixed_left_hand: bool = False,
 ) -> dict:
     result = detector.process(rgb)
     if not result.multi_hand_landmarks:
@@ -102,7 +103,9 @@ def _detect(
         # is not mirrored, so exchange Left/Right for the physical operator.
         media_pipe_label = handedness.label.lower()
         candidate.update({
-            "is_right": media_pipe_label == "left",
+            "is_right": False if fixed_left_hand else media_pipe_label == "left",
+            "detector_reported_is_right": media_pipe_label == "left",
+            "handedness_policy": "fixed_left" if fixed_left_hand else "automatic",
             "confidence": float(handedness.score),
             "mediapipe_selfie_label": media_pipe_label,
             "input_mirrored": False,
@@ -143,6 +146,8 @@ def main() -> int:
     # validity still decide whether the current image can control the robot.
     parser.add_argument("--min-bbox-area-fraction", type=float, default=0.006)
     parser.add_argument("--edge-margin-px", type=float, default=8.0)
+    parser.add_argument("--fixed-left-hand", action="store_true",
+                        help="use the known single-left-hand identity; retain raw classification for diagnostics")
     parser.add_argument("--stream", action="store_true",
                         help="read fixed-size RGB frames until stdin closes")
     args = parser.parse_args()
@@ -170,6 +175,7 @@ def main() -> int:
             result = _detect(
                 detector, rgb, args.width, args.height, args.margin,
                 args.min_bbox_area_fraction, args.edge_margin_px,
+                fixed_left_hand=args.fixed_left_hand,
             )
             print(json.dumps(result, separators=(",", ":")), flush=True)
             if not args.stream:

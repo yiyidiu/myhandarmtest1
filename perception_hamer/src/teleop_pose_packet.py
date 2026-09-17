@@ -639,8 +639,13 @@ def build_live_teleop_packet(
     if required_reference_kind and reference_kind != required_reference_kind:
         raise ValueError("control reference kind differs from configured reference")
     position_diagnostics = None
-    if reference_kind == "MANO_WRIST_RING_16":
+    if reference_kind in ("MANO_WRIST_RING_16", "MANO_FIVE_POINT_PALM_USER_XYZ"):
         loop = control.get("quality", {}).get("wrist_loop_vertex_indices")
+        wrist_offset = np.zeros(3)
+        if reference_kind == "MANO_FIVE_POINT_PALM_USER_XYZ":
+            vertices = np.asarray(result.pred_vertices_source_camera_axes)
+            joints = np.asarray(result.pred_keypoints_3d_source_camera_axes)
+            wrist_offset = joints[0] - vertices[np.asarray(loop, dtype=int)].mean(axis=0)
         wrist, depth_confidence, position_diagnostics, _ = (
             metric_wrist_ring_from_arrays(
                 result.pred_vertices_mano_right_canonical,
@@ -651,6 +656,8 @@ def build_live_teleop_packet(
                 frame.aligned_depth_raw,
                 frame.depth_scale_m_per_unit,
                 frame.color_intrinsics,
+                # The caller caches diagnostics["depth_m"], which belongs to
+                # this surface-association anchor, not the shifted wrist-0.
                 reference_depth_m=reference_depth_m,
                 reference_depth_age_s=reference_depth_age_s,
                 palm_anchor_pixels=palm_anchor_pixels,
@@ -669,6 +676,12 @@ def build_live_teleop_packet(
             # wrist anchor used by the existing forearm-orientation channel.
             position_diagnostics["legacy_wrist_position_m"] = (
                 wrist * (legacy_depth / wrist[2])).tolist()
+        if reference_kind == "MANO_FIVE_POINT_PALM_USER_XYZ":
+            # Match experiment C's metric wrist-0 origin. The visible-surface
+            # depth association is shared; no ring orientation enters control.
+            wrist = wrist + wrist_offset
+            position_source = "HAMER_WRIST_0_FROM_VISIBLE_HAND_SURFACE_AND_REAL_DEPTH"
+            position_diagnostics["control_origin"] = "MANO_WRIST_JOINT_0"
     else:
         wrist, depth_confidence, _ = metric_wrist_from_arrays(
             result.pred_keypoints_2d_crop_normalized,

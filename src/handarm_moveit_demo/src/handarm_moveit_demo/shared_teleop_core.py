@@ -1080,13 +1080,23 @@ class RelativePoseMapper:
                  maximum_relative_translation: Sequence[float],
                  maximum_relative_rotation_rad: float,
                  maximum_side_rotation_rad: Optional[float] = None,
-                 positive_side_rotation_gain: Optional[float] = None) -> None:
+                 positive_side_rotation_gain: Optional[float] = None,
+                 rotation_axis_sign: Sequence[float] = (1.0, 1.0, 1.0),
+                 side_rotation_output_sign: float = 1.0) -> None:
         self.translation_matrix = project_to_orthogonal(translation_matrix)
         self.rotation_matrix = project_to_so3(rotation_matrix)
         self.translation_gain = _finite_vector(
             translation_gain, 3, "translation_gain")
         self.rotation_gain = _finite_vector(
             rotation_gain, 3, "rotation_gain")
+        # Signed command angles are not a coordinate reflection applied to R.
+        self.rotation_axis_sign = _finite_vector(
+            rotation_axis_sign, 3, "rotation_axis_sign")
+        if not np.all(np.isin(self.rotation_axis_sign, [-1.0, 1.0])):
+            raise ValueError("rotation_axis_sign must contain only -1 or +1")
+        self.side_rotation_output_sign = float(side_rotation_output_sign)
+        if self.side_rotation_output_sign not in (-1.0, 1.0):
+            raise ValueError("side_rotation_output_sign must be -1 or +1")
         self.positive_side_rotation_gain = (
             self.rotation_gain[0] if positive_side_rotation_gain is None
             else float(positive_side_rotation_gain))
@@ -1128,13 +1138,14 @@ class RelativePoseMapper:
 
         hand_rotation_vector = so3_log(relative_hand_rotation)
         mapped_rotation_vector = (
-            self.rotation_matrix @ hand_rotation_vector) * self.rotation_gain
+            self.rotation_matrix @ hand_rotation_vector) * self.rotation_gain * self.rotation_axis_sign
         rotation_size = float(np.linalg.norm(mapped_rotation_vector))
         if rotation_size > self.maximum_relative_rotation_rad:
             mapped_rotation_vector *= (
                 self.maximum_relative_rotation_rad / rotation_size)
         target_position = zero_position + mapped_translation
         if self.maximum_side_rotation_rad is None:
+            mapped_rotation_vector[0] *= self.side_rotation_output_sign
             relative_target = so3_exp(mapped_rotation_vector)
         else:
             # Ordered tool-zero X/Y/Z angles: side rotation, tilt, then
@@ -1150,10 +1161,17 @@ class RelativePoseMapper:
             else:
                 side = math.atan2(mapped_hand[2, 1], mapped_hand[1, 1])
                 roll = 0.0
+            side *= self.rotation_axis_sign[0]
+            tilt *= self.rotation_axis_sign[1]
+            roll *= self.rotation_axis_sign[2]
             side_gain = (self.positive_side_rotation_gain if side >= 0.0
                          else self.rotation_gain[0])
             side = float(np.clip(side * side_gain,
                 -self.maximum_side_rotation_rad, self.maximum_side_rotation_rad))
+            # Reverse the requested motion AFTER selecting the original
+            # direction-dependent gain and limit. Flipping the input sign
+            # would also swap the +X/-X amplification, which is not requested.
+            side *= self.side_rotation_output_sign
             # Amplified roll must stop at the configured angular range,
             # rather than wrapping back after a full turn of the target.
             roll = float(np.clip(roll * self.rotation_gain[2],
@@ -1186,11 +1204,14 @@ class RelativePoseMapper:
             self.translation_matrix @ raw[:3]) * self.translation_gain
         angular_hand_zero = hand_zero.T @ raw[3:]
         angular_tool_zero = (
-            self.rotation_matrix @ angular_hand_zero) * self.rotation_gain
+            self.rotation_matrix @ angular_hand_zero) * self.rotation_gain * self.rotation_axis_sign
+        angular_tool_zero[0] *= self.side_rotation_output_sign
         angular_base = robot_zero @ angular_tool_zero
         if (relative_hand_rotation is not None
                 and (self.maximum_side_rotation_rad is not None or
-                     not np.allclose(self.rotation_gain, np.ones(3)))):
+                     not np.allclose(self.rotation_gain, np.ones(3)) or
+                     not np.allclose(self.rotation_axis_sign, np.ones(3)) or
+                     self.side_rotation_output_sign != 1.0)):
             # Different angle gains do not commute with finite 3-D rotation.
             # Differentiate the actual pose map so yaw amplification cannot
             # give mixed pitch/roll motion an inconsistent feed-forward twist.
@@ -1223,6 +1244,81 @@ class RelativePoseMapper:
         rotated = rotation_weights @ value[3:] / np.sum(
             rotation_weights, axis=1)
         return np.clip(np.concatenate((translated, rotated)), 0.0, 1.0)
+
+
+class PalmAxesToolZeroMapper(RelativePoseMapper):
+    """Signed palm-zero rotation with optional fixed camera/base translation.
+
+    With camera_to_base_translation_matrix, translation follows physical
+    forward/up regardless of the hand/tool zero orientation. Omitting it
+    retains the original palm-zero -> tool-zero translation for rollback.
+    Rotation signs apply to ordered control angles; a det=-1 reflection is
+    never passed off as an SO(3) rotation matrix.
+    """
+
+    def __init__(self, translation_gain, rotation_gain,
+                 maximum_relative_translation, maximum_relative_rotation_rad,
+                 maximum_side_rotation_rad=None, positive_side_rotation_gain=None,
+                 camera_to_base_translation_matrix=None, reverse_palm_turn=False):
+        self.translation_in_base = camera_to_base_translation_matrix is not None
+        self.reverse_palm_turn = bool(reverse_palm_turn)
+        super().__init__(
+            (camera_to_base_translation_matrix if self.translation_in_base
+             else np.diag([1., -1., 1.])),
+            np.eye(3), translation_gain, rotation_gain,
+            maximum_relative_translation, maximum_relative_rotation_rad,
+            maximum_side_rotation_rad=maximum_side_rotation_rad,
+            positive_side_rotation_gain=positive_side_rotation_gain,
+            rotation_axis_sign=[1., -1., 1.],
+            side_rotation_output_sign=(-1.0 if self.reverse_palm_turn else 1.0))
+        self.hand_zero_rotation = None
+
+    def set_hand_zero_rotation(self, rotation):
+        self.hand_zero_rotation = project_to_so3(rotation)
+
+    def map(self, relative_hand_position, relative_hand_rotation,
+            robot_zero_position, robot_zero_rotation):
+        if self.hand_zero_rotation is None:
+            raise ValueError("new palm axes require an explicitly captured hand zero")
+        if self.translation_in_base:
+            # The initial tool +X points backward and +Z downward. Physical
+            # forward/up must therefore not be rotated by the captured tool
+            # frame (nor by a tilted hand zero).
+            return super().map(relative_hand_position, relative_hand_rotation,
+                               robot_zero_position, robot_zero_rotation)
+        hand_delta = self.hand_zero_rotation.T @ _finite_vector(
+            relative_hand_position, 3, "relative_hand_position")
+        local_delta = clamp_each(
+            (self.translation_matrix @ hand_delta) * self.translation_gain,
+            self.maximum_relative_translation)
+        robot_zero = project_to_so3(robot_zero_rotation)
+        position = _finite_vector(robot_zero_position, 3, "robot_zero_position") + robot_zero @ local_delta
+        _, rotation = super().map(
+            np.zeros(3), relative_hand_rotation, robot_zero_position, robot_zero)
+        return position, rotation
+
+    def map_target_velocity(self, raw_hand_velocity, hand_zero_rotation,
+                            robot_zero_rotation, **kwargs):
+        result = super().map_target_velocity(
+            raw_hand_velocity, hand_zero_rotation, robot_zero_rotation, **kwargs)
+        if self.translation_in_base:
+            return result
+        raw = _finite_vector(raw_hand_velocity, 6, "raw_hand_velocity")
+        hand_zero = project_to_so3(hand_zero_rotation)
+        robot_zero = project_to_so3(robot_zero_rotation)
+        result[:3] = robot_zero @ ((self.translation_matrix @ hand_zero.T @ raw[:3]) * self.translation_gain)
+        return result
+
+    def mapping_diagnostics(self):
+        result = super().mapping_diagnostics()
+        result.update(mode=("PALM_ROTATION_WITH_BASE_TRANSLATION"
+                            if self.translation_in_base else "PALM_ZERO_TO_TOOL_ZERO"),
+                      rotation_axis_sign=[int(self.side_rotation_output_sign), -1, 1],
+                      reverse_palm_turn=self.reverse_palm_turn,
+                      translation_frame=("base_link" if self.translation_in_base
+                                         else "captured_tool_zero"),
+                      hand_axes="X=palm_out,Y=index_to_little,Z=wrist_to_MCP_mean")
+        return result
 
 
 class GroundSectorWorkspace:

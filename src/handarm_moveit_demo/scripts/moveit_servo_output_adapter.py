@@ -42,7 +42,8 @@ class MoveItServoOutputAdapter:
         self.base_frame = frames.get("base", "base_link")
         self.workspace_mode = "AXIS_ALIGNED_BOX"
         self.ground_sector_workspace = None
-        if self.mapping_profile_name == "current_linear":
+        if self.mapping_profile_name in (
+                "current_linear", "palm_axes_tool_zero", "palm_axes_base_translation"):
             selected_workspace = workspace
         else:
             profile = self.config.get("mapping_profiles", {}).get(

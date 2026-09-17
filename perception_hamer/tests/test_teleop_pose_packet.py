@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -26,6 +27,34 @@ INTRINSICS = {
 
 
 class TeleopPosePacketTest(unittest.TestCase):
+    def test_new_palm_uses_wrist_zero_without_shifting_cached_surface_depth(self):
+        vertices = self._ring_vertices()
+        source = vertices.copy();source[:, 0] *= -1
+        offset = np.array([.01, -.005, .02])
+        joints = np.zeros((21, 3));joints[0] = source[:16].mean(0) + offset
+        result = SimpleNamespace(
+            is_right=False, timestamp=13.,
+            pred_vertices_mano_right_canonical=vertices,
+            pred_vertices_source_camera_axes=source,
+            pred_keypoints_3d_source_camera_axes=joints,
+            hamer_crop_projection_translation=np.array([0., 0., 1.]),
+            hamer_nominal_crop_focal_length=np.array([256., 256.]),
+            quality={"affine_original_to_crop": [[1,0,0],[0,1,0]], "bbox_visible_fraction": 1.})
+        frame = SimpleNamespace(aligned_depth_raw=np.zeros((480,640),np.uint16),
+            depth_scale_m_per_unit=.001, color_intrinsics=INTRINSICS)
+        control = dict(valid=True, rotation=np.eye(3).tolist(),
+            reference_kind="MANO_FIVE_POINT_PALM_USER_XYZ",
+            quality={"wrist_loop_vertex_indices": list(range(16))})
+        with patch("perception_hamer.src.teleop_pose_packet.metric_wrist_ring_from_arrays",
+                   return_value=(np.array([.1,.2,.9]), 1., {"depth_m":.9}, None)) as depth:
+            packet = build_live_teleop_packet(result, {"control_wrist_frame":control},
+                frame, SimpleNamespace(confidence=1.), "new-palm", 1, 1, 1,
+                reference_depth_m=.91, required_reference_kind=control["reference_kind"])
+        self.assertEqual(depth.call_args.kwargs["reference_depth_m"], .91)
+        np.testing.assert_allclose(packet["wrist_position_m"], [.11,.195,.92])
+        self.assertEqual(packet["position_diagnostics"]["depth_m"], .9)
+        self.assertEqual(packet["position_diagnostics"]["control_origin"], "MANO_WRIST_JOINT_0")
+
     @staticmethod
     def _proximal_diagnostic(wrist_z, surface_z, legacy_z):
         return {"depth_m": wrist_z, "proximal_surface_association": {

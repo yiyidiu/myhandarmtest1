@@ -1,0 +1,9 @@
+# Python 3.10; perception only. ROS Noetic stays in the system Python environment.
+mediapipe==0.10.21
+numpy==1.26.4
+opencv-contrib-python==4.11.0.86
+pyrealsense2==2.58.3.10794
+scipy==1.15.3
+# Offline comparison/report only:
+rosbags==0.10.11
+matplotlib==3.10.9

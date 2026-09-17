@@ -128,7 +128,8 @@ def replay(records, variant):
     from sensor_msgs.msg import JointState
     from handarm_moveit_demo.msg import HamerHandPose
     rospy.init_node('known_intent_replay', anonymous=True)
-    rospy.wait_for_message('/handarm_sim_demo/scene_ready', Bool, timeout=90)
+    if rospy.get_param('/six_dof_trend/require_scene_ready', False):
+        rospy.wait_for_message('/handarm_sim_demo/scene_ready', Bool, timeout=90)
     latest = {}
     observation = []
     start = [None]

@@ -21,7 +21,7 @@ if (( $# > 1 )); then
   echo "用法：$0 [新的录制文件夹]" >&2
   exit 2
 fi
-if pgrep -f 'run_d455_hamer_crop.py|live_human_ground_gazebo_egm_teleop.launch' >/dev/null 2>&1; then
+if pgrep -f 'run_d455_hamer_crop.py|perception_mediapipe/run_live.py|live_human_ground_gazebo_egm_teleop.launch' >/dev/null 2>&1; then
   echo "已有遥操作进程，请先在旧相机窗口按 Q，等待旧命令退出后再录制。" >&2
   exit 3
 fi
@@ -43,16 +43,9 @@ if [[ "${TELEOP_WRIST_DIAGNOSTICS:-false}" == true ]]; then
 fi
 export TELEOP_RGBD_RECORDING_FILE="$session_directory/rgbd.db3"
 export TELEOP_WRIST_DIAGNOSTICS_DIRECTORY="$session_directory/perception"
-git_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-if [[ "$git_root" == "$workspace" ]]; then
-  git rev-parse HEAD > "$session_directory/commit.txt"
-  git status --porcelain -uno > "$session_directory/tracked_changes.txt"
-  git diff HEAD -- > "$session_directory/code_changes.patch"
-else
-  printf '%s\n' 'SOURCE_ARCHIVE: consult VERSION.md; Git revision unavailable' > "$session_directory/commit.txt"
-  printf '%s\n' 'Git metadata unavailable in this source archive.' > "$session_directory/tracked_changes.txt"
-  : > "$session_directory/code_changes.patch"
-fi
+git rev-parse HEAD > "$session_directory/commit.txt"
+git status --porcelain -uno > "$session_directory/tracked_changes.txt"
+git diff HEAD -- > "$session_directory/code_changes.patch"
 if [[ -d "$workspace/src/moveit_servo" ]]; then
   mkdir -p "$session_directory/controller_source"
   cp -a "$workspace/src/moveit_servo" "$session_directory/controller_source/"
@@ -88,6 +81,7 @@ value={"status":"PREPARING_RECORDERS","created_host_wall_ns":time.time_ns(),"cre
  "forearm_fusion_requested":os.environ.get("TELEOP_FOREARM_FUSION","false").lower()=="true",
  "forearm_control_fusion_enabled":False,
  "positive_view_bias_gain":float(os.environ.get("TELEOP_POSITIVE_VIEW_BIAS_GAIN","0")),
+ "hand_backend":os.environ.get("TELEOP_HAND_BACKEND","mediapipe3d"),
  "imu_calibrated_pose_enabled":os.environ.get("TELEOP_IMU_CALIBRATED_POSE","false").lower()=="true",
  "precise_orientation_enabled":os.environ.get("TELEOP_PRECISE_ORIENTATION","false").lower()=="true",
  "requested_camera_resolution":os.environ.get("TELEOP_CAMERA_RESOLUTION","640x480"),

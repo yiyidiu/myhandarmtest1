@@ -24,7 +24,7 @@ from handarm_moveit_demo.shared_teleop_core import (
     AprilTagV3PoseContinuityFilter, CollisionRetreatGuard, CZeroRecoveryTarget, PoseSample,
     sampled_velocity_freshness,
     CameraRangeWorkspaceMapper, GroundSectorWorkspace,
-    RelativePoseMapper, RelativePoseServoController,
+    RelativePoseMapper, PalmAxesToolZeroMapper, RelativePoseServoController,
     SixDofTrendEstimator, StationaryFeedforwardGate,
     SymmetricSideGraspProjector,
     confirmed_position_reference_hold,
@@ -127,14 +127,25 @@ class SixDofTrendNode:
             smoothing_alpha=trend.get("causal_smoothing_alpha", 0.45),
             reanchor_after_rejections=trend.get("reanchor_after_rejections", 3),
         )
-        if self.mapping_profile_name == "current_linear":
-            self.mapper = RelativePoseMapper(
+        if self.mapping_profile_name in (
+                "current_linear", "palm_axes_tool_zero", "palm_axes_base_translation"):
+            new_palm_axes = self.mapping_profile_name != "current_linear"
+            mapper_type = PalmAxesToolZeroMapper if new_palm_axes else RelativePoseMapper
+            axis_arguments = () if new_palm_axes else (
                 mapping.get("translation_matrix", np.eye(3)),
-                mapping.get("rotation_matrix", np.eye(3)),
-                mapping.get("translation_gain", [1, 1, 1]),
-                mapping.get("rotation_gain", [1, 1, 1]),
-                control.get("maximum_relative_translation_m", [0.20]*3),
-                math.radians(control.get(
+                mapping.get("rotation_matrix", np.eye(3)))
+            palm_options = (
+                {"camera_to_base_translation_matrix": mapping["translation_matrix"]}
+                if self.mapping_profile_name == "palm_axes_base_translation" else {})
+            if new_palm_axes:
+                palm_options["reverse_palm_turn"] = rospy.get_param(
+                    "~reverse_palm_turn", False)
+            self.mapper = mapper_type(
+                *axis_arguments,
+                translation_gain=mapping.get("translation_gain", [1, 1, 1]),
+                rotation_gain=mapping.get("rotation_gain", [1, 1, 1]),
+                maximum_relative_translation=control.get("maximum_relative_translation_m", [0.20]*3),
+                maximum_relative_rotation_rad=math.radians(control.get(
                     "maximum_relative_rotation_deg", 90.0)),
                 maximum_side_rotation_rad=(
                     math.radians(mapping["maximum_side_rotation_deg"] -
@@ -142,6 +153,7 @@ class SixDofTrendNode:
                     if "maximum_side_rotation_deg" in mapping else None),
                 positive_side_rotation_gain=mapping.get(
                     "positive_side_rotation_gain"),
+                **palm_options,
             )
         else:
             profiles = config.get("mapping_profiles", {})
@@ -1148,7 +1160,10 @@ class SixDofTrendNode:
             with self.lock:
                 robot_zero_position = self.robot_zero_position.copy()
                 robot_zero_rotation = self.robot_zero_rotation.copy()
-            if self.mapping_profile_name == "current_linear":
+            if self.mapping_profile_name in (
+                    "palm_axes_tool_zero", "palm_axes_base_translation"):
+                self.mapper.set_hand_zero_rotation(hand_zero_rotation)
+            elif self.mapping_profile_name == "current_linear":
                 camera_axes = self.camera_rotation_to_tool_zero
                 if camera_axes is not None:
                     # result.relative_rotation is R_hand_zero.T @ R_hand.
@@ -1187,7 +1202,8 @@ class SixDofTrendNode:
                     relative_hand_position=result.relative_position,
                     robot_zero_position=robot_zero_position,
                     **({"relative_hand_rotation": side_projection.rotation}
-                       if self.mapping_profile_name == "current_linear"
+                       if self.mapping_profile_name in (
+                           "current_linear", "palm_axes_tool_zero", "palm_axes_base_translation")
                        else {}))
             mapping_diagnostics = self.mapper.mapping_diagnostics()
             if self.pose_reachability_enabled:

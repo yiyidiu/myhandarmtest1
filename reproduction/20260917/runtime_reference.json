@@ -1,8 +1,6 @@
 {
-  "release_tag": "teleop-complete-code-20260914",
   "github_repository": "yiyidiu/myhandarmtest1",
-  "control_revision": "dac351836e236e77589e5fc969f4a4ae60493c7c",
-  "source_base_revision": "da8c63d44a14dd9305fc502ad724dda7fecc0a16",
+  "control_revision": "a4ba647",
   "platform": "Ubuntu 20.04 x86_64, ROS Noetic, X11, supported NVIDIA CUDA GPU",
   "environments": {
     "hamer_rtx2060": {
@@ -83,5 +81,7 @@
     "sha256": "e8ff3d278a015c097dc86d44a38475da4ac170042943c84c08eee433629406a7",
     "license_url": "https://github.com/vchoutas/smplx/blob/main/LICENSE"
   },
-  "purpose": "Reference for the existing code and optional original runtime backups; no alternate installer or control strategy"
+  "purpose": "Pinned dependency restoration for the 2026-09-17 five-point palm teleoperation release.",
+  "environment_release_tag": "teleop-complete-code-20260914",
+  "release_tag": "teleop-palm-axes-20260917"
 }

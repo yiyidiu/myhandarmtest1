@@ -63,10 +63,10 @@ class HamerPalmFrameResult:
             "is_right": self.is_right,
             "failure_reason": self.failure_reason,
             "quality": dict(self.quality),
-            "definition": (
+            "definition": self.quality.get("axis_definition", (
                 "x=normalize(index_mcp-little_mcp); "
                 "y=orthogonalized(middle_mcp-wrist); z=x_cross_y"
-            ),
+            )),
             "global_orient_used": False,
         }
 
@@ -159,6 +159,48 @@ def build_hamer_joint_palm_frame(
     )
 
 
+def build_hamer_five_point_palm_frame(
+    joints: Any,
+    is_right: bool,
+    previous_quaternion_xyzw: Optional[Sequence[float]] = None,
+) -> HamerPalmFrameResult:
+    """Left-hand user axes: X palm-out, Y index-to-little, Z wrist-to-MCPs.
+
+    Uses the same five joints as experiment C, with a fixed proper axis
+    permutation/sign change. No wrist-ring orientation or alignment is used.
+    """
+    if not isinstance(is_right, (bool, np.bool_)) or bool(is_right):
+        return invalid_palm_frame("new_palm_axes_require_left_hand")
+    points = np.asarray(joints, dtype=np.float64)
+    if points.shape != (21, 3) or not np.all(np.isfinite(points)):
+        return invalid_palm_frame("joints_must_be_finite_21x3", False)
+    wrist = points[0]
+    z_axis = points[[5, 9, 13, 17]].mean(axis=0) - wrist
+    length = float(np.linalg.norm(z_axis))
+    if length < .015:
+        return invalid_palm_frame("palm_length_too_short", False)
+    z_axis /= length
+    y_axis = points[17] - points[5]
+    y_axis -= z_axis * np.dot(y_axis, z_axis)
+    width = float(np.linalg.norm(y_axis))
+    if width < .01:
+        return invalid_palm_frame("palm_width_degenerate", False)
+    y_axis /= width
+    x_axis = np.cross(y_axis, z_axis)
+    rotation = require_so3(np.column_stack((x_axis, y_axis, z_axis)))
+    quaternion = align_quaternion_sign(
+        rotation_matrix_to_quaternion_xyzw(rotation), previous_quaternion_xyzw)
+    return HamerPalmFrameResult(
+        True, rotation, quaternion, wrist.copy(), False, "", {
+            "axis_definition": "X=Y_cross_Z(palm_out); Y=index_to_little; Z=wrist_to_mean_MCP_5_9_13_17",
+            "joint_indices": [0, 5, 9, 13, 17],
+            "palm_length_model_m": length,
+            "palm_width_model_m": width,
+            "determinant": float(np.linalg.det(rotation)),
+            "wrist_ring_orientation_used": False,
+        })
+
+
 class RobustBetasCalibrator:
     """Collect 30--60 valid beta vectors and freeze their coordinate-wise median."""
 
@@ -223,5 +265,6 @@ __all__ = [
     "HamerPalmFrameResult",
     "RobustBetasCalibrator",
     "build_hamer_joint_palm_frame",
+    "build_hamer_five_point_palm_frame",
     "invalid_palm_frame",
 ]

@@ -4,6 +4,10 @@ set -Eeuo pipefail
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 workspace="$(cd "$script_directory/.." && pwd)"
 cd "$workspace"
+if [[ -f "$workspace/teleop_machine.env" ]]; then
+  source "$workspace/teleop_machine.env"
+fi
+export PYTHONPATH="$workspace/third_party/hamer_runtime${PYTHONPATH:+:$PYTHONPATH}"
 
 # ROS Noetic setup hooks read optional variables before defining them.
 # A fresh shell must work as well as a terminal with ROS already sourced.
@@ -14,18 +18,52 @@ set -u
 
 motion_controller="${TELEOP_MOTION_CONTROLLER:-constrained}"
 case "$motion_controller" in
-  constrained) constrained_velocity_projection=true ;;
-  legacy) constrained_velocity_projection=false ;;
-  *) echo "TELEOP_MOTION_CONTROLLER 只能是 constrained 或 legacy。" >&2; exit 2 ;;
+  constrained) constrained_velocity_projection=true; joint_velocity_solver=qp ;;
+  servo) constrained_velocity_projection=true; joint_velocity_solver=servo ;;
+  legacy) constrained_velocity_projection=false; joint_velocity_solver=qp ;;
+  *) echo "TELEOP_MOTION_CONTROLLER 只能是 constrained、servo 或 legacy。" >&2; exit 2 ;;
 esac
 
-conda_executable="${TELEOP_CONDA_EXECUTABLE:-/home/dongtian/anaconda3/bin/conda}"
+hand_backend="${TELEOP_HAND_BACKEND:-mediapipe3d}"
+control_reference="${TELEOP_CONTROL_REFERENCE:-mano-wrist-ring}"
+mapping_profile="${TELEOP_MAPPING_PROFILE:-current_linear}"
+case "$control_reference" in
+  mano-wrist-ring|mano-joint-palm|mano-five-point-palm) ;;
+  *) echo "Unsupported TELEOP_CONTROL_REFERENCE" >&2; exit 2 ;;
+esac
+case "$mapping_profile" in
+  current_linear|palm_axes_tool_zero|palm_axes_base_translation) ;;
+  *) echo "Unsupported TELEOP_MAPPING_PROFILE" >&2; exit 2 ;;
+esac
+if [[ "$mapping_profile" == palm_axes_* || "$control_reference" == mano-five-point-palm ]]; then
+  if [[ "$hand_backend" != hamer || "$control_reference" != mano-five-point-palm || "$mapping_profile" == current_linear ]]; then
+    echo "新版五点坐标必须与对应的平移/旋转映射配套，请运行 run_five_point_axes_teleop.sh。" >&2
+    exit 2
+  fi
+fi
+case "$hand_backend" in
+  mediapipe) mediapipe_mode=rgbd ;;
+  mediapipe3d) mediapipe_mode=world ;;
+  hamer) ;; # retained only for an explicit baseline comparison
+  *) echo "TELEOP_HAND_BACKEND: mediapipe, mediapipe3d, hamer" >&2; exit 2 ;;
+esac
+mediapipe_python="${TELEOP_MEDIAPIPE_PYTHON:-$workspace/.venvs/mediapipe_env/bin/python}"
+export MEDIAPIPE_PYTHON="$mediapipe_python"
+export MEDIAPIPE_ENV_PREFIX="$(dirname "$(dirname "$mediapipe_python")")"
+if [[ "$hand_backend" != hamer ]]; then
+  export TELEOP_IMU_CALIBRATED_POSE=false
+  export TELEOP_PRECISE_ORIENTATION=false
+fi
+
+conda_executable="${TELEOP_CONDA_EXECUTABLE:-$HOME/anaconda3/bin/conda}"
 if [[ -n "${TELEOP_HAMER_PYTHON:-}" ]]; then
   hamer_command=("$TELEOP_HAMER_PYTHON")
+elif [[ -x "$workspace/.venvs/hamer_rtx2060/bin/python" ]]; then
+  hamer_command=("$workspace/.venvs/hamer_rtx2060/bin/python")
 else
   hamer_command=("$conda_executable" run --no-capture-output -n hamer_rtx2060 python)
 fi
-asset_root="${TELEOP_HAMER_ASSET_ROOT:-/home/dongtian/myhandarmtest1-v1.0.1-ubuntu2004/perception_hamer/_DATA}"
+asset_root="${TELEOP_HAMER_ASSET_ROOT:-$workspace/perception_hamer/_DATA}"
 checkpoint="$asset_root/hamer_ckpts/checkpoints/hamer.ckpt"
 empty_motion_scene="${TELEOP_EMPTY_SCENE:-false}"
 case "$empty_motion_scene" in true|false) ;; *) echo "TELEOP_EMPTY_SCENE must be true or false" >&2; exit 2 ;; esac
@@ -37,13 +75,20 @@ fi
 runtime_directory="$workspace/.runtime/live_human_validation_$(date +%Y%m%dT%H%M%S)"
 mkdir -p "$runtime_directory"
 
-for required in "${hamer_command[0]}" "$checkpoint" "$asset_root/data/mano/MANO_RIGHT.pkl"; do
+required_files=("$mediapipe_python")
+if [[ "$hand_backend" == hamer ]]; then
+  required_files=("${hamer_command[0]}" "$mediapipe_python" "$checkpoint"
+    "$asset_root/hamer_ckpts/model_config.yaml" "$asset_root/data/mano_mean_params.npz"
+    "$asset_root/data/mano/MANO_RIGHT.pkl")
+fi
+for required in "${required_files[@]}"; do
   if [[ ! -e "$required" ]]; then
     echo "缺少运行文件：$required" >&2
+    echo "首次下载请按 README 执行 scripts/setup_current_release.sh。" >&2
     exit 2
   fi
 done
-if pgrep -f 'run_d455_hamer_crop.py|live_human_ground_gazebo_egm_teleop.launch' \
+if pgrep -f 'run_d455_hamer_crop.py|perception_mediapipe/run_live.py|live_human_ground_gazebo_egm_teleop.launch' \
     >/dev/null 2>&1; then
   echo "已有相机或 Gazebo 遥操作进程。请先在旧窗口按 Q，并结束旧 roslaunch。" >&2
   exit 3
@@ -74,7 +119,9 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo "正在启动 Gazebo 和 ROS 控制链……"
-if [[ "$constrained_velocity_projection" == true ]]; then
+if [[ "$joint_velocity_solver" == servo ]]; then
+  echo "本次使用 MoveIt Servo 求解，保留当前反馈、手指保护和 250 Hz 参考链。"
+elif [[ "$constrained_velocity_projection" == true ]]; then
   echo "本次使用约束速度控制；旧控制可通过 TELEOP_MOTION_CONTROLLER=legacy 运行。"
 else
   echo "本次使用本轮修改前的运动控制；物体使用当前布局。"
@@ -91,11 +138,13 @@ setsid "${simulation_affinity_arguments[@]}" roslaunch handarm_moveit_demo \
   live_human_ground_gazebo_egm_teleop.launch \
   gazebo_gui:=true with_ground_object:=true enable_logger:=false \
   empty_motion_scene:="$empty_motion_scene" \
+  use_simulated_environment_for_control:=false \
   grasp_alignment_views:="${TELEOP_ALIGNMENT_VIEWS:-true}" \
   input_source:=udp \
   constrained_velocity_projection:="$constrained_velocity_projection" \
+  joint_velocity_solver:="$joint_velocity_solver" \
   position_accommodation_m:="${TELEOP_POSITION_ACCOMMODATION_M:-0.0}" \
-  mapping_profile:=current_linear \
+  mapping_profile:="$mapping_profile" \
   hamer_input_timeout_s:=0.40 \
   hamer_maximum_pipeline_latency_s:=0.25 \
   >"$runtime_directory/roslaunch.log" 2>&1 &
@@ -125,27 +174,8 @@ if [[ "$ros_ready" != true ]]; then
   exit 4
 fi
 
-scene_ready=false
-for _ in $(seq 1 240); do
-  # Under Gazebo load the Python rostopic client can need more than one second
-  # merely to complete its ROS handshake.  Capture the one-shot latched value
-  # first, then inspect it locally; a short grep pipeline plus pipefail could
-  # otherwise hide a real True value behind timeout/SIGPIPE status.
-  scene_ready_message="$(
-    timeout 5 rostopic echo -n 1 /handarm_sim_demo/scene_ready 2>/dev/null
-  )" || scene_ready_message=""
-  if grep -q 'data: True' <<<"$scene_ready_message"; then
-    scene_ready=true
-    break
-  fi
-  sleep 0.25
-done
-if [[ "$scene_ready" != true ]]; then
-  echo "MoveIt/Gazebo 场景安全状态未就绪：$runtime_directory/roslaunch.log" >&2
-  exit 5
-fi
-
-echo "Gazebo、控制器、场景闸门均已就绪。正在打开相机窗口……"
+echo "Gazebo 和控制器已就绪。控制器不读取仿真桌子、物体或地面坐标，自碰撞保护保留。"
+echo "正在打开相机窗口……"
 echo "本次运行日志：$runtime_directory"
 
 # This observer subscribes before C and never gates the control path.  It
@@ -167,13 +197,19 @@ if command -v taskset >/dev/null 2>&1 && (( $(nproc) >= 12 )); then
     --capture-cpu-affinity 2-3
   )
 fi
+if [[ "$hand_backend" != hamer ]]; then
+  "$mediapipe_python" perception_mediapipe/run_live.py --mode "$mediapipe_mode" \
+    --output "${TELEOP_WRIST_DIAGNOSTICS_DIRECTORY:-$runtime_directory/perception}" \
+    2>&1 | tee "$runtime_directory/camera.log"
+else
 "${hamer_command[@]}" perception_hamer/scripts/run_d455_hamer_crop.py \
   --auto-roi-mediapipe \
+  --fixed-left-hand \
   --mediapipe-min-detection-confidence 0.50 \
   --mesh-renderer teleoperation-core \
   --no-mesh-overlay \
   --display-rate-hz 15 \
-  --control-reference mano-wrist-ring \
+  --control-reference "$control_reference" \
   --roi-smoothing-alpha 1.0 \
   --orientation-filter-large-angle-mode reject \
   --orientation-filter-max-gain 1.0 \
@@ -191,3 +227,5 @@ fi
   "${diagnostic_arguments[@]}" \
   "${camera_affinity_arguments[@]}" \
   2>&1 | tee "$runtime_directory/camera.log"
+
+fi

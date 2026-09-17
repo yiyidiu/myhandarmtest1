@@ -12,6 +12,10 @@ from .shared_teleop_core import matrix_to_quaternion_xyzw, project_to_so3
 
 
 FINGER_FEATURE_DEFINITION = "mano_openpose_chain_total_bend_over_pi_v1"
+SUPPORTED_FINGER_FEATURE_DEFINITIONS = {
+    FINGER_FEATURE_DEFINITION,
+    "mediapipe_digit_internal_bend_over_pi_v1",
+}
 
 
 def _nonnegative_int(value: Any, name: str) -> int:
@@ -118,7 +122,7 @@ class HamerPacketContract:
             "finger_observation.contract_version",
         ) != 1:
             raise ValueError("unsupported finger observation contract version")
-        if raw.get("feature_definition") != FINGER_FEATURE_DEFINITION:
+        if raw.get("feature_definition") not in SUPPORTED_FINGER_FEATURE_DEFINITIONS:
             raise ValueError("unsupported finger feature definition")
         valid = raw.get("valid") is True
         if valid and not observation_valid:

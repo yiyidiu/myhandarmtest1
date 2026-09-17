@@ -195,6 +195,13 @@ public:
     {
       nh_.param("/shared_teleop/control/constrained_velocity_projection",
                 constrained_velocity_projection_, false);
+      std::string solver;
+      nh_.param<std::string>("/shared_teleop/control/joint_velocity_solver", solver, "qp");
+      if (solver != "qp" && solver != "servo")
+        throw std::runtime_error("joint_velocity_solver must be qp or servo");
+      use_servo_solver_ = solver == "servo";
+      if (use_servo_solver_ && !constrained_velocity_projection_)
+        throw std::runtime_error("servo comparison requires the modern shared safety/reference profile");
       nh_.param("/shared_teleop/control/position_accommodation_m",
                 position_accommodation_m_, 0.0);
       if (!std::isfinite(position_accommodation_m_) || position_accommodation_m_ < 0.0)
@@ -1031,6 +1038,25 @@ private:
   // shaper after this gate could reintroduce an obsolete blocked approach.
   void filterCartesianCommand(const handarm_moveit_demo::HandCommandConstPtr& message)
   {
+    if (use_servo_solver_)
+    {
+      // Actual MoveIt Servo computes qdot. Keep the modern feedback thread,
+      // hand checking and timed swept gate; do not restore legacy filters.
+      latest_servo_input_ = message;
+      if (!message->valid)
+      {
+        publishZeroVelocity();
+        publishCommandStatus(false, "INPUT_INVALID");
+      }
+      geometric_command_publisher_.publish(*message);
+      return;
+    }
+    processCartesianCommand(message, nullptr);
+  }
+
+  void processCartesianCommand(const handarm_moveit_demo::HandCommandConstPtr& message,
+                               const std::vector<double>* servo_solution)
+  {
     refreshRobotFeedback();
     const auto began = ros::WallTime::now();
     auto output = *message;
@@ -1238,8 +1264,17 @@ private:
       if (constrained_velocity_projection_)
       {
         const auto projection_began = ros::WallTime::now();
-        projected_command_safe = projectJointVelocity(state, jacobian, requested,
-            projected_joint_velocity, projection_constraint_count, reason);
+        if (servo_solution)
+        {
+          projected_joint_velocity = *servo_solution;
+          projected_command_safe = projected_joint_velocity.size() == arm_joint_names_.size() &&
+              std::all_of(projected_joint_velocity.begin(), projected_joint_velocity.end(),
+                          [](double value) { return std::isfinite(value); });
+          reason = projected_command_safe ? "SAFE_SERVO_SOLUTION" : "INVALID_SERVO_SOLUTION";
+        }
+        else
+          projected_command_safe = projectJointVelocity(state, jacobian, requested,
+              projected_joint_velocity, projection_constraint_count, reason);
         projection_ms = (ros::WallTime::now() - projection_began).toSec() * 1000.0;
         const auto prediction_began = ros::WallTime::now();
         if (projected_command_safe)
@@ -1272,7 +1307,7 @@ private:
           }
         }
         bool translation_retreat = false;
-        if (!projected_command_safe && requested.head<3>().norm() > 1e-9 &&
+        if (!servo_solution && !projected_command_safe && requested.head<3>().norm() > 1e-9 &&
             (reason.find("PREDICTED_WORLD_COLLISION:") == 0 ||
              reason.find("CONTACT_NOT_SEPARATING:") == 0))
         {
@@ -1447,13 +1482,17 @@ private:
     output.twist.linear.x = selected[0]; output.twist.linear.y = selected[1];
     output.twist.linear.z = selected[2]; output.twist.angular.x = selected[3];
     output.twist.angular.y = selected[4]; output.twist.angular.z = selected[5];
-    geometric_command_publisher_.publish(output);
+    // Sending a checked Servo result back into Servo would create a loop.
+    // Only the original shaped command is forwarded in filterCartesianCommand.
+    if (!servo_solution) geometric_command_publisher_.publish(output);
     std::ostringstream stream;
     const bool translation_limited = output.valid &&
         (selected.head<3>() - requested.head<3>()).norm() > 1e-9;
     const bool rotation_limited = output.valid &&
         (selected.tail<3>() - requested.tail<3>()).norm() > 1e-9;
     stream << "{\"reason\":\"" << reason << "\",\"self_distance_m\":" << current.self
+           << ",\"joint_velocity_solver\":\"" << (use_servo_solver_ ? "servo" : "qp") << "\""
+           << ",\"processing_includes_solver\":" << (servo_solution ? "false" : "true")
            << ",\"constrained_velocity_projection\":" << (constrained_velocity_projection_ ? "true" : "false")
            << ",\"side_limit_reference_ready\":" << (have_robot_zero_ ? "true" : "false")
            << ",\"maximum_side_angle_deg\":" << maximum_side_angle_ * 180.0/M_PI
@@ -1464,7 +1503,7 @@ private:
            << ",\"input_valid\":" << (message->valid ? "true" : "false")
            << ",\"state_age_at_check_ms\":"
            << state_age_at_check_s * 1000.0
-           << ",\"projection_ms\":" << projection_ms
+           << ",\"projection_ms\":" << (servo_solution ? "null" : std::to_string(projection_ms))
            << ",\"prediction_ms\":" << prediction_ms
            << ",\"prediction_remaining_ms\":"
            << (projected_deadline - ros::WallTime::now().toSec()) * 1000.0
@@ -2109,6 +2148,12 @@ private:
 
   void rawVelocityCallback(const std_msgs::Float64MultiArrayConstPtr& message)
   {
+    if (use_servo_solver_)
+    {
+      if (latest_servo_input_)
+        processCartesianCommand(latest_servo_input_, &message->data);
+      return;
+    }
     if (constrained_velocity_projection_) return;
     if (message->data.size() != arm_joint_names_.size())
     {
@@ -2773,6 +2818,8 @@ private:
   ros::Timer status_timer_;
   bool geometric_command_filter_{ false };
   bool have_scene_snapshot_{ false };
+  bool use_servo_solver_{ false };
+  handarm_moveit_demo::HandCommandConstPtr latest_servo_input_;
   bool proximity_recovery_active_{ false };
   double proximity_enter_scale_{ 0.20 };
   double proximity_release_scale_{ 0.80 };

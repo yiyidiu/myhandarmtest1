@@ -69,7 +69,12 @@ class GroundSceneTest(unittest.TestCase):
                 height = (abs(math.sin(pitch))*size[0] +
                           abs(math.cos(pitch)*math.sin(roll))*size[1] +
                           abs(math.cos(pitch)*math.cos(roll))*size[2])
-                self.assertAlmostEqual(pose[2] - 0.5 * height, 0.12 + 0.001)
+                support_key = {"target_object": "left_table",
+                               "ground_object_left": "right_table",
+                               "ground_object_right": "table"}[name]
+                support = config["objects"][support_key]
+                top = support["pose"]["position"][2] + support["size"][2]/2
+                self.assertAlmostEqual(pose[2] - 0.5 * height, top + 0.001)
 
     def test_platform_is_above_floor_without_raising_robot_base(self):
         config = yaml.safe_load((PACKAGE / "config/ground_grasp_scene.yaml").read_text(
@@ -77,6 +82,14 @@ class GroundSceneTest(unittest.TestCase):
         self.assertEqual(config["support_surface_key"], "table")
         table = config["objects"]["table"]
         self.assertAlmostEqual(table["pose"]["position"][2] + table["size"][2]/2, 0.12)
+        self.assertAlmostEqual(table["pose"]["position"][0], 0.53)
+        for key in ("left_table", "right_table"):
+            side = config["objects"][key]
+            self.assertAlmostEqual(side["pose"]["position"][2] + side["size"][2]/2, 0.09)
+            for leg in side["collision_parts"][1:]:
+                foot_z = (side["pose"]["position"][2] + leg["position"][2]
+                          - leg["dimensions"][2]/2)
+                self.assertAlmostEqual(foot_z, 0.0)
         ground = config["objects"]["ground"]
         top = ground["pose"]["position"][2] + 0.5 * ground["size"][2]
         self.assertAlmostEqual(top, -0.003)

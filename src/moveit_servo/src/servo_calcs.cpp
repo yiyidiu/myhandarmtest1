@@ -692,9 +692,13 @@ void ServoCalcs::applyVelocityScaling(Eigen::ArrayXd& delta_theta, double singul
   // The threshold-distance monitor is deliberately direction-blind. In the
   // Gazebo teleop profile, permit a non-colliding command to leave its proximity
   // band after checking the command's actual joint direction in this scene.
-  // Actual collisions (scale == 0) remain stops; the downstream swept arm/hand
-  // gate still checks the resulting velocity plus the committed position lead.
-  if (directional_collision_retreat_ && collision_scale > 0.0 && collision_scale < 1.0 &&
+  // stop_distance can report zero before contact. Permit a geometrically
+  // verified separating direction then too; negative measured clearance
+  // remains a stop and the shared swept gate checks the position lead.
+  const bool stopped_before_contact = parameters_.collision_check_type == "stop_distance" &&
+                                     collision_scale == 0.0;
+  if (directional_collision_retreat_ && (collision_scale > 0.0 || stopped_before_contact) &&
+      collision_scale < 1.0 &&
       delta_theta.isFinite().all() && delta_theta.matrix().norm() > 1e-12)
   {
     // Keep both probes on one scene snapshot. RobotState copies from the
@@ -740,7 +744,9 @@ void ServoCalcs::applyVelocityScaling(Eigen::ArrayXd& delta_theta, double singul
   {
     status_ = StatusCode::HALT_FOR_COLLISION;
   }
-  else if (status_ == StatusCode::DECELERATE_FOR_COLLISION)
+  else if (status_ == StatusCode::DECELERATE_FOR_COLLISION ||
+           (parameters_.collision_check_type == "stop_distance" &&
+            status_ == StatusCode::HALT_FOR_COLLISION))
     status_ = StatusCode::NO_WARNING;
 
   delta_theta = collision_scale * singularity_scale * delta_theta;

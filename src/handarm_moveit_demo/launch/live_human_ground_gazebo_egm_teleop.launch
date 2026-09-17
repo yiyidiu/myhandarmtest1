@@ -6,6 +6,8 @@
   <arg name="grasp_alignment_views" default="false" />
   <arg name="with_ground_object" default="true" />
   <arg name="empty_motion_scene" default="false" />
+  <arg name="use_simulated_environment_for_control" default="false"
+       doc="Offline comparison only: expose Gazebo world geometry to the controller. Live teleoperation has no environment perception and must leave this false." />
   <arg name="enable_logger" default="true" />
   <arg name="input_source" default="udp"
        doc="udp for the live camera; direction_test is reserved for automated full-chain validation" />
@@ -13,6 +15,8 @@
        doc="current_linear uses the shared translation/rotation gains; camera_ground_workspace requires a measured per-operator range" />
   <arg name="constrained_velocity_projection" default="false"
        doc="Gazebo constrained differential IK; false preserves the previous controller for comparison." />
+  <arg name="joint_velocity_solver" default="qp"
+       doc="qp or servo; both use the modern shared feedback, hand protection and 250 Hz reference when constrained_velocity_projection is true." />
   <arg name="position_accommodation_m" default="0.0"
        doc="Experimental per-axis position envelope for constrained orientation accommodation; zero retains the recorded controller." />
   <arg name="hamer_input_timeout_s" default="0.40" />
@@ -48,7 +52,7 @@
     <arg name="log_directory" value="$(arg log_directory)" />
     <arg name="world_name" value="$(arg world_name)" />
     <arg name="mapping_profile" value="$(arg mapping_profile)" />
-    <arg name="require_scene_ready" value="true" />
+    <arg name="require_scene_ready" value="$(arg use_simulated_environment_for_control)" />
     <arg name="hamer_input_timeout_s" value="$(arg hamer_input_timeout_s)" />
     <arg name="hamer_maximum_pipeline_latency_s"
          value="$(arg hamer_maximum_pipeline_latency_s)" />
@@ -68,12 +72,25 @@
 
   <param name="/shared_teleop/control/constrained_velocity_projection"
          value="$(arg constrained_velocity_projection)" />
+  <param name="/shared_teleop/control/joint_velocity_solver"
+         value="$(arg joint_velocity_solver)" />
+  <!-- The 5 mm Servo stop-distance trial still reached finger/arm contact.
+       Its fixed margin needs room for physical tracking and braking error;
+       QP instead reserves these terms dynamically above its 5 mm base.
+       Preserve the same final swept check for both controllers. -->
+  <group if="$(eval arg('joint_velocity_solver') == 'servo')">
+    <param name="/servo_server/collision_check_type" value="stop_distance" />
+    <param name="/servo_server/min_allowable_collision_distance" value="0.015" />
+    <param name="/servo_server/collision_distance_safety_factor" value="1.5" />
+  </group>
   <param name="/shared_teleop/control/position_accommodation_m"
          value="$(arg position_accommodation_m)" />
 
-  <!-- Gazebo models are not automatically visible to MoveIt. Mirror the
-       ground and active objects into PlanningScene before live acceptance. -->
-  <node name="teleop_scene_manager" pkg="handarm_sim_demo"
+  <!-- The scene remains in Gazebo for rendering and physical contact.
+       Do not give the controller simulator-only object/table coordinates.
+       This opt-in path exists only to reproduce earlier offline runs. -->
+  <node if="$(arg use_simulated_environment_for_control)"
+        name="teleop_scene_manager" pkg="handarm_sim_demo"
         type="scene_manager.py" output="screen" required="true">
     <param name="scene_config"
            value="$(find handarm_sim_demo)/config/ground_grasp_scene.yaml" />

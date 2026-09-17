@@ -44,7 +44,7 @@ objects:
       position:
       - 0.24
       - -0.41
-      - 0.1993333333333333
+      - 0.1693333333333333
       orientation_rpy:
       - 0.0
       - 0.0
@@ -66,7 +66,7 @@ objects:
       position:
       - 0.24
       - 0.455
-      - 0.2345
+      - 0.2045
       orientation_rpy:
       - 0.0
       - 0.0
@@ -121,7 +121,7 @@ objects:
     type: box
     pose:
       position:
-      - 0.425
+      - 0.455
       - 0
       - 0.1555
       orientation_rpy:
@@ -144,7 +144,7 @@ objects:
     type: compound
     pose:
       position:
-      - 0.5
+      - 0.53
       - 0
       - 0.1025
       orientation_rpy:
@@ -212,7 +212,7 @@ objects:
       position:
       - 0.08
       - -0.45
-      - 0.1025
+      - 0.0725
       orientation_rpy:
       - 0
       - 0
@@ -235,38 +235,38 @@ objects:
       dimensions:
       - 0.03
       - 0.03
-      - 0.085
+      - 0.055
       position:
       - -0.09500000000000001
       - -0.20500000000000002
-      - -0.06
+      - -0.045
     - type: box
       dimensions:
       - 0.03
       - 0.03
-      - 0.085
+      - 0.055
       position:
       - -0.09500000000000001
       - 0.20500000000000002
-      - -0.06
+      - -0.045
     - type: box
       dimensions:
       - 0.03
       - 0.03
-      - 0.085
+      - 0.055
       position:
       - 0.09500000000000001
       - -0.20500000000000002
-      - -0.06
+      - -0.045
     - type: box
       dimensions:
       - 0.03
       - 0.03
-      - 0.085
+      - 0.055
       position:
       - 0.09500000000000001
       - 0.20500000000000002
-      - -0.06
+      - -0.045
     mass: 10.0
     static: true
     collision_enabled: true
@@ -278,7 +278,7 @@ objects:
       position:
       - 0.08
       - 0.45
-      - 0.1025
+      - 0.0725
       orientation_rpy:
       - 0
       - 0
@@ -301,38 +301,38 @@ objects:
       dimensions:
       - 0.03
       - 0.03
-      - 0.085
+      - 0.055
       position:
       - -0.09500000000000001
       - -0.20500000000000002
-      - -0.06
+      - -0.045
     - type: box
       dimensions:
       - 0.03
       - 0.03
-      - 0.085
+      - 0.055
       position:
       - -0.09500000000000001
       - 0.20500000000000002
-      - -0.06
+      - -0.045
     - type: box
       dimensions:
       - 0.03
       - 0.03
-      - 0.085
+      - 0.055
       position:
       - 0.09500000000000001
       - -0.20500000000000002
-      - -0.06
+      - -0.045
     - type: box
       dimensions:
       - 0.03
       - 0.03
-      - 0.085
+      - 0.055
       position:
       - 0.09500000000000001
       - 0.20500000000000002
-      - -0.06
+      - -0.045
     mass: 10.0
     static: true
     collision_enabled: true
@@ -370,13 +370,13 @@ scenario_object_sets:
 placement_targets:
   front_left:
     position:
-    - 0.425
+    - 0.455
     - -0.17
     - 0.12
     surface: table
   front_right:
     position:
-    - 0.425
+    - 0.455
     - 0.17
     - 0.12
     surface: table
