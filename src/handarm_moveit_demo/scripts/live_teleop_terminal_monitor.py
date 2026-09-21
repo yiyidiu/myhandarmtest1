@@ -6,12 +6,15 @@ import math
 import os
 from pathlib import Path
 import time
+import threading
 
 import numpy as np
 import rospy
 import tf2_ros
 from geometry_msgs.msg import TwistStamped
 from std_msgs.msg import Float64, Int8, String
+from sensor_msgs.msg import JointState
+from handarm_moveit_demo.msg import HamerHandPose
 
 
 class LiveTeleopTerminalMonitor:
@@ -28,6 +31,9 @@ class LiveTeleopTerminalMonitor:
         self.collision_scale = 1.0
         self.latest_diagnostic = {}
         self.last_diagnostic_at = 0.0
+        self.hand_input_valid = None
+        self.hand_orientation_valid = None
+        self.hand_input_reason = ""
         self.geometry = {}
         self.finger_closure = None
         self.grip_latched = False
@@ -36,6 +42,30 @@ class LiveTeleopTerminalMonitor:
         self.robot_safety_status = ""
         self.feedback_file = rospy.get_param("~feedback_file", "")
         self.last_feedback_write = 0.0
+        # Start from the operator's actual C event, not a startup countdown.
+        # The previous ten-minute capture ended before C and missed the fault.
+        self.trace_lock = threading.Lock()
+        self.trace_stream = None
+        self.trace_started = False
+        self.trace_closed = False
+        self.trace_flush_time = 0.0
+        self.trace_path = (Path(self.feedback_file).with_name("control_trace.jsonl")
+                           if self.feedback_file else None)
+        rospy.on_shutdown(self.close_trace)
+        rospy.Subscriber("/shared_teleop/hamer_pose", HamerHandPose,
+                         self.hand_trace_callback, queue_size=100, tcp_nodelay=True)
+        rospy.Subscriber("/joint_states", JointState, self.joint_trace_callback,
+                         queue_size=300, tcp_nodelay=True)
+        for key, topic in (
+                ("egm", "/egm_position_reference/diagnostics"),
+                ("geometry", "/shared_teleop/geometric_filter_diagnostics"),
+                ("motor", "/handarm_sim_demo/physical_hand_diagnostics"),
+                ("finger", "/shared_teleop/finger_diagnostics"),
+                ("guard", "/full_robot_self_collision_guard/command_diagnostic"),
+                ("hand_guard", "/full_robot_self_collision_guard/hand_diagnostic")):
+            rospy.Subscriber(topic, String,
+                             lambda m, k=key: self.trace(k, m.data),
+                             queue_size=200, tcp_nodelay=True)
         self.direction_blocked_since = None
         rospy.Subscriber("/shared_teleop/geometric_filter_diagnostics", String,
                          self.geometry_callback, queue_size=1)
@@ -68,6 +98,62 @@ class LiveTeleopTerminalMonitor:
         )
         self.timer = rospy.Timer(rospy.Duration(0.05), self.tick)
 
+    def trace(self, key, value):
+        if not self.trace_started or self.trace_path is None or self.trace_closed:
+            return
+        with self.trace_lock:
+            if self.trace_closed:
+                return
+            try:
+                if self.trace_stream is None:
+                    self.trace_path.parent.mkdir(parents=True, exist_ok=True)
+                    self.trace_stream = self.trace_path.open("a", buffering=1024 * 1024)
+                self.trace_stream.write(json.dumps(dict(
+                    topic=key, wall=time.time(), mono=time.monotonic(),
+                    sim=rospy.Time.now().to_sec(), data=value), separators=(",", ":")) + "\n")
+                if time.monotonic() - self.trace_flush_time >= 1.0:
+                    self.trace_stream.flush()
+                    self.trace_flush_time = time.monotonic()
+            except OSError as exc:
+                # Recording must never interrupt the physical control loop.
+                rospy.logwarn_throttle(5.0, "Control trace write failed: %s", exc)
+
+    def close_trace(self):
+        with self.trace_lock:
+            self.trace_closed = True
+            if self.trace_stream is not None:
+                self.trace_stream.close()
+                self.trace_stream = None
+
+    def hand_trace_callback(self, message):
+        self.hand_input_valid = bool(message.valid)
+        self.hand_orientation_valid = bool(
+            message.valid and len(message.confidence) == 6 and
+            all(math.isfinite(value) and value > 0.0
+                for value in message.confidence[3:]))
+        self.hand_input_reason = str(message.invalid_reason)
+        if message.control_enabled and message.valid:
+            self.trace_started = True
+        def pose(p):
+            return [p.position.x, p.position.y, p.position.z,
+                    p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w]
+        self.trace("hand_input", dict(
+            source=message.source_timestamp, sequence=message.source_capture_sequence,
+            valid=message.valid, reason=message.invalid_reason,
+            enabled=message.control_enabled, token=message.control_reference_token,
+            latency_s=message.capture_to_publish_s, pose=pose(message.wrist_pose),
+            confidence=list(message.confidence), finger_valid=message.finger_tracking_valid,
+            finger_confidence=message.finger_tracking_confidence,
+            flexion=list(message.finger_flexion),
+            reference_present=message.control_reference_pose_present,
+            reference_sequence=message.control_reference_sequence,
+            reference_pose=pose(message.control_reference_wrist_pose)))
+
+    def joint_trace_callback(self, message):
+        self.trace("joints", dict(stamp=message.header.stamp.to_sec(),
+                                 names=list(message.name), q=list(message.position),
+                                 v=list(message.velocity), effort=list(message.effort)))
+
     def tool_pose(self):
         transform = self.buffer.lookup_transform(
             "base_link", "tool0", rospy.Time(0), rospy.Duration(0.03)
@@ -88,6 +174,7 @@ class LiveTeleopTerminalMonitor:
             diagnostic = json.loads(message.data)
         except (TypeError, ValueError):
             return
+        self.trace("trend", diagnostic)
         self.latest_diagnostic = diagnostic
         self.last_diagnostic_at = time.monotonic()
         token = str(diagnostic.get("active_reference_token", ""))
@@ -125,7 +212,7 @@ class LiveTeleopTerminalMonitor:
         ):
             self.nonzero_command_seen = True
             self.command_seen_monotonic = time.monotonic()
-            print("[链路 2/3] MoveIt Servo 已收到非零运动指令。", flush=True)
+            print("[链路 2/3] 控制链已生成非零运动指令。", flush=True)
 
     def status_callback(self, message):
         self.servo_status = int(message.data)
@@ -157,13 +244,19 @@ class LiveTeleopTerminalMonitor:
         p = d.get("current_position")
         target = d.get("requested_target_position", d.get("target_position"))
         gap = None if p is None or target is None else float(np.linalg.norm(np.array(target)-p)*100)
+        error = d.get("requested_rotation_error_rad", d.get("rotation_error_rad"))
+        rotation_gap = (None if error is None else
+                        float(np.degrees(np.linalg.norm(error))))
         approved = g.get("approved_velocity")
-        blocked_now = bool(
+        command_available = bool(
             d.get("valid") and g.get("input_valid") and approved is not None
-            and len(approved) == 6 and gap is not None and gap > 1.0
-            and np.linalg.norm(approved[:3]) < 0.0001
-            and np.linalg.norm(approved[3:]) < 0.001
-        )
+            and len(approved) == 6)
+        translation_blocked = bool(command_available and gap is not None
+            and gap > 1.0 and np.linalg.norm(approved[:3]) < 0.0001)
+        rotation_blocked = bool(command_available and self.hand_orientation_valid is not False
+            and rotation_gap is not None
+            and rotation_gap > 5.0 and np.linalg.norm(approved[3:]) < 0.001)
+        blocked_now = translation_blocked or rotation_blocked
         if not blocked_now:
             self.direction_blocked_since = None
         elif self.direction_blocked_since is None:
@@ -178,14 +271,30 @@ class LiveTeleopTerminalMonitor:
             status, level = "张手放稳后按 C，建立零位", "waiting"
         elif self.robot_safety_status.startswith(("SELF_COLLISION:", "INVALID_JOINT_STATE:")):
             status, level = "机器人自身保护已锁定，请结束本轮并检查", "limited"
-        elif not d.get("valid") or d.get("position_reference_hold_active"):
-            status, level = "手部输入暂不可用，机械臂保持", "limited"
+        elif (not d.get("valid") or d.get("position_reference_hold_active")
+              or self.hand_input_valid is False):
+            status, level = "手部输入暂不可用，保持上次目标", "limited"
         elif self.hand_safety_status.startswith("HAND_PATH_SELF_COLLISION:"):
             status, level = "手指开合受本体空间限制，请先将末端移开", "limited"
         elif self.hand_safety_status == "HAND_CHECK_EXPIRED":
             status, level = "手指安全检查暂未完成，保持原指令", "limited"
+        elif self.hand_orientation_valid is False:
+            status, level = "手部朝向未更新，旋转目标保持", "limited"
+        elif d.get("self_detour_status", "").startswith("DETOUR_") and d.get("self_detour_status") in (
+                "DETOUR_CLEAR_SELF", "DETOUR_ROTATE", "DETOUR_RETURN_TO_HAND_TARGET"):
+            status, level = {
+                "DETOUR_CLEAR_SELF": "正在小幅绕开自身，保留手部目标",
+                "DETOUR_ROTATE": "绕开后正在调整姿态",
+                "DETOUR_RETURN_TO_HAND_TARGET": "正在回到手部指定的目标",
+            }[d["self_detour_status"]], "normal"
+        elif d.get("self_detour_status") == "CHECKING_SHORT_SELF_DETOUR":
+            status, level = "自身阻挡，正在检查小幅绕行路径", "limited"
+        elif direction_blocked and d.get("self_detour_status") == "NO_SAFE_SHORT_DETOUR":
+            status, level = "未找到安全的小幅绕行，请移动手部调整目标", "limited"
         elif direction_blocked:
-            status, level = "当前指令方向受限，请撤回或换方向；等待不会自动到达", "limited"
+            blocked_axes = ("平移和旋转" if translation_blocked and rotation_blocked
+                            else "旋转" if rotation_blocked else "平移")
+            status, level = blocked_axes + "方向受限，请反向或调整姿态", "limited"
         elif limited and g.get("self_distance_m", 1) < 0.005:
             status, level = "接近自身碰撞，请撤回或调整姿态", "limited"
         elif limited and g.get("world_distance_m", 1) < 0.03:
@@ -194,13 +303,18 @@ class LiveTeleopTerminalMonitor:
             status, level = "当前姿态已接近运动边界，请撤回或调整姿态", "limited"
         elif gap is not None and gap > 5:
             status, level = "目标尚未到达，请先停手观察实际末端", "limited"
+        elif rotation_gap is not None and rotation_gap > 10.0:
+            status, level = "旋转目标尚未到达", "limited"
         value = dict(monotonic_s=now, status_text=status, level=level,
                      motion_direction_blocked=direction_blocked,
-                     target_gap_cm=gap, actual_position_m=p,
+                     target_gap_cm=gap, rotation_gap_deg=rotation_gap,
+                     orientation_input_valid=self.hand_orientation_valid,
+                     input_reason=self.hand_input_reason, actual_position_m=p,
                      closure=self.finger_closure, grip_latched=self.grip_latched,
                      release_phase=self.release_phase,
                      hand_safety_status=self.hand_safety_status,
                      robot_safety_status=self.robot_safety_status)
+        value["self_detour_status"] = d.get("self_detour_status", "DIRECT")
         path = Path(self.feedback_file)
         temporary = path.with_suffix(".tmp")
         temporary.write_text(json.dumps(value, ensure_ascii=False))
@@ -246,9 +360,7 @@ class LiveTeleopTerminalMonitor:
             self.no_motion_warning_reported = True
             print(
                 "[链路 3/3 等待] 已有运动指令，但尚未检测到 2 mm / 1° 的"
-                "实际动作；请继续做明显动作。Servo 状态={}，碰撞速度比例={:.3f}。".format(
-                    self.servo_status, self.collision_scale
-                ),
+                "实际动作；请查看相机窗口中的控制状态提示。",
                 flush=True,
             )
 

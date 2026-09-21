@@ -1,0 +1,60 @@
+{
+  "release_tag": "teleop-whole-wrist-scenes-20260921",
+  "hand_backend": "hamer",
+  "control_reference": "mano-wrist-ring",
+  "wrist_depth_mode": "palm-skin",
+  "motion_controller": "constrained",
+  "mapping_profile": "whole_wrist_pose",
+  "mapping": {
+    "wrist_ring_to_palm_basis": [
+      [
+        -0.982424437758978,
+        -0.11611814486246759,
+        0.14614650364499082
+      ],
+      [
+        0.10949405791255043,
+        -0.9925942694063542,
+        -0.05260862689245337
+      ],
+      [
+        0.1511729981703062,
+        -0.0356818269622689,
+        0.9878631139225899
+      ]
+    ],
+    "orientation_gain": 1.3,
+    "translation_matrix": [
+      [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "translation_gain": [
+      1.6,
+      2.0,
+      1.2
+    ]
+  },
+  "confirmation_delay_s": 2.0,
+  "palm_tcp_translation_m": 0.1658,
+  "imu_default": false,
+  "environment_geometry_in_controller": false,
+  "scenes": {
+    "pouring": "handarm_pouring.world",
+    "stacking": "handarm_front_stacking.world",
+    "grasp": "handarm_ground_grasp.world",
+    "empty": "handarm_motion_only.world"
+  }
+}

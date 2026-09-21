@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.0.2)
 project(handarm_moveit_demo)
 
+# Collision prediction and the QP run inside the live command deadline.
+# An unspecified build type must not silently ship an unoptimized controller.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 catkin_python_setup()
 
 find_package(catkin REQUIRED COMPONENTS
@@ -113,6 +119,7 @@ install(TARGETS full_robot_self_collision_guard
 if(CATKIN_ENABLE_TESTING)
   catkin_add_nosetests(test/test_shared_teleop_core.py)
   catkin_add_nosetests(test/test_egm_position_reference.py)
+  catkin_add_nosetests(test/test_self_detour.py)
   catkin_add_nosetests(test/test_hamer_input_contract.py)
   catkin_add_nosetests(test/test_finger_retargeting.py)
 endif()

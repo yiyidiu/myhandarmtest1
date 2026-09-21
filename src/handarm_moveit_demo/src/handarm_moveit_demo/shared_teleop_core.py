@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """ROS-independent math and safety logic for shared hand/arm teleoperation.
 
-All internal orientation operations use SO(3) matrices, quaternions, or rotation
-vectors. Euler angles are intentionally absent from the control path.
+Orientations are stored as SO(3) matrices or quaternions. Bounded palm control
+uses ordered XYZ angle coordinates; other profiles use rotation-vector error.
 """
 
 from __future__ import annotations
@@ -526,6 +526,8 @@ class CZeroRecoveryTarget:
         self.translation_sign = np.zeros(3)
         self.rotation_gain = 1.0
         self.rotation_direction = np.zeros(3)
+        self.side_gain = 1.0
+        self.side_sign = 0.0
 
     def apply(self, requested_position, requested_rotation,
               current_position, current_rotation, zero_position, zero_rotation,
@@ -596,6 +598,70 @@ class CZeroRecoveryTarget:
         return (zero + self.translation_gain * delta,
                 so3_exp(self.rotation_gain * rotation_vector) @ zero_rotation,
                 velocity)
+
+
+    def apply_side_angle(self, requested_rotation, current_rotation, zero_rotation,
+                         raw_angle, raw_rate, velocity, blocked, dt_s):
+        """Discard unexecuted yaw excursion while retaining the original C.
+
+        Only the ordered tool-zero X angle changes. Tilt, roll and translation
+        keep their existing mapping. The unclipped hand intent is essential:
+        using the already-clipped 88-degree goal hides a reversing hand.
+        """
+        zero = project_to_so3(zero_rotation)
+        requested = project_to_so3(requested_rotation)
+        current = project_to_so3(current_rotation)
+        relative = zero.T @ requested
+        normal = relative[:, 2]
+        side = math.atan2(-normal[1], normal[2])
+        reached_normal = (zero.T @ current)[:, 2]
+        reached = math.atan2(-reached_normal[1], reached_normal[2])
+        raw_angle, raw_rate = float(raw_angle), float(raw_rate)
+        dt = float(np.clip(dt_s, 0.0, 0.05))
+        if (abs(raw_angle) <= math.radians(0.5) or
+                raw_angle * self.side_sign < 0.0):
+            self.side_gain, self.side_sign = 1.0, 0.0
+        elif blocked:
+            # Opposite-side/zero progress cannot define a reachable range
+            # on the newly requested side. Clipping that ratio to zero
+            # permanently erased yaw when another constraint blocked a
+            # cross-zero turn. Keep the requested goal and let the QP stop
+            # only the physically inadmissible velocity.
+            if reached * raw_angle > 0.0:
+                reached_gain = float(np.clip(reached / raw_angle, 0.0, 1.0))
+                if reached_gain < self.side_gain:
+                    self.side_gain = reached_gain
+                    self.side_sign = math.copysign(1.0, raw_angle)
+        elif self.side_gain < 1.0 and raw_angle * raw_rate > 1e-5:
+            # Rejoin only on an outward HAND motion. A stationary hand must
+            # never release a backlog just because another axis moved clear.
+            reached_gain = float(np.clip(
+                (reached + math.copysign(math.radians(2.0), raw_angle)) /
+                raw_angle, 0.0, 1.0))
+            # Recovery may increase the gain, never reduce it. A rapidly
+            # moving but unblocked hand naturally leads the robot; treating
+            # this ordinary lag as a smaller reachable range collapsed yaw
+            # on every outward turn (the 2026-09-18 long live recording).
+            self.side_gain = max(self.side_gain, min(reached_gain, self.side_gain +
+                math.radians(10.0) * dt / abs(raw_angle)))
+        if self.side_gain >= 1.0:
+            return requested.copy(), _finite_vector(velocity, 6, "velocity").copy()
+        corrected_side = math.copysign(min(abs(side),
+            abs(raw_angle * self.side_gain)), raw_angle)
+        correction = so3_exp([corrected_side - side, 0.0, 0.0])
+        result = zero @ correction @ relative
+        result_velocity = _finite_vector(velocity, 6, "velocity").copy()
+        angular = zero.T @ result_velocity[3:]
+        derivative = np.cross(angular, normal)
+        denominator = normal[1]**2 + normal[2]**2
+        old_side_rate = ((-normal[2]*derivative[1] + normal[1]*derivative[2]) /
+                         denominator if denominator > 1e-6 else 0.0)
+        # Rotate the unchanged tilt/roll contribution into the corrected
+        # side frame, then replace only the side-angle derivative.
+        angular = correction @ (angular - np.array([old_side_rate, 0.0, 0.0]))
+        angular[0] += self.side_gain * raw_rate
+        result_velocity[3:] = zero @ angular
+        return project_to_so3(result), result_velocity
 
 
 class CollisionRetreatGuard:
@@ -1226,6 +1292,21 @@ class RelativePoseMapper:
                 advanced_target @ current_target.T) / derivative_dt
         return np.concatenate((linear, angular_base))
 
+    def unbounded_side_motion(self, relative_rotation, angular_hand_zero):
+        """Side intent before saturation, with its analytic angular rate."""
+        mapped = self.rotation_matrix @ project_to_so3(relative_rotation) @ self.rotation_matrix.T
+        normal = mapped[:, 2]
+        angle = math.atan2(-normal[1], normal[2]) * self.rotation_axis_sign[0]
+        derivative = np.cross(self.rotation_matrix @ np.asarray(angular_hand_zero), normal)
+        denominator = normal[1]**2 + normal[2]**2
+        rate = ((-normal[2]*derivative[1] + normal[1]*derivative[2]) /
+                denominator if denominator > 1e-6 else 0.0)
+        signed_rate = rate * self.rotation_axis_sign[0]
+        positive = (signed_rate >= 0.0) if abs(angle) < 1e-8 else (angle > 0.0)
+        gain = self.positive_side_rotation_gain if positive else self.rotation_gain[0]
+        scale = gain * self.side_rotation_output_sign
+        return angle * scale, signed_rate * scale
+
     def mapping_diagnostics(self) -> Dict[str, object]:
         return {
             "mode": "LINEAR_RELATIVE_POSE",
@@ -1244,6 +1325,90 @@ class RelativePoseMapper:
         rotated = rotation_weights @ value[3:] / np.sum(
             rotation_weights, axis=1)
         return np.clip(np.concatenate((translated, rotated)), 0.0, 1.0)
+
+
+class WholeWristPoseMapper(RelativePoseMapper):
+    """Map the complete C-relative five-point LEFT palm orientation.
+
+    Hand axes: +X out of palm, +Y index -> little, +Z wrist -> MCPs.
+    At the down-facing tool zero, little-side-toward-camera (-hand Z)
+    maps to the user's right side turn (-tool X); fingers-toward-camera (+hand Y)
+    maps to the user's downward pitch (+tool Y). Signs follow the actual
+    gestures and robot motion annotated in the Sep 19 17:15 recording;
+    the tool approach-vector tilt is not the user's named turn direction.
+    The remaining axis is -tool Z.
+    One proper basis rotation establishes the axes; a uniform gain scales
+    the complete C-relative rotation angle without changing its axis.
+    This is not three independently scaled Euler channels.
+    Translation retains the existing fixed camera/base mapping.
+    """
+
+    HAND_TO_TOOL = np.array([[0., 0., 1.],
+                             [0., 1., 0.],
+                             [-1., 0., 0.]])
+
+    def __init__(self, translation_matrix, translation_gain,
+                 maximum_relative_translation, maximum_relative_rotation_rad,
+                 maximum_side_rotation_rad, orientation_gain=1.0):
+        self.orientation_gain = float(orientation_gain)
+        if not math.isfinite(self.orientation_gain) or self.orientation_gain <= 0.0:
+            raise ValueError("whole-wrist orientation gain must be finite and positive")
+        super().__init__(
+            translation_matrix, self.HAND_TO_TOOL, translation_gain,
+            [self.orientation_gain] * 3,
+            maximum_relative_translation, maximum_relative_rotation_rad,
+            maximum_side_rotation_rad=maximum_side_rotation_rad)
+        if not 0.0 < self.maximum_side_rotation_rad <= math.pi / 2:
+            raise ValueError("whole-wrist side limit must be in (0, pi/2]")
+
+    def _mapped_rotation(self, relative):
+        rotation = (self.rotation_matrix @ project_to_so3(relative) @
+                    self.rotation_matrix.T)
+        vector = so3_log(rotation) * self.orientation_gain
+        size = float(np.linalg.norm(vector))
+        if size > self.maximum_relative_rotation_rad:
+            vector *= self.maximum_relative_rotation_rad / size
+        rotation = so3_exp(vector)
+        # Keep the existing side-turn boundary. Outside it, shorten the WHOLE
+        # rotation from C along the same axis instead of clipping/recombining
+        # Euler channels. Apply the SAME limit after amplification, including
+        # combined turns. Target-velocity feedforward differentiates this map.
+        limit = self.maximum_side_rotation_rad
+
+        def within_side_bound(candidate):
+            normal = candidate[:, 2]
+            return (normal[2] >= -1e-12 and
+                    abs(normal[1]) * math.cos(limit) <=
+                    normal[2] * math.sin(limit) + 1e-12)
+
+        if not within_side_bound(rotation):
+            lo, hi = 0.0, 1.0
+            for _ in range(24):
+                mid = (lo + hi) / 2.0
+                if within_side_bound(so3_exp(mid * vector)):
+                    lo = mid
+                else:
+                    hi = mid
+            rotation = so3_exp(lo * vector)
+        return rotation
+
+    def map(self, relative_hand_position, relative_hand_rotation,
+            robot_zero_position, robot_zero_rotation):
+        delta = (self.translation_matrix @ _finite_vector(
+            relative_hand_position, 3, "relative_hand_position")) * self.translation_gain
+        position = _finite_vector(robot_zero_position, 3, "robot_zero_position") + clamp_each(
+            delta, self.maximum_relative_translation)
+        return position, (project_to_so3(robot_zero_rotation) @
+                          self._mapped_rotation(relative_hand_rotation))
+
+    def mapping_diagnostics(self):
+        result = super().mapping_diagnostics()
+        result.update(mode="WHOLE_WRIST_POSE", rotation_gain=self.rotation_gain.tolist(),
+                      orientation_gain=self.orientation_gain,
+                      translation_gain=self.translation_gain.tolist(),
+                      hand_to_tool_rotation=self.rotation_matrix.tolist(),
+                      translation_frame="base_link")
+        return result
 
 
 class PalmAxesToolZeroMapper(RelativePoseMapper):
@@ -1917,13 +2082,14 @@ class RelativePoseServoController:
                 current_rotation: Sequence[Sequence[float]],
                 target_position: Sequence[float],
                 target_rotation: Sequence[Sequence[float]],
-                target_velocity: Optional[Sequence[float]] = None) -> np.ndarray:
+                target_velocity: Optional[Sequence[float]] = None,
+                ordered_rotation_zero: Optional[Sequence[Sequence[float]]] = None) -> np.ndarray:
         position_error = (
             _finite_vector(target_position, 3, "target_position") -
             _finite_vector(current_position, 3, "current_position"))
-        rotation_error = so3_log(
-            project_to_so3(target_rotation) @
-            project_to_so3(current_rotation).T)
+        current_rotation = project_to_so3(current_rotation)
+        target_rotation = project_to_so3(target_rotation)
+        rotation_error = so3_log(target_rotation @ current_rotation.T)
         feedforward = (
             np.zeros(6) if target_velocity is None else
             _finite_vector(target_velocity, 6, "target_velocity"))
@@ -1931,13 +2097,55 @@ class RelativePoseServoController:
             position_error * self.translation_error_gain +
             feedforward[:3] * self.translation_feedforward_gain,
             self.maximum_linear_velocity)
-        angular = clamp_each(
-            rotation_error * self.rotation_error_gain +
-            feedforward[3:] * self.rotation_feedforward_gain,
-            self.maximum_angular_velocity)
+        angular = (rotation_error * self.rotation_error_gain +
+                   feedforward[3:] * self.rotation_feedforward_gain)
+        if ordered_rotation_zero is not None:
+            # The palm mapper commands bounded Rx(side) Ry(tilt) Rz(roll)
+            # coordinates. A shortest SO(3) arc can first turn side OUTWARD
+            # while correcting tilt/roll, even when the side target is inward.
+            # The geometric guard then has to stop the entire rotation.
+            zero = project_to_so3(ordered_rotation_zero)
+            current_chart = self._ordered_rotation_chart(zero.T @ current_rotation)
+            target_chart = self._ordered_rotation_chart(zero.T @ target_rotation)
+            if current_chart is not None and target_chart is not None:
+                current_angles, current_basis = current_chart
+                target_angles, target_basis = target_chart
+                # Feed-forward is the spatial velocity AT THE TARGET pose.
+                # Transfer its coordinate rates to the actual pose; copying
+                # that spatial vector would reintroduce the same coupling.
+                target_rates = np.linalg.solve(target_basis, zero.T @ feedforward[3:])
+                rates = ((target_angles - current_angles) * self.rotation_error_gain +
+                         target_rates * self.rotation_feedforward_gain)
+                angular = zero @ current_basis @ rates
+            # Uniform scaling preserves the intended coordinate-rate direction.
+            # Independent component clipping can recreate outward side motion.
+            angular /= max(1.0, float(np.max(
+                np.abs(angular) / self.maximum_angular_velocity)))
+        else:
+            angular = clamp_each(angular, self.maximum_angular_velocity)
         linear = self.clamp_norm(linear, self.maximum_linear_speed_norm)
         angular = self.clamp_norm(angular, self.maximum_angular_speed_norm)
         return np.concatenate((linear, angular))
+
+    @staticmethod
+    def _ordered_rotation_chart(rotation: np.ndarray):
+        """Angles and spatial-rate basis of Rx(side) Ry(tilt) Rz(roll).
+
+        These are bounded command coordinates, so angle error must not wrap
+        across the +/-pi command boundary. At the tilt singularity the chart
+        is undefined; the caller retains finite SO(3) feedback and all guards.
+        """
+        tilt = math.asin(float(np.clip(rotation[0, 2], -1.0, 1.0)))
+        ct = math.cos(tilt)
+        if abs(ct) < 1.0e-4:
+            return None
+        side = math.atan2(-rotation[1, 2], rotation[2, 2])
+        roll = math.atan2(-rotation[0, 1], rotation[0, 0])
+        ss, cs = math.sin(side), math.cos(side)
+        basis = np.array([[1.0, 0.0, math.sin(tilt)],
+                          [0.0, cs, -ss * ct],
+                          [0.0, ss, cs * ct]])
+        return np.array([side, tilt, roll]), basis
 
 
 def confirmed_position_reference_hold(

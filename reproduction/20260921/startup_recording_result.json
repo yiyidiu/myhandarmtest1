@@ -1,0 +1,20 @@
+{
+  "screen_mp4_decodable": true,
+  "screen_eos": true,
+  "screen_resolution": [
+    1920,
+    1080
+  ],
+  "ros_messages": {
+    "/shared_teleop/hamer_pose": 1939,
+    "/gazebo/model_states": 194111,
+    "/teleop_pouring/state": 3867,
+    "/joint_states": 19233
+  },
+  "rgbd_sqlite_tables": [
+    "topics",
+    "messages"
+  ],
+  "control_reference_token": "",
+  "note": "Startup check only, no operator calibration or motion-following/grasp trial."
+}

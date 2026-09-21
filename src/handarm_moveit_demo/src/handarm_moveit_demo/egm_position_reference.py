@@ -1,8 +1,8 @@
 """Pure latest-reference integrator for the Gazebo EGM-emulation profile.
 
 ABB EGM position guidance combines a persistent position reference with a
-velocity feed-forward term.  MoveIt Servo already produces the joint velocity
-feed-forward required by this project.  This model integrates only the latest
+velocity feed-forward term. The upstream checked solver supplies joint
+velocities. This model integrates only the latest
 velocity sample into a bounded joint-position reference and keeps that
 reference unchanged when input stops.  It deliberately has no command queue.
 """
@@ -180,18 +180,40 @@ class EgmPositionReferenceModel:
                     self.upper_limits[index]):
                 self.reference[index] = candidate
 
-    def _apply_following_error_leash(self) -> bool:
+    def _apply_following_error_leash(self, previous_reference=None) -> bool:
         """Keep the command close enough for the position servo to follow.
 
-        An EGM position correction is advanced from measured feedback; it must
-        not become an open-loop integral that runs several radians ahead of a
-        saturated joint.  The moving leash preserves the persistent position
-        reference while allowing it to advance as feedback catches up.
+        Limit newly commanded lead as feedback catches up. The coordinated
+        profile shortens checked steps without changing their direction and
+        retains the old reference under external deflection. Measured error
+        can then exceed the command limit under a load; dragging the reference
+        toward that deflection would be an unverified motion. The legacy
+        uncoordinated profile retains its feedback-relative clipping.
         """
 
         if self.actual is None:
             return False
         proposed = self.reference.copy()
+        if self.coordinated_velocity_changes and previous_reference is not None:
+            # Only shorten the newly checked joint-space step. Per-axis
+            # clipping changes its direction; pulling an old reference to
+            # disturbed feedback creates motion that was never checked.
+            # If a contact has already pushed feedback outside the leash,
+            # retain the last reference and permit only error-reducing steps.
+            delta = proposed - previous_reference
+            lower = np.minimum(self.actual - self.maximum_following_error,
+                               previous_reference)
+            upper = np.maximum(self.actual + self.maximum_following_error,
+                               previous_reference)
+            active = np.abs(delta) > 1.0e-12
+            allowed = np.where(delta > 0., upper - previous_reference,
+                               lower - previous_reference)
+            fraction = min(1., float(np.min(allowed[active] / delta[active]))) \
+                if np.any(active) else 1.
+            fraction = max(0., fraction)
+            self.reference = previous_reference + fraction * delta
+            self.feedforward_velocity *= fraction
+            return fraction < 1. - 1.0e-12
         self.reference = np.clip(
             proposed,
             self.actual - self.maximum_following_error,
@@ -204,6 +226,7 @@ class EgmPositionReferenceModel:
         if self.actual is None:
             return None
         self._reanchor_equivalent_turns()
+        previous_reference = self.reference.copy()
         now = float(now_s)
         if not np.isfinite(now):
             raise ValueError("step timestamp must be finite")
@@ -246,16 +269,28 @@ class EgmPositionReferenceModel:
                 self.feedforward_velocity + delta,
                 -self.maximum_velocity, self.maximum_velocity)
             proposed = self.reference + self.feedforward_velocity * dt
-            bounded = np.clip(proposed, self.lower_limits, self.upper_limits)
+            if self.coordinated_velocity_changes:
+                step = proposed - self.reference
+                active = np.abs(step) > 1.0e-12
+                remaining = np.where(step > 0., self.upper_limits - self.reference,
+                                     self.lower_limits - self.reference)
+                fraction = min(1., float(np.min(remaining[active] / step[active]))) \
+                    if np.any(active) else 1.
+                fraction = max(0., fraction)
+                bounded = self.reference + fraction * step
+                self.feedforward_velocity *= fraction
+            else:
+                bounded = np.clip(proposed, self.lower_limits, self.upper_limits)
             clamped_axes = np.abs(bounded - proposed) > 1e-12
             self.reference = bounded
             # Do not retain an outward velocity at a saturated joint reference.
-            self.feedforward_velocity[clamped_axes] = 0.0
+            if not self.coordinated_velocity_changes:
+                self.feedforward_velocity[clamped_axes] = 0.0
             limit_clamped = bool(np.any(clamped_axes))
         else:
             limit_clamped = False
 
-        following_error_clamped = self._apply_following_error_leash()
+        following_error_clamped = self._apply_following_error_leash(previous_reference)
 
         return EgmReferenceOutput(
             reference=self.reference.copy(),

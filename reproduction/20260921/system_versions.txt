@@ -1,0 +1,19 @@
+gazebo11 11.15.1-1~focal
+gstreamer1.0-libav (not installed as a dpkg package)
+gstreamer1.0-plugins-bad (not installed as a dpkg package)
+gstreamer1.0-plugins-base 1.16.3-0ubuntu1.4
+gstreamer1.0-plugins-good 1.16.3-0ubuntu1.3
+gstreamer1.0-plugins-ugly 1.16.2-2build1
+libgazebo11 11.15.1-1~focal
+python3-gi 3.36.0-1
+ros-noetic-gazebo-ros 2.9.3-1focal.20250521.003802
+ros-noetic-moveit 1.1.16-1focal.20250521.021831
+ros-noetic-roscpp 1.17.4-1focal.20250519.225343
+Screen recorder runtime: GStreamer 1.16.3
+ximagesrc: 1.16.3
+videoscale: 1.16.3
+videoconvert: 1.16.3
+clockoverlay: 1.16.3
+x264enc: 1.16.2
+mp4mux: 1.16.3
+qtdemux: 1.16.3

@@ -28,7 +28,10 @@ source /etc/os-release
 }
 if [[ "$skip_apt" != true ]]; then
   sudo apt-get update
-  sudo apt-get install -y build-essential cmake git curl ca-certificates \
+  sudo apt-get install -y build-essential cmake git curl ca-certificates x11-xserver-utils \
+    python3-gi gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 gstreamer1.0-tools \
+    gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly gstreamer1.0-libav \
     python3-catkin-pkg python3-numpy python3-scipy python3-opencv python3-yaml \
     python3-rosdep python3-rospkg python3-setuptools python3-nose \
     ros-noetic-catkin ros-noetic-control-toolbox ros-noetic-gazebo-ros-control \

@@ -17,6 +17,8 @@ from perception_hamer.src.teleop_pose_packet import (  # noqa: E402
     build_invalid_teleop_packet, build_live_teleop_packet, foreground_depth_component,
     invalidate_stale_teleop_observation, metric_wrist_from_arrays,
     metric_wrist_ring_from_arrays,
+    metric_wrist_zero_from_arrays,
+    metric_palm_skin_from_arrays,
 )
 
 
@@ -24,6 +26,150 @@ INTRINSICS = {
     "fx": 100.0, "fy": 100.0, "ppx": 100.0, "ppy": 100.0,
     "coeffs": [0.0]*5, "distortion_model": "none",
 }
+
+
+class PalmSkinDepthTest(unittest.TestCase):
+    def test_native_origins_share_measured_skin_without_offset(self):
+        points = np.array([[100,140],[70,70],[90,60],[110,60],[130,70]])
+        depth = np.full((200,200),800,np.uint16)
+        outputs = [metric_palm_skin_from_arrays(points,origin,depth,.001,INTRINSICS)
+                   for origin in ([100,140],[110,140])]
+        np.testing.assert_allclose(outputs[0][0],[0,.32,.8])
+        np.testing.assert_allclose(outputs[1][0],[.08,.32,.8])
+        for _,_,diagnostics in outputs:
+            self.assertEqual(diagnostics['model_depth_offset_m'],0)
+            self.assertFalse(diagnostics['depth_reference_hold_used'])
+        depth[:] = 0
+        with self.assertRaisesRegex(ValueError,'INSUFFICIENT_MEASURED_DEPTH'):
+            metric_palm_skin_from_arrays(points,[100,140],depth,.001,INTRINSICS)
+
+    def test_depth_boundary_is_not_accepted_as_uniform_skin(self):
+        points = np.array([[100,140],[70,70],[90,60],[110,60],[130,70]])
+        depth=np.full((200,200),800,np.uint16)
+        depth[:,100:]=900
+        with self.assertRaisesRegex(ValueError,'DEPTH_DISCONTINUITY'):
+            metric_palm_skin_from_arrays(points,[100,140],depth,.001,INTRINSICS)
+
+
+class JointZeroLocalDepthTest(unittest.TestCase):
+    def geometry(self):
+        # Two skin planes around joint 0: front at -20 mm, rear at +20 mm.
+        vertices = np.array([[x, y, z] for z in (-.02, .02)
+                             for x, y in [(-.04,-.04),(.04,-.04),(.04,.04),(-.04,.04)]])
+        return vertices, np.zeros((21, 3)), np.zeros((21, 2)), np.array(
+            [[0,1,2],[0,2,3],[4,5,6],[4,6,7]])
+
+    def measure(self, depth, shift=0., affine=None):
+        vertices, joints, pixels, faces = self.geometry()
+        vertices[:, 2] += shift; joints[:, 2] += shift
+        return metric_wrist_zero_from_arrays(vertices, joints, pixels, faces,
+            [0,0,1-shift], [256,256], affine or [[1,0,0],[0,1,0]],
+            depth, .001, INTRINSICS)
+
+    def test_front_surface_offset_and_real_translation_are_retained(self):
+        depth = np.full((256,256), 1000, np.uint16)
+        point, confidence, diagnostic = self.measure(depth)
+        np.testing.assert_allclose(point, [.2856,.2856,1.02], atol=1e-7)
+        self.assertAlmostEqual(diagnostic['model_surface_to_joint0_offset_m'], .02)
+        self.assertAlmostEqual(confidence, 1.)
+        moved = self.measure(depth-100)[0]
+        self.assertAlmostEqual(point[2]-moved[2], .1)
+        # A change of model origin/crop-camera translation is not real motion.
+        np.testing.assert_allclose(self.measure(depth, shift=.4)[0], point, atol=1e-7)
+
+    def test_left_crop_reflection_maps_joint_zero_to_original_color_ray(self):
+        point, _, diagnostic = self.measure(np.full((256,256),1000,np.uint16),
+            affine=[[-1,0,240],[0,1,0]])
+        np.testing.assert_allclose(diagnostic['center_pixel'], [112,128])
+        np.testing.assert_allclose(point, [.1224,.2856,1.02], atol=1e-7)
+
+    def test_internal_offset_changes_with_model_orientation(self):
+        vertices, joints, pixels, faces = self.geometry()
+        angle = np.pi/6
+        rotation = np.array([[np.cos(angle),0,np.sin(angle)],
+                             [0,1,0],[-np.sin(angle),0,np.cos(angle)]])
+        point, _, diagnostic = metric_wrist_zero_from_arrays(
+            vertices @ rotation.T, joints, pixels, faces, [0,0,1], [256,256],
+            [[1,0,0],[0,1,0]], np.full((256,256),1000,np.uint16), .001, INTRINSICS)
+        self.assertAlmostEqual(point[2], 1.+.02/np.cos(angle), places=7)
+        self.assertGreater(diagnostic['model_surface_to_joint0_offset_m'], .02)
+
+    def test_open_wrist_cut_does_not_pair_front_skin_with_rear_wall(self):
+        # Analytic forearm cylinder, bone at exactly 1 m. The model ends at
+        # its wrist ring while the measured real skin continues past it.
+        # Previously the rear wall yielded a plausible but wrong 0.93--0.95 m.
+        vertices = np.zeros((778, 3))
+        angles = np.arange(16) * 2*np.pi/16
+        for start, y in ((0, 0.), (16, .1)):
+            vertices[start:start+16] = np.column_stack((
+                .025*np.cos(angles), np.full(16, y), .025*np.sin(angles)))
+        vertices[32] = [0, .1, 0]
+        faces = []
+        for i in range(16):
+            j = (i+1) % 16
+            faces.extend([[i, j, 16+j], [i, 16+j, 16+i], [16+i, 16+j, 32]])
+        u, v = np.meshgrid(np.arange(256), np.arange(256))
+        rays = np.stack(((u-128)/256, (v-128)/256, np.ones_like(u)), axis=-1)
+        intrinsics = dict(INTRINSICS, fx=256., fy=256., ppx=128., ppy=128.)
+        for degrees in (15., 30., 45.):
+            c, s = np.cos(np.deg2rad(degrees)), np.sin(np.deg2rad(degrees))
+            rotation = np.array([[1,0,0], [0,c,-s], [0,s,c]])
+            axis = rotation[:, 1]
+            normal_plane = np.eye(3) - np.outer(axis, axis)
+            center = np.array([0., 0., 1.])
+            a = np.einsum('...i,ij,...j->...', rays, normal_plane, rays)
+            b = -2 * (rays @ (normal_plane @ center))
+            discriminant = b*b - 4*a*(center @ normal_plane @ center - .025**2)
+            z = (-b - np.sqrt(np.maximum(0., discriminant))) / (2*a)
+            depth = np.where(discriminant >= 0., np.rint(z*1000), 0).astype(np.uint16)
+            joints = np.zeros((21, 3))
+            joints[[5,9,13,17]] = np.array([0., .07, 0.]) @ rotation.T
+            point, _, _ = metric_wrist_zero_from_arrays(
+                vertices @ rotation.T, joints, np.zeros((21,2)), np.array(faces),
+                [0,0,1], [256,256], [[1,0,0],[0,1,0]], depth, .001, intrinsics)
+            np.testing.assert_allclose(point, [0., 0., 1.], atol=.001)
+
+    def test_hole_and_mixed_background_are_invalid_without_distant_fallback(self):
+        depth = np.full((256,256),1000,np.uint16)
+        depth[126:131,126:131] = 0
+        with self.assertRaisesRegex(ValueError, 'INSUFFICIENT_LOCAL'):
+            self.measure(depth)
+        depth[126:131,126:131] = 1000
+        depth[126:131,129:131] = 1400
+        with self.assertRaisesRegex(ValueError, 'DEPTH_DISCONTINUITY'):
+            self.measure(depth)
+
+    def test_minority_depth_edge_outliers_do_not_disable_consistent_wrist_measurement(self):
+        for outlier in (940, 1400):
+            depth = np.full((256,256),1000,np.uint16)
+            depth[126:131,126] = outlier
+            point, _, diagnostic = self.measure(depth)
+            self.assertAlmostEqual(point[2], 1.02)
+            self.assertEqual(diagnostic['sample_count'], 20)
+            self.assertEqual(diagnostic['depth_outlier_count'], 5)
+
+    def test_packet_uses_no_ring_and_does_not_change_orientation(self):
+        vertices, joints, pixels, faces = self.geometry()
+        result = SimpleNamespace(is_right=False, timestamp=1.,
+            pred_vertices_mano_right_canonical=vertices,
+            pred_keypoints_3d_mano_right_canonical=joints,
+            pred_keypoints_2d_crop_normalized=pixels,
+            hamer_crop_projection_translation=np.array([0.,0.,1.]),
+            hamer_nominal_crop_focal_length=np.array([256.,256.]),
+            quality={'affine_original_to_crop':[[1,0,0],[0,1,0]],'bbox_visible_fraction':1.})
+        control = dict(valid=True, rotation=np.eye(3).tolist(),
+            reference_kind='MANO_FIVE_POINT_PALM_USER_XYZ', quality={})
+        frame = SimpleNamespace(aligned_depth_raw=np.full((256,256),1000,np.uint16),
+            depth_scale_m_per_unit=.001, color_intrinsics=INTRINSICS)
+        with patch('perception_hamer.src.teleop_pose_packet.metric_wrist_ring_from_arrays',
+                   side_effect=AssertionError('ring must not be used')):
+            packet = build_live_teleop_packet(result, {'control_wrist_frame':control},
+                frame, SimpleNamespace(confidence=1.), 'joint0', 1, 1, 1,
+                wrist_depth_mode='joint0-surface', mano_faces=faces,
+                reference_depth_m=8., reference_depth_age_s=0.)
+        np.testing.assert_allclose(packet['wrist_position_m'], [.2856,.2856,1.02],atol=1e-7)
+        np.testing.assert_allclose(np.reshape(packet['palm_rotation_row_major'],(3,3)),np.eye(3))
+        self.assertEqual(packet['position_source'],'HAMER_WRIST_0_LOCAL_RGBD_WITH_MODEL_SURFACE_OFFSET')
 
 
 class TeleopPosePacketTest(unittest.TestCase):

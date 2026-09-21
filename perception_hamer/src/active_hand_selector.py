@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
-from .hand_detection_gate import bbox_iou
+from .hand_detection_gate import ConsecutiveHandDetectionGate, bbox_iou
 
 
 class AutomaticActiveHandSelector:
@@ -16,10 +17,14 @@ class AutomaticActiveHandSelector:
     physical handedness remains visible, an opposite hand cannot steal the
     crop.  If only the opposite hand remains for ``switch_frames`` consecutive
     detector results, an explicit automatic hand-switch event is emitted.
+
+    With ``fixed_is_right`` set, a remote opposite hand never takes control;
+    only a fresh, overlapping track can stabilize an occasional label flip.
     """
 
     def __init__(
-        self, switch_frames: int = 3, handedness_flip_continuity_iou: float = 0.60
+        self, switch_frames: int = 3, handedness_flip_continuity_iou: float = 0.60,
+        fixed_is_right: Optional[bool] = None, maximum_continuity_gap_s: float = 0.30,
     ) -> None:
         self.switch_frames = int(switch_frames)
         if self.switch_frames < 2:
@@ -30,6 +35,13 @@ class AutomaticActiveHandSelector:
         if not 0.0 <= self.handedness_flip_continuity_iou <= 1.0:
             raise ValueError("handedness flip continuity IoU must be in [0,1]")
         self.active_is_right: Optional[bool] = None
+        self.fixed_is_right = fixed_is_right
+        self.maximum_continuity_gap_s = float(maximum_continuity_gap_s)
+        if not np.isfinite(self.maximum_continuity_gap_s) or self.maximum_continuity_gap_s <= 0:
+            raise ValueError("maximum_continuity_gap_s must be finite and positive")
+        self._last_selection_monotonic: Optional[float] = None
+        self._fixed_reacquisition = ConsecutiveHandDetectionGate(required_frames=2, minimum_iou=0.25)
+        self._last_reacquisition_monotonic: Optional[float] = None
         # Monotonic identity generation for the camera process lifetime.  This
         # is not a biometric hand identifier; it is a fail-closed session
         # identity that changes whenever automatic selection changes sides.
@@ -90,7 +102,75 @@ class AutomaticActiveHandSelector:
         })
         return result
 
-    def select(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _select_fixed(self, payload: Dict[str, Any], candidates: List[Dict[str, Any]],
+                      now: float) -> Dict[str, Any]:
+        """Lock the physical side, while tolerating label flips on a fresh track.
+
+        A remote opposite hand cannot inherit C. After a gap the raw physical
+        side is needed again; a stale bounding box cannot prove identity.
+        """
+        fresh = (self.previous_bbox is not None and
+                 self._last_selection_monotonic is not None and
+                 0 <= now-self._last_selection_monotonic <= self.maximum_continuity_gap_s)
+        selected = None
+        if candidates and fresh:
+            nearest = self._choose(candidates)
+            overlap = bbox_iou(self.previous_bbox, nearest.get("bbox"))
+            if overlap >= self.handedness_flip_continuity_iou:
+                selected = dict(nearest)
+                if bool(selected["is_right"]) != self.fixed_is_right:
+                    selected["handedness_stabilized_by_spatial_continuity"] = True
+                    selected["handedness_continuity_iou"] = overlap
+
+        if selected is None:
+            same_side = [c for c in candidates if bool(c["is_right"]) == self.fixed_is_right]
+            if same_side:
+                selected = self._choose(same_side)
+            else:
+                self._fixed_reacquisition.reset()
+                return {"valid": False,
+                        "reason": ("fixed_control_hand_not_detected" if candidates else
+                                   payload.get("reason", "no_hand_detected")),
+                        "active_hand_is_right": self.active_is_right,
+                        "active_hand_generation": self.active_hand_generation,
+                        "active_hand_policy": "fixed_physical_hand",
+                        "detections": candidates}
+
+        discontinuity = (self.previous_bbox is not None and
+                         (not fresh or bbox_iou(self.previous_bbox, selected["bbox"]) < 0.25))
+        if discontinuity:
+            # Do not move the identity anchor on one proposal. In the recorded
+            # video the idle right hand briefly received a left label; accepting
+            # that single remote box poisoned all later IoU-based selection.
+            if (self._last_reacquisition_monotonic is None or
+                    now-self._last_reacquisition_monotonic > self.maximum_continuity_gap_s):
+                self._fixed_reacquisition.reset()
+            self._last_reacquisition_monotonic = now
+            confirmed = self._fixed_reacquisition.observe(selected)
+            if confirmed is None:
+                return {"valid": False, "reason": "fixed_hand_reacquiring",
+                        "track_discontinuity": True,
+                        "active_hand_is_right": self.active_is_right,
+                        "active_hand_generation": self.active_hand_generation,
+                        "active_hand_policy": "fixed_physical_hand",
+                        "detections": candidates}
+            selected = confirmed
+        self._fixed_reacquisition.reset()
+        selected = dict(selected)
+        selected.setdefault("detector_reported_is_right", selected["is_right"])
+        selected["is_right"] = bool(self.fixed_is_right)
+        if self.active_is_right is None:
+            self.active_is_right = bool(self.fixed_is_right)
+            self.active_hand_generation += 1
+        result = self._selected_payload(selected, candidates)
+        result["active_hand_policy"] = "fixed_physical_hand"
+        result["track_discontinuity"] = bool(discontinuity)
+        result["ignored_non_active_hand_count"] = max(0, len(candidates)-1)
+        self._last_selection_monotonic = now
+        return result
+
+    def select(self, payload: Dict[str, Any],
+               observed_monotonic: Optional[float] = None) -> Dict[str, Any]:
         if not isinstance(payload, dict):
             return {
                 "valid": False,
@@ -98,6 +178,11 @@ class AutomaticActiveHandSelector:
                 "active_hand_generation": int(self.active_hand_generation),
             }
         candidates = self._valid_candidates(payload)
+        if self.fixed_is_right is not None:
+            now = time.monotonic() if observed_monotonic is None else float(observed_monotonic)
+            if not np.isfinite(now):
+                raise ValueError("observed_monotonic must be finite")
+            return self._select_fixed(payload, candidates, now)
         if self.active_is_right is None:
             if not candidates:
                 result = dict(payload)

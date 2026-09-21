@@ -216,6 +216,11 @@ class ThreeFingerRetargeter:
         self.pending_innovation_count = 0
 
         self.grip_latch_enabled = bool(config.get("grip_latch_enabled", False))
+        self.constant_grasp_torque_nm = float(config.get("constant_grasp_torque_nm", 0.0))
+        if (not math.isfinite(self.constant_grasp_torque_nm)
+                or self.constant_grasp_torque_nm < 0.0
+                or (self.constant_grasp_torque_nm > 0.0 and not self.grip_latch_enabled)):
+            raise ValueError("constant grasp torque requires a finite nonnegative value and grip latch")
         self._reset_grip_state()
 
     def _reset_grip_state(self):
@@ -424,6 +429,10 @@ class ThreeFingerRetargeter:
                     self.last_target[0] = self.open_target[0]
             if self.release_phase is not None:
                 desired = self.open_target.copy()
+        if self.constant_grasp_torque_nm > 0.0 and not self.grip_latched:
+            # Gesture-triggered torque grasp: wait open, then start all
+            # motors together. Partial human closure is not a position grasp.
+            desired = self.open_target.copy()
         maximum_step = self.maximum_velocity * self.command_duration_s
         command = self.last_target + np.clip(
             desired - self.last_target, -maximum_step, maximum_step

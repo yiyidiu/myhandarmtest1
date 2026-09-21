@@ -64,6 +64,9 @@
     <param name="simulation" value="$(arg simulation)" />
     <param name="geometric_recovery_filter" value="$(arg geometric_recovery_filter)" />
     <param name="mapping_profile" value="$(arg mapping_profile)" />
+    <param name="hand_reference_kind" value="$(optenv TELEOP_CONTROL_REFERENCE mano-five-point-palm)" />
+    <param if="$(eval arg('mapping_profile') == 'whole_wrist_pose')"
+           name="self_detour_enabled" type="bool" value="$(optenv TELEOP_SELF_DETOUR true)" />
     <param name="reverse_palm_turn" type="bool"
            value="$(optenv TELEOP_REVERSE_PALM_TURN false)" />
     <param name="require_scene_ready" value="$(arg require_scene_ready)" />

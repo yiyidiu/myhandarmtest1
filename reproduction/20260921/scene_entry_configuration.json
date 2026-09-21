@@ -1,0 +1,42 @@
+{
+  "pouring": {
+    "TELEOP_HAND_BACKEND": "hamer",
+    "TELEOP_CONTROL_REFERENCE": "mano-wrist-ring",
+    "TELEOP_WRIST_DEPTH_MODE": "palm-skin",
+    "TELEOP_MAPPING_PROFILE": "whole_wrist_pose",
+    "TELEOP_MOTION_CONTROLLER": "constrained",
+    "TELEOP_EMPTY_SCENE": "false",
+    "TELEOP_ALIGNMENT_VIEWS": "true",
+    "TELEOP_GRASP_WORLD": "/home/dongtian/myhandarmtest1-whole-wrist-scenes-20260921/scripts/../src/handarm_sim_demo/worlds/handarm_pouring.world"
+  },
+  "stacking": {
+    "TELEOP_HAND_BACKEND": "hamer",
+    "TELEOP_CONTROL_REFERENCE": "mano-wrist-ring",
+    "TELEOP_WRIST_DEPTH_MODE": "palm-skin",
+    "TELEOP_MAPPING_PROFILE": "whole_wrist_pose",
+    "TELEOP_MOTION_CONTROLLER": "constrained",
+    "TELEOP_EMPTY_SCENE": "false",
+    "TELEOP_ALIGNMENT_VIEWS": "true",
+    "TELEOP_GRASP_WORLD": "/home/dongtian/myhandarmtest1-whole-wrist-scenes-20260921/scripts/../src/handarm_sim_demo/worlds/handarm_front_stacking.world"
+  },
+  "grasp": {
+    "TELEOP_HAND_BACKEND": "hamer",
+    "TELEOP_CONTROL_REFERENCE": "mano-wrist-ring",
+    "TELEOP_WRIST_DEPTH_MODE": "palm-skin",
+    "TELEOP_MAPPING_PROFILE": "whole_wrist_pose",
+    "TELEOP_MOTION_CONTROLLER": "constrained",
+    "TELEOP_EMPTY_SCENE": "false",
+    "TELEOP_ALIGNMENT_VIEWS": "true",
+    "TELEOP_GRASP_WORLD": "/home/dongtian/myhandarmtest1-whole-wrist-scenes-20260921/scripts/../src/handarm_sim_demo/worlds/handarm_ground_grasp.world"
+  },
+  "empty": {
+    "TELEOP_HAND_BACKEND": "hamer",
+    "TELEOP_CONTROL_REFERENCE": "mano-wrist-ring",
+    "TELEOP_WRIST_DEPTH_MODE": "palm-skin",
+    "TELEOP_MAPPING_PROFILE": "whole_wrist_pose",
+    "TELEOP_MOTION_CONTROLLER": "constrained",
+    "TELEOP_EMPTY_SCENE": "true",
+    "TELEOP_ALIGNMENT_VIEWS": "false",
+    "TELEOP_GRASP_WORLD": "/home/dongtian/myhandarmtest1-whole-wrist-scenes-20260921/scripts/../src/handarm_sim_demo/worlds/handarm_motion_only.world"
+  }
+}

@@ -86,6 +86,27 @@ class PredictionClockTest(unittest.TestCase):
         self.assertTrue((reference == self.adapter.model.reference).all())
         self.assertEqual(self.adapter.model.feedforward_velocity[0], 0.)
 
+    def test_qp_owner_needs_fresh_swept_approval_without_servo_heartbeat(self):
+        self.adapter.require_servo_monitor = False
+        self.adapter.last_collision_scale_monotonic = None
+        self.command()
+        self.tick(12.02, 1000.02)
+        self.assertFalse(self.adapter.hard_safety_hold_active)
+        self.assertGreater(self.adapter.model.feedforward_velocity[0], 0.)
+        self.adapter.strict_command_safe_callback(Bool(data=False))
+        self.tick(12.04, 1000.04)
+        self.assertTrue(self.adapter.hard_safety_hold_active)
+        self.assertEqual(self.adapter.model.feedforward_velocity[0], 0.)
+
+    def test_qp_owner_stops_when_guard_stops_renewing_commands(self):
+        self.adapter.require_servo_monitor = False
+        self.adapter.last_collision_scale_monotonic = None
+        self.command()
+        self.tick(12.02, 1000.02)
+        self.tick(12.06, 1000.11)
+        self.assertTrue(self.adapter.hard_safety_hold_active)
+        self.assertEqual(self.adapter.model.feedforward_velocity[0], 0.)
+
 
 if __name__ == '__main__':
     unittest.main()

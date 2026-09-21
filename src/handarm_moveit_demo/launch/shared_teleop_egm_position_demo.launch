@@ -21,10 +21,12 @@
   <arg name="legacy_moveit_servo_reference"
        default="$(arg use_moveit_servo_safety)"
        doc="deprecated compatibility alias; false selects direct IK rollback" />
+  <arg name="run_servo_server" default="true"
+       doc="False only for the constrained QP backend, whose full-robot swept guard owns motion approval." />
   <arg name="stable_position_reference_profile" default="true"
        doc="true enables bounded low-latency motion plus stiff hold; false restores the prior aggressive EGM response" />
   <arg name="hand_stability_profile" default="physical_grasp"
-       doc="physical_grasp uses one finite-compliance hand plant; original restores the v0.3 PID/mimic plant" />
+       doc="physical_grasp uses self-locking worm drives and passive 1:1 couplings; original restores the v0.3 PID/mimic plant" />
   <arg name="camera_workspace_calibration_file"
        default="$(find handarm_moveit_demo)/config/camera_workspace_calibration.yaml" />
   <arg name="safe_initial_joint_positions"
@@ -43,14 +45,30 @@
     <arg name="moveit_controller_manager" value="ros_control" />
     <arg name="use_rviz" value="false" />
   </include>
+  <group if="$(eval arg('mapping_profile') == 'whole_wrist_pose')">
+    <!-- Distance spends the full 0.1 s on each of ~90 Cartesian samples.
+         Seeded, jump-checked detours need a feasible continuous solution;
+         the live QP/swept guard still owns the executed motion. -->
+    <param name="robot_description_kinematics/abbarm/solve_type" value="Speed" />
+    <param name="robot_description_kinematics/abbarm/kinematics_solver_timeout" value="0.02" />
+    <!-- Damping from the model's loaded-arm inertia near the recorded lift.
+         Desired-velocity feedforward is unchanged; the implicit damping
+         suppresses the stored position-error rebound after contact release. -->
+    <param name="gazebo_ros_control/pid_gains/joint_1/d" value="40.0" />
+    <param name="gazebo_ros_control/pid_gains/joint_2/d" value="75.0" />
+    <param name="gazebo_ros_control/pid_gains/joint_3/d" value="44.0" />
+    <param name="gazebo_ros_control/pid_gains/joint_4/d" value="10.4" />
+    <param name="gazebo_ros_control/pid_gains/joint_5/d" value="11.1" />
+    <param name="gazebo_ros_control/pid_gains/joint_6/d" value="3.0" />
+  </group>
   <include if="$(arg legacy_moveit_servo_reference)"
-           file="$(find abb120_moveit_config1)/launch/abbarm_servo_egm_position_gazebo.launch" />
+           file="$(find abb120_moveit_config1)/launch/abbarm_servo_egm_position_gazebo.launch">
+    <arg name="start_server" value="$(arg run_servo_server)" />
+  </include>
 
-  <!-- Servo is the primary predictive safety authority.  This strict ACM
-       guard covers only the additional arm/hand geometry Servo exempts.  Its
-       live check preserves the configured maximum joint step throughout its
-       prediction horizon; measured collision and stale feedback still fail
-       closed independently. -->
+  <!-- The QP backend solves and checks full arm/hand motion here. The Servo
+       backend feeds its velocities through this same swept guard. Do not run
+       an unused Servo solver/60 Hz collision loop beside QP on its CPU core. -->
   <node if="$(arg legacy_moveit_servo_reference)"
         name="full_robot_self_collision_guard"
         pkg="handarm_moveit_demo"
@@ -58,6 +76,10 @@
         launch-prefix="$(optenv TELEOP_CONTROL_LAUNCH_PREFIX)"
         output="screen"
         required="true">
+    <param name="independent_palm_rotation_axes"
+           value="$(eval arg('mapping_profile') in ['palm_axes_tool_zero', 'palm_axes_base_translation'])" />
+    <param name="allow_partial_spatial_rotation"
+           value="$(eval arg('mapping_profile') == 'whole_wrist_pose')" />
     <param name="state_timeout_s" value="0.25" />
     <param name="geometric_command_filter" value="true" />
     <param name="inverse_damping" value="0.005" />
@@ -78,11 +100,14 @@
     <rosparam param="required_joint_names">[joint_1, joint_2, joint_3, joint_4, joint_5, joint_6, f1j1, f1j2, f2j1, f3j2]</rosparam>
   </node>
 
+  <!-- The 250 Hz publisher must not share the collision solver's reserved
+       physical core. By default it inherits the general ROS CPU pool. -->
   <node if="$(arg legacy_moveit_servo_reference)"
         pkg="handarm_moveit_demo" type="egm_position_reference_adapter.py"
         name="egm_position_reference_adapter" output="screen" required="true"
-        launch-prefix="$(optenv TELEOP_CONTROL_LAUNCH_PREFIX)">
+        launch-prefix="$(optenv TELEOP_REFERENCE_LAUNCH_PREFIX)">
     <param name="rate_hz" value="250.0" />
+    <param name="require_servo_monitor" value="$(arg run_servo_server)" />
     <param name="raw_velocity_topic"
            value="/egm_position_reference/collision_checked_joint_velocity" />
     <param name="controller_topic"
@@ -109,7 +134,12 @@
     <rosparam param="upper_limits">[2.87979, 1.91986, 1.22173, 2.79253, 2.094395, 6.981317]</rosparam>
     <rosparam param="maximum_velocity">[4.36332, 4.36332, 4.36332, 5.58505, 5.58505, 7.33038]</rosparam>
     <rosparam param="maximum_acceleration">[8.0, 8.0, 8.0, 12.0, 12.0, 16.0]</rosparam>
-    <rosparam param="maximum_following_error_rad">[0.04, 0.04, 0.04, 0.06, 0.06, 0.08]</rosparam>
+    <rosparam unless="$(eval arg('mapping_profile') == 'whole_wrist_pose')"
+              param="maximum_following_error_rad">[0.04, 0.04, 0.04, 0.06, 0.06, 0.08]</rosparam>
+    <!-- Limit stored reference lead while the physical hand is in contact;
+         keep the C-zero, human goal and ordinary velocity/acceleration caps. -->
+    <rosparam if="$(eval arg('mapping_profile') == 'whole_wrist_pose')"
+              param="maximum_following_error_rad">[0.02, 0.02, 0.02, 0.03, 0.03, 0.04]</rosparam>
   </node>
 
   <node unless="$(arg legacy_moveit_servo_reference)"

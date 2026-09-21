@@ -1,0 +1,12 @@
+<launch>
+  <param name="/palm_rotation_saturation_probe_enabled" value="true"/>
+  <include file="$(find handarm_moveit_demo)/launch/live_human_ground_gazebo_egm_teleop.launch">
+    <arg name="gazebo_gui" value="false"/>
+    <arg name="grasp_alignment_views" value="false"/>
+    <arg name="enable_logger" value="false"/>
+    <arg name="use_simulated_environment_for_control" value="false"/>
+    <arg name="constrained_velocity_projection" value="true"/>
+    <arg name="mapping_profile" value="palm_axes_base_translation"/>
+  </include>
+  <param name="/six_dof_trend/side_angle_recovery" value="false"/>
+</launch>

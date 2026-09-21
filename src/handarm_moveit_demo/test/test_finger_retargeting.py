@@ -45,6 +45,35 @@ def retargeter(**overrides):
 
 
 class ThreeFingerRetargeterTest(unittest.TestCase):
+    def test_constant_torque_gesture_waits_open_then_latches_until_release(self):
+        controller = retargeter(grip_latch_enabled=True, constant_grasp_torque_nm=1.8,
+                               one_euro_minimum_cutoff_hz=1000.0,
+                               maximum_single_frame_innovation=1.0,
+                               maximum_human_flexion_rate_per_s=100.0)
+        _, baseline, current = self.calibrate(controller)
+        timestamp = 10.2
+        for _ in range(8):
+            timestamp += .05
+            result = controller.update(timestamp, "c:1", baseline+.25, .99, current)
+            self.assertFalse(controller.grip_latched)
+            np.testing.assert_allclose(result.desired_target, controller.open_target)
+        for _ in range(8):
+            timestamp += .05
+            result = controller.update(timestamp, "c:1", baseline+.60, .99, current)
+        self.assertTrue(controller.grip_latched)
+        # Closing one finger earlier because it touches an object must not
+        # release the shared gesture latch or change the selected torque.
+        contact = np.array([.18, .35, .48, .60])
+        for _ in range(8):
+            timestamp += .05
+            controller.update(timestamp, "c:1", baseline+.25, .99, contact)
+            self.assertTrue(controller.grip_latched)
+        for _ in range(8):
+            timestamp += .05
+            result = controller.update(timestamp, "c:1", baseline, .99, contact)
+        self.assertFalse(controller.grip_latched)
+        np.testing.assert_allclose(result.desired_target, controller.open_target)
+
     def test_power_grip_releases_all_contacts_together_from_measured_angles(self):
         controller = retargeter(
             grip_latch_enabled=True,

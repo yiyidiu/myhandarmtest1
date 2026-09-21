@@ -4,8 +4,17 @@ set -Eeuo pipefail
 
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 workspace="$(cd "$script_directory/.." && pwd)"
+if [[ -f "$workspace/teleop_machine.env" ]]; then
+  source "$workspace/teleop_machine.env"
+fi
 helpers="$script_directory/feedback_capture"
-imu_python="${TELEOP_IMU_PYTHON:-/home/dongtian/anaconda3/envs/mediapipe_env/bin/python}"
+export TELEOP_RECORD_IMU="${TELEOP_RECORD_IMU:-true}"
+case "$TELEOP_RECORD_IMU" in true|false) ;; *) echo 'TELEOP_RECORD_IMU 只能是 true 或 false。' >&2; exit 2 ;; esac
+if [[ "$TELEOP_RECORD_IMU" == false ]]; then
+  export TELEOP_REQUIRE_IMU=false
+fi
+source "$script_directory/teleop_cpu_profile.sh"
+imu_python="${TELEOP_IMU_PYTHON:-${TELEOP_MEDIAPIPE_PYTHON:-$workspace/.venvs/mediapipe_env/bin/python}}"
 reconstruction="$helpers/reconstruct_wt901_sample_time.py"
 cd "$workspace"
 set +u
@@ -13,8 +22,8 @@ source /opt/ros/noetic/setup.bash
 source "$workspace/devel/setup.bash"
 set -u
 recording_affinity_arguments=()
-if command -v taskset >/dev/null 2>&1 && (( $(nproc) >= 12 )); then
-  recording_affinity_arguments=(taskset -c 2-7)
+if [[ -n "$teleop_inference_cpus" ]]; then
+  recording_affinity_arguments=(taskset -c "$teleop_inference_cpus")
 fi
 
 if (( $# > 1 )); then
@@ -24,6 +33,14 @@ fi
 if pgrep -f 'run_d455_hamer_crop.py|perception_mediapipe/run_live.py|live_human_ground_gazebo_egm_teleop.launch' >/dev/null 2>&1; then
   echo "已有遥操作进程，请先在旧相机窗口按 Q，等待旧命令退出后再录制。" >&2
   exit 3
+fi
+scene_world="${TELEOP_GRASP_WORLD:-$workspace/src/handarm_sim_demo/worlds/handarm_ground_grasp.world}"
+if [[ "${TELEOP_EMPTY_SCENE:-false}" == true ]]; then
+  scene_world="$workspace/src/handarm_sim_demo/worlds/handarm_motion_only.world"
+fi
+if [[ ! -f "$scene_world" ]]; then
+  echo "找不到录制场景：$scene_world" >&2
+  exit 2
 fi
 mkdir -p "$workspace/.runtime"
 if (( $# == 1 )); then
@@ -43,9 +60,19 @@ if [[ "${TELEOP_WRIST_DIAGNOSTICS:-false}" == true ]]; then
 fi
 export TELEOP_RGBD_RECORDING_FILE="$session_directory/rgbd.db3"
 export TELEOP_WRIST_DIAGNOSTICS_DIRECTORY="$session_directory/perception"
-git rev-parse HEAD > "$session_directory/commit.txt"
-git status --porcelain -uno > "$session_directory/tracked_changes.txt"
-git diff HEAD -- > "$session_directory/code_changes.patch"
+git_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ "$git_root" == "$workspace" ]]; then
+  git rev-parse HEAD > "$session_directory/commit.txt"
+  git status --porcelain -uno > "$session_directory/tracked_changes.txt"
+  git diff HEAD -- > "$session_directory/code_changes.patch"
+else
+  # GitHub source ZIPs have no .git directory. They still contain the release
+  # identity and all runnable source; recording must not abort before startup.
+  head -n 1 "$workspace/VERSION.md" > "$session_directory/commit.txt"
+  : > "$session_directory/tracked_changes.txt"
+  printf '%s\n' '# Source archive: no Git working-tree diff available.' \
+    > "$session_directory/code_changes.patch"
+fi
 if [[ -d "$workspace/src/moveit_servo" ]]; then
   mkdir -p "$session_directory/controller_source"
   cp -a "$workspace/src/moveit_servo" "$session_directory/controller_source/"
@@ -59,8 +86,9 @@ if [[ -d "$workspace/src/handarm_sim_demo/meshes" ]]; then
   cp -a "$workspace/src/handarm_sim_demo/meshes" "$session_directory/controller_source/handarm_sim_demo/"
 fi
 cp "$script_directory/run_teleop_feedback_recording.sh" "$session_directory/recording_launcher.sh"
+cp "$scene_world" "$session_directory/scene.world"
 printf '%s\n' "${ROS_MASTER_URI:-http://localhost:11311}" > "$session_directory/ros_master_uri.txt"
-/usr/bin/python3 - "$session_directory" <<'PY'
+/usr/bin/python3 - "$session_directory" "$scene_world" <<'PY'
 import json,os,sys,time
 from pathlib import Path
 p=Path(sys.argv[1])
@@ -72,21 +100,40 @@ value={"status":"PREPARING_RECORDERS","created_host_wall_ns":time.time_ns(),"cre
  "camera_pose_role":"The pose actually received by the pinned controller, including its existing filtering/fusion.",
  "time_alignment":"MP4 frame PTS maps to host monotonic time; camera source and host receipt times are retained; ROS simulation time has a host clock bridge. IMU packet receipt is not device sampling time. Physical latency alignment remains a post-recording analysis.",
  "controller_workspace":str(Path.cwd()),"recording_changes_controller_parameters":False,
+ "scene_world_file":"scene.world","scene_world_source":str(Path(sys.argv[2]).resolve()),
  "motion_controller":os.environ.get("TELEOP_MOTION_CONTROLLER","constrained"),
  "alignment_views_requested":os.environ.get("TELEOP_ALIGNMENT_VIEWS","true"),
  "empty_motion_scene":os.environ.get("TELEOP_EMPTY_SCENE","false")=="true",
  "wrist_axes_diagnostics":os.environ.get("TELEOP_WRIST_DIAGNOSTICS","false")=="true",
  "live_rgb_preview":os.environ.get("TELEOP_LIVE_RGB_PREVIEW","false").lower()=="true",
+ "single_camera_preview":os.environ.get("TELEOP_SINGLE_CAMERA_PREVIEW","false").lower()=="true",
  "wrist_depth_mode":os.environ.get("TELEOP_WRIST_DEPTH_MODE","visible-surface"),
  "forearm_fusion_requested":os.environ.get("TELEOP_FOREARM_FUSION","false").lower()=="true",
  "forearm_control_fusion_enabled":False,
  "positive_view_bias_gain":float(os.environ.get("TELEOP_POSITIVE_VIEW_BIAS_GAIN","0")),
  "hand_backend":os.environ.get("TELEOP_HAND_BACKEND","mediapipe3d"),
+ "mapping_profile":os.environ.get("TELEOP_MAPPING_PROFILE","current_linear"),
+ "control_reference":os.environ.get("TELEOP_CONTROL_REFERENCE","mano-wrist-ring"),
  "imu_calibrated_pose_enabled":os.environ.get("TELEOP_IMU_CALIBRATED_POSE","false").lower()=="true",
+ "imu_recording_enabled":os.environ.get("TELEOP_RECORD_IMU","true")=="true",
+ "imu_required_before_teleop":os.environ.get("TELEOP_REQUIRE_IMU","false").lower()=="true",
  "precise_orientation_enabled":os.environ.get("TELEOP_PRECISE_ORIENTATION","false").lower()=="true",
  "requested_camera_resolution":os.environ.get("TELEOP_CAMERA_RESOLUTION","640x480"),
  "position_accommodation_m":float(os.environ.get("TELEOP_POSITION_ACCOMMODATION_M","0")),
  "imu_used_by_controller":False,"audio_recorded":False}
+if not value["imu_recording_enabled"]:
+ value["imu_mounting_instruction"]="IMU recording disabled for this session; no IMU required."
+ value["camera_imu_alignment_status"]="DISABLED_FOR_THIS_RECORDING"
+elif os.environ.get("TELEOP_IMU_MOUNTING") == "left_hand_x_distal_y_ulnar_z_dorsal":
+ value["imu_mounting"]={
+  "hand":"left", "imu_x_positive":"wrist toward middle fingertip",
+  "imu_y_positive":"index metacarpal toward little metacarpal",
+  "imu_z_positive":"outward from dorsum of hand",
+  "nominal_imu_to_hand_rotation":[[0,0,-1],[0,1,0],[1,0,0]],
+  "source":"User-described approximate mounting, not a measured extrinsic calibration",
+  "hand_frame":"X=Y_cross_Z; Y=index_to_little; Z=wrist_to_mean_MCP_5_9_13_17"}
+ value["alignment_motion_instruction"]="Before C: 10s still, then ~15s nonperiodic turn/pause/reverse. Repeat a short motion near the end for independent time-alignment validation."
+ value["camera_imu_alignment_status"]="NOT_YET_ESTIMATED; preserve source frames and IMU receive evidence for offline alignment"
 (p/'session.json').write_text(json.dumps(value,ensure_ascii=False,indent=2)+'\n')
 PY
 
@@ -126,7 +173,7 @@ cleanup() {
   stop_owned_group "$imu_pid" INT
   stop_owned_group "$clock_pid" INT
   stop_owned_group "$bag_pid" INT
-  if [[ -s "$session_directory/imu_ready.json" ]]; then
+  if [[ "$TELEOP_RECORD_IMU" == true && -s "$session_directory/imu_ready.json" ]]; then
     "$imu_python" "$reconstruction" "$session_directory/imu_raw.csv" \
       --output "$session_directory/imu_time_estimated.csv" --nominal-hz 50 \
       > "$session_directory/imu_time_reconstruction.log" 2>&1 || true
@@ -150,9 +197,10 @@ s['perception_diagnostics']=[str(f.relative_to(p)) for f in sorted(p.glob('perce
 s['status']='RECORDING_FILES_FINALIZED' if video_ok and s['camera_pose_rows']>0 and s['bag_finalized'] else 'RECORDING_INCOMPLETE'
 s['status_scope']='Recorded stream presence/finalization only; not evidence of accurate sensor alignment or successful teleoperation.'
 (p/'session.json').write_text(json.dumps(s,ensure_ascii=False,indent=2)+'\n')
-print('录制结果：视频时间表%s，IMU %d条，相机位姿 %d条。'%('已保存' if video_ok else '不完整',s['imu_samples'],s['camera_pose_rows']))
+imu_summary=('IMU %d条'%s['imu_samples']) if s['imu_recording_enabled'] else 'IMU本次未采集'
+print('录制结果：视频时间表%s，%s，相机位姿 %d条。'%('已保存' if video_ok else '不完整',imu_summary,s['camera_pose_rows']))
 if s['status']=='RECORDING_INCOMPLETE':print('注意：至少一项记录不完整；已保留现有文件和错误日志。')
-if not s['imu_available']:print('本次没有收到IMU数据，不能据此对照IMU姿态；录像和控制数据单独保留。')
+if s['imu_recording_enabled'] and not s['imu_available']:print('本次没有收到IMU数据，不能据此对照IMU姿态；录像和控制数据单独保留。')
 if not s['raw_rgbd_file_present']:print('本次原始RGB-D记录不可用；已有录像和位姿数据仍保留。')
 PY
   printf '\n本次操作日志：%s\n' "$session_directory"
@@ -163,13 +211,21 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 echo "启动当前修复候选版，自动录制屏幕与控制数据；只控制 Gazebo。"
-echo "同时尝试记录手背IMU；未收到IMU数据时会明确提示，不阻止录屏。"
+if [[ "$TELEOP_RECORD_IMU" == false ]]; then
+  echo "本次不启动IMU采集，不等待IMU；继续录屏、原始RGB-D与控制数据。"
+elif [[ "${TELEOP_REQUIRE_IMU:-false}" == true ]]; then
+  echo "此入口必须收到IMU数据才启动相机和仿真；请先打开IMU并断开手机端连接。"
+else
+  echo "同时尝试记录手背IMU；未收到IMU数据时会明确提示，不阻止录屏。"
+fi
 echo "请等待相机窗口，保持自然张手后按一次 C；按 Q 退出后等待录像保存完成。"
 echo "本次操作日志：$session_directory"
 echo "回放视频：$session_directory/screen.mp4"
 echo "原始RGB-D：$session_directory/rgbd.db3"
 if [[ "${TELEOP_WRIST_DIAGNOSTICS:-false}" == true ]]; then
-  if [[ "${TELEOP_LIVE_RGB_PREVIEW:-false}" == true ]]; then
+  if [[ "${TELEOP_SINGLE_CAMERA_PREVIEW:-false}" == true ]]; then
+    echo "单个相机画面：显示实际用于控制的坐标轴；红X、绿Y、蓝Z。"
+  elif [[ "${TELEOP_LIVE_RGB_PREVIEW:-false}" == true ]]; then
     echo "左侧为实时相机画面，底部保留原始腕口轴；右侧为姿态计算所用画面。轴颜色：红X、绿Y、蓝Z。"
   else
     echo "腕口轴：红X、绿Y、蓝Z；左侧原始估计，右侧处理后估计。"
@@ -197,12 +253,34 @@ if [[ ! -s "$session_directory/screen_ready.json" ]]; then
   exit 4
 fi
 
-printf -v imu_command '%q ' "${recording_affinity_arguments[@]}" "$imu_python" "$helpers/record_imu_raw.py" \
-  --duration 0 --display-hz 1 --csv "$session_directory/imu_raw.csv" \
-  --ready-file "$session_directory/imu_ready.json"
-setsid sg dialout -c "$imu_command" > "$session_directory/imu_recorder.log" 2>&1 &
-imu_pid=$!
-echo "屏幕已开始记录，正在启动仿真和相机。IMU是否收到数据会单独报告。"
+if [[ "$TELEOP_RECORD_IMU" == true ]]; then
+  printf -v imu_command '%q ' "${recording_affinity_arguments[@]}" "$imu_python" "$helpers/record_imu_raw.py" \
+    --duration 0 --display-hz 1 --csv "$session_directory/imu_raw.csv" \
+    --ready-file "$session_directory/imu_ready.json"
+  setsid sg dialout -c "$imu_command" > "$session_directory/imu_recorder.log" 2>&1 &
+  imu_pid=$!
+fi
+if [[ "${TELEOP_REQUIRE_IMU:-false}" == true ]]; then
+  echo "屏幕已开始记录，正在等待IMU接收；相机和仿真尚未启动。"
+  imu_ready_deadline=$(( SECONDS + 45 ))
+  while [[ ! -s "$session_directory/imu_ready.json" ]]; do
+    if ! kill -0 "$imu_pid" 2>/dev/null; then
+      echo "IMU记录进程已退出，未启动相机和仿真。请打开IMU后重新运行。" >&2
+      echo "接收日志：$session_directory/imu_recorder.log" >&2
+      exit 5
+    fi
+    if (( SECONDS >= imu_ready_deadline )); then
+      echo "45秒内未收到IMU数据，未启动相机和仿真。请检查电源及蓝牙连接后重新运行。" >&2
+      exit 5
+    fi
+    sleep .1
+  done
+  echo "已收到并保存IMU数据，现在启动相机和仿真；时间偏移将在录制后分析。"
+elif [[ "$TELEOP_RECORD_IMU" == true ]]; then
+  echo "屏幕已开始记录，正在启动仿真和相机。IMU是否收到数据会单独报告。"
+else
+  echo "屏幕已开始记录，正在启动仿真和相机；本次不采集IMU。"
+fi
 
 setsid "${recording_affinity_arguments[@]}" rosbag record --buffsize=64 -O "$session_directory/control_chain.bag" \
   /shared_teleop/hamer_pose /shared_teleop/raw_hand_command \
@@ -224,6 +302,7 @@ setsid "${recording_affinity_arguments[@]}" rosbag record --buffsize=64 -O "$ses
   /full_robot_self_collision_guard/hand_diagnostic \
   /shared_teleop/finger_diagnostics /controller_gazebo_hand/command \
   /gazebo/model_states /handarm_sim_demo/target_contacts \
+  /teleop_observers/object_reset_events /teleop_pouring/state \
   > "$session_directory/recorder.log" 2>&1 &
 bag_pid=$!
 
@@ -240,19 +319,20 @@ while kill -0 "$run_pid" 2>/dev/null; do
   for stream in screen imu clock bag; do
     variable="${stream}_pid"
     process_id="${!variable}"
+    [[ -n "$process_id" ]] || continue
     if ! kill -0 "$process_id" 2>/dev/null && [[ -z "${warned[$stream]:-}" ]]; then
       echo "[录制提醒] $stream 记录进程已停止。遥操作不会因此被更改，其余记录继续；退出后检查日志。" | tee -a "$session_directory/recording_warnings.log"
       warned[$stream]=1
     fi
   done
-  if [[ -s "$session_directory/imu_ready.json" && -z "${warned[imu_ready]:-}" ]]; then
-    echo "[录制] 已收到新的IMU数据，正在同步保存。" | tee -a "$session_directory/recording_warnings.log"
+  if [[ "$TELEOP_RECORD_IMU" == true && -s "$session_directory/imu_ready.json" && -z "${warned[imu_ready]:-}" ]]; then
+    echo "[录制] 已收到新的IMU数据，与录像同时保存；采样时间对齐尚待录后分析。" | tee -a "$session_directory/recording_warnings.log"
     warned[imu_ready]=1
-  elif (( SECONDS - imu_wait_started > 30 )) && [[ ! -s "$session_directory/imu_ready.json" && -z "${warned[imu_missing]:-}" ]]; then
+  elif [[ "$TELEOP_RECORD_IMU" == true ]] && (( SECONDS - imu_wait_started > 30 )) && [[ ! -s "$session_directory/imu_ready.json" && -z "${warned[imu_missing]:-}" ]]; then
     echo "[录制提醒] 尚未收到IMU数据；录像与控制数据继续。" | tee -a "$session_directory/recording_warnings.log"
     warned[imu_missing]=1
   fi
-  if [[ -s "$session_directory/imu_raw.csv" ]]; then
+  if [[ "$TELEOP_RECORD_IMU" == true && -s "$session_directory/imu_raw.csv" ]]; then
     # The CSV is buffered. The reader flushes its sample-derived display
     # once a second, so its log reflects received packets without reporting
     # a false disconnect while the CSV buffer is still filling.

@@ -7,6 +7,8 @@ import unittest
 import math
 import xml.etree.ElementTree as ET
 
+import yaml
+
 
 PACKAGE = Path(__file__).resolve().parents[1]
 WORKSPACE_SRC = PACKAGE.parent
@@ -75,6 +77,16 @@ class HandStabilityProfileTest(unittest.TestCase):
         self.assertEqual(backend.findtext("robotSimType"),
                          "handarm_sim_demo/BoundedPositionHWSim")
 
+    def test_planner_uses_the_physical_hand_motor_speed(self):
+        # Regression for repeated arm safety holds during finger motion:
+        # the former 4.0 override predicted five times the URDF drive travel.
+        limits = yaml.safe_load((URDF.parent / "joint_limits.yaml").read_text())["joint_limits"]
+        original = ET.fromstring(self.original)
+        for name in ACTIVE_JOINTS:
+            physical = float(original.find("joint[@name='%s']/limit" % name).get("velocity"))
+            self.assertTrue(limits[name]["has_velocity_limits"])
+            self.assertEqual(limits[name]["max_velocity"], physical)
+
     def test_physical_profile_has_one_owner_for_all_hand_joints(self):
         root = ET.fromstring(render_physical_grasp_hand(self.original))
         transmitted = {
@@ -94,16 +106,14 @@ class HandStabilityProfileTest(unittest.TestCase):
         plugin = physical_plugins[0]
         expected_tuning = {
             "activeStiffness": "25.0 12.0 12.0 12.0",
-            "activeDamping": "1.50 0.60 0.60 0.60",
-            "activeMaxEffort": "3.0 1.20 1.20 1.20",
-            "mimicStiffness": "25.0 10.0 10.0 10.0",
-            "mimicDamping": "1.50 0.50 0.50 0.50",
-            "mimicMaxEffort": "3.0 0.80 0.80 0.80",
+            "activeMaxEffort": "3.0 1.80 1.80 1.80",
         }
         self.assertEqual(
             {name: plugin.findtext(name) for name in expected_tuning},
             expected_tuning,
         )
+        for tag in ("mimicStiffness", "mimicDamping", "mimicMaxEffort"):
+            self.assertIsNone(plugin.find(tag))
         self.assertFalse(any(
             plugin.find("mimicJoint") is not None
             for plugin in root.findall("./gazebo/plugin")
@@ -113,7 +123,9 @@ class HandStabilityProfileTest(unittest.TestCase):
             for gazebo in root.findall("gazebo")
             if gazebo.findtext("implicitSpringDamper") == "true"
         }
-        self.assertEqual(implicit, set(ALL_HAND_JOINTS))
+        self.assertEqual(implicit & set(ALL_HAND_JOINTS), set(ALL_HAND_JOINTS) - set(ACTIVE_JOINTS))
+        self.assertIsNone(plugin.find("activeDamping"))
+        self.assertIsNone(plugin.find("graspDamping"))
 
     def test_physical_profile_softens_all_finger_contacts(self):
         root = ET.fromstring(render_physical_grasp_hand(self.original))

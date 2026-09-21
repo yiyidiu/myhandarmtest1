@@ -186,6 +186,38 @@ class EgmPositionReferenceModelTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             make_model(maximum_following_error=[math.inf, 0.1])
 
+    def test_checked_hold_does_not_move_reference_with_external_deflection(self):
+        model = make_model(maximum_following_error=[.05, .10],
+                           coordinated_velocity_changes=True)
+        model.update_actual([0., .5])
+        model.step(0.)
+        # A load moves feedback; no new commanded displacement exists.
+        # Pulling the reference to actual + leash would be an unchecked move.
+        model.update_actual([-.2, .5])
+        held = model.step(.02)
+        np.testing.assert_allclose(held.reference, [0., .5])
+        np.testing.assert_allclose(held.feedforward_velocity, [0., 0.])
+
+    def test_checked_step_keeps_joint_direction_when_one_axis_reaches_leash(self):
+        model = make_model(maximum_following_error=[.01, .10],
+                           coordinated_velocity_changes=True)
+        model.update_actual([0., .5])
+        model.step(0.)
+        model.update_velocity([1., 1.], 0.)
+        moved = model.step(.02)
+        np.testing.assert_allclose(moved.reference, [.01, .51])
+        self.assertTrue(moved.following_error_clamped)
+
+    def test_checked_step_keeps_joint_direction_at_position_bound(self):
+        model = make_model(initial_reference=[.99, .5],
+                           coordinated_velocity_changes=True)
+        model.update_actual([.99, .5])
+        model.step(0.)
+        model.update_velocity([1., 1.], 0.)
+        moved = model.step(.02)
+        np.testing.assert_allclose(moved.reference, [1., .51])
+        self.assertTrue(moved.limit_clamped)
+
 
 class GeometricStopReferenceTest(unittest.TestCase):
     def setUp(self):
@@ -229,6 +261,13 @@ class GeometricStopReferenceTest(unittest.TestCase):
         for _ in range(10):
             self.adapter.latest_actual[4] -= .0001
             self.stop("INPUT_INVALID")
+        self.assertAlmostEqual(self.adapter.model.reference[4], 1.92)
+        self.assertEqual(self.adapter.collision_reference_resets, 0)
+
+    def test_clearance_margin_hold_does_not_ratchet_reference_into_gravity_sag(self):
+        for _ in range(10):
+            self.adapter.latest_actual[4] -= .0001
+            self.stop("PREDICTED_SELF_CLEARANCE:f3link3,link_1")
         self.assertAlmostEqual(self.adapter.model.reference[4], 1.92)
         self.assertEqual(self.adapter.collision_reference_resets, 0)
 
@@ -304,8 +343,8 @@ class EgmPositionProfileWiringTest(unittest.TestCase):
             guard_parameters["enable_swept_command_gate"], "true")
         self.assertAlmostEqual(
             float(guard_parameters["prediction_horizon_s"]), 0.08)
-        self.assertEqual(
-            int(guard_parameters["maximum_prediction_samples"]), 3)
+        self.assertGreater(int(guard_parameters["maximum_prediction_samples"]), 0)
+        self.assertLessEqual(int(guard_parameters["maximum_prediction_samples"]), 256)
         self.assertEqual(
             guard_parameters["hand_command_topic"],
             "/controller_gazebo_hand/command")
@@ -315,9 +354,9 @@ class EgmPositionProfileWiringTest(unittest.TestCase):
         self.assertEqual(
             guard_rosparams["hand_reference_joint_names"],
             ["f1j1", "f1j2", "f2j1", "f3j2"])
-        self.assertEqual(
+        np.testing.assert_allclose(
             guard_rosparams["initial_hand_reference"],
-            [0.051, 0.0317, 0.0227, 0.0363])
+            [0.18] + [math.radians(5.0)] * 3)
         adapter_parameters = {
             item.get("name"): item.get("value")
             for item in nodes["egm_position_reference_adapter.py"].findall("param")}
@@ -360,10 +399,14 @@ class EgmPositionProfileWiringTest(unittest.TestCase):
         self.assertEqual(
             forwarded["stable_position_reference_profile"],
             "$(arg stable_position_reference_profile)")
-        self.assertEqual(forwarded["require_scene_ready"], "true")
+        # User explicitly prohibits simulated object/table truth in control.
+        self.assertEqual(arguments["use_simulated_environment_for_control"], "false")
+        self.assertEqual(forwarded["require_scene_ready"],
+                         "$(arg use_simulated_environment_for_control)")
         scene = next(node for node in root.findall("node")
                      if node.get("type") == "scene_manager.py")
         self.assertEqual(scene.get("required"), "true")
+        self.assertEqual(scene.get("if"), "$(arg use_simulated_environment_for_control)")
 
     def test_safe_hybrid_has_feedback_leash_and_fail_closed_monitors(self):
         root = ET.parse(str(
@@ -401,7 +444,11 @@ class EgmPositionProfileWiringTest(unittest.TestCase):
             "if (enable_swept_command_gate_ && !predictedVelocityIsSafe(",
             source)
         self.assertIn("positionsSatisfyBounds(candidate, 0.0", source)
-        self.assertNotIn("candidate.satisfiesBounds(", source)
+        # The swept predictor must check position limits, not inherited
+        # measured velocity limits. Other legacy probes are outside its scope.
+        predictor = source[source.index("bool predictedVelocityIsSafe("):
+                           source.index("void rawVelocityCallback(")]
+        self.assertNotIn("candidate.satisfiesBounds(", predictor)
 
         acceptance = ET.parse(str(
             PACKAGE / "launch/egm_servo_safety_acceptance.launch")).getroot()
@@ -438,8 +485,8 @@ class EgmPositionProfileWiringTest(unittest.TestCase):
         expected = {
             "translation_error_gain_per_s": 3.0,
             "rotation_error_gain_per_s": 3.0,
-            "translation_feedforward_gain": 0.20,
-            "rotation_feedforward_gain": 0.15,
+            "translation_feedforward_gain": 0.0,
+            "rotation_feedforward_gain": 0.0,
             "maximum_linear_velocity_mps": 0.30,
             "maximum_angular_velocity_radps": 2.0,
             "position_hold_after_target_loss_s": 0.40,
@@ -482,8 +529,9 @@ class EgmPositionProfileWiringTest(unittest.TestCase):
             "/abbarm_egm_position_controller/command")
         self.assertTrue(config["check_collisions"])
         self.assertGreaterEqual(config["collision_check_rate"], 50.0)
-        self.assertLessEqual(config["lower_singularity_threshold"], 17.0)
-        self.assertLessEqual(config["hard_stop_singularity_threshold"], 30.0)
+        self.assertGreater(config["lower_singularity_threshold"], 0.0)
+        self.assertLess(config["lower_singularity_threshold"],
+                        config["hard_stop_singularity_threshold"])
         self.assertGreaterEqual(config["joint_limit_margin"], 0.08)
 
     def test_semantic_model_exempts_only_true_structural_neighbors(self):

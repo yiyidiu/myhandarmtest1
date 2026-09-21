@@ -49,6 +49,169 @@ from handarm_moveit_demo.shared_teleop_core import (  # noqa: E402
 )
 
 
+class OrderedPalmServoTest(unittest.TestCase):
+    @staticmethod
+    def rotation(angles):
+        x, y, z = angles
+        return so3_exp([x, 0, 0]) @ so3_exp([0, y, 0]) @ so3_exp([0, 0, z])
+
+    @staticmethod
+    def angles(rotation):
+        return np.array([math.atan2(-rotation[1, 2], rotation[2, 2]),
+                         math.asin(rotation[0, 2]),
+                         math.atan2(-rotation[0, 1], rotation[0, 0])])
+
+    def controller(self, gain=8.0):
+        return RelativePoseServoController(
+            [8]*3, [gain]*3, [.2]*3, [1.2, 1.4, 1.6],
+            maximum_angular_speed_norm=2.0,
+            rotation_feedforward_gain=[.75]*3)
+
+    def rates_after_step(self, current, velocity, zero):
+        dt = 1e-7
+        advanced = so3_exp(velocity[3:] * dt) @ current
+        return (self.angles(zero.T @ advanced) - self.angles(zero.T @ current)) / dt
+
+    def test_recorded_boundary_pose_moves_side_inward_while_correcting_roll(self):
+        # Actual/target from the 2026-09-18 wrist-turn stall, not a pure-axis case.
+        actual = np.radians([-89.07, -6.03, -57.87])
+        target = np.radians([-88.0, -21.51, 39.76])
+        for zero in [np.eye(3), so3_exp([.3, -.8, 2.1])]:
+            current, goal = zero @ self.rotation(actual), zero @ self.rotation(target)
+            command = self.controller().command(
+                [0]*3, current, [0]*3, goal, ordered_rotation_zero=zero)
+            rates = self.rates_after_step(current, command, zero)
+            self.assertGreater(rates[0], 0.0)
+            self.assertLess(rates[1], 0.0)
+            self.assertGreater(rates[2], 0.0)
+            # Speed limits must preserve these relative coordinate rates.
+            ratios = rates / (target - actual)
+            np.testing.assert_allclose(ratios, [ratios[0]]*3, rtol=2e-5)
+            self.assertLessEqual(np.linalg.norm(command[3:]), 2.0 + 1e-10)
+            self.assertTrue(np.all(np.abs(command[3:]) <= [1.2, 1.4, 1.6]))
+
+    def test_target_feedforward_is_transferred_to_actual_rotation(self):
+        zero = so3_exp([.2, -.4, .7])
+        actual = np.radians([-88, -6, -58])
+        target = np.radians([-88, -22, 40])
+        wanted_rates = np.array([0.0, -.1, .4])
+        dt = 1e-7
+        current, goal = zero @ self.rotation(actual), zero @ self.rotation(target)
+        advanced_goal = zero @ self.rotation(target + dt * wanted_rates)
+        feedforward = np.r_[np.zeros(3), so3_log(advanced_goal @ goal.T) / dt]
+        controller = self.controller(gain=1e-9)
+        command = controller.command([0]*3, current, [0]*3, goal,
+            feedforward, ordered_rotation_zero=zero)
+        rates = self.rates_after_step(current, command, zero)
+        np.testing.assert_allclose(rates, .75 * wanted_rates, atol=2e-7)
+
+    def test_roll_correction_does_not_shortcut_across_command_boundary(self):
+        current = self.rotation(np.radians([0, 0, -170]))
+        target = self.rotation(np.radians([0, 0, 170]))
+        command = self.controller().command([0]*3, current, [0]*3, target,
+            ordered_rotation_zero=np.eye(3))
+        self.assertGreater(command[5], 0.0)
+
+    def test_tilt_singularity_retains_finite_bounded_output(self):
+        for tilt in [-math.pi/2, math.pi/2]:
+            command = self.controller().command([0]*3, np.eye(3), [0]*3,
+                self.rotation([.3, tilt, -.2]), ordered_rotation_zero=np.eye(3))
+            self.assertTrue(np.all(np.isfinite(command)))
+            self.assertLessEqual(np.linalg.norm(command[3:]), 2.0 + 1e-10)
+
+    def test_generic_servo_still_uses_shortest_so3_error(self):
+        current = self.rotation([.2, -.1, .3])
+        target = self.rotation([.3, .1, -.2])
+        command = self.controller(gain=.5).command([0]*3, current, [0]*3, target)
+        np.testing.assert_allclose(command[3:], .5 * so3_log(target @ current.T))
+
+
+class SideAngleRecoveryTest(unittest.TestCase):
+    def test_blocked_cross_zero_request_does_not_erase_yaw(self):
+        recovery = CZeroRecoveryTarget()
+        target = so3_exp([math.radians(-70), 0, 0])
+        for reached in [4.0, 0.0]:
+            result, _ = recovery.apply_side_angle(
+                target, so3_exp([math.radians(reached), 0, 0]), np.eye(3),
+                math.radians(-70), math.radians(-20), np.zeros(6), True, .02)
+            self.assertEqual(recovery.side_gain, 1.0)
+            np.testing.assert_allclose(result, target, atol=1e-12)
+
+    def test_unblocked_tracking_lag_does_not_reduce_recovered_side_gain(self):
+        recovery = CZeroRecoveryTarget()
+        zero = np.eye(3)
+        # A prior real limit reduced the gain. A later rapid outward motion
+        # lags by many degrees, but is explicitly NOT geometrically blocked.
+        recovery.side_gain, recovery.side_sign = .4, -1.0
+        for raw_deg, reached_deg in [(-30, -8), (-60, -10), (-120, -12), (-200, -15)]:
+            previous_gain = recovery.side_gain
+            recovery.apply_side_angle(
+                so3_exp([math.radians(max(-88, raw_deg)), 0, 0]),
+                so3_exp([math.radians(reached_deg), 0, 0]), zero,
+                math.radians(raw_deg), math.radians(-150), np.zeros(6), False, .02)
+            self.assertGreaterEqual(recovery.side_gain, previous_gain)
+
+    def test_unbounded_yaw_rate_matches_the_existing_pose_mapping(self):
+        mapper = RelativePoseMapper(np.eye(3), np.eye(3), [1]*3,
+            [90/70, 1, 3], [2]*3, math.radians(179),
+            maximum_side_rotation_rad=math.radians(88),
+            positive_side_rotation_gain=90/35,
+            rotation_axis_sign=[1, -1, 1], side_rotation_output_sign=-1)
+        for angle in [-.4, 0., .4]:
+            relative = so3_exp([angle, 0, 0]) @ so3_exp([0, .1, 0]) @ so3_exp([0, 0, .2])
+            for sign in [-1, 1]:
+                angular = np.array([sign*.2, -.1, .3])
+                _, rate = mapper.unbounded_side_motion(relative, angular)
+                eps = 1e-6
+                rotations = [mapper.map(np.zeros(3), pose, np.zeros(3), np.eye(3))[1]
+                             for pose in [relative, so3_exp(angular*eps) @ relative]]
+                sides = [math.atan2(-pose[1, 2], pose[2, 2]) for pose in rotations]
+                self.assertAlmostEqual(rate, (sides[1]-sides[0])/eps, places=5)
+
+    def test_free_motion_preserves_full_pose_and_velocity(self):
+        recovery = CZeroRecoveryTarget()
+        zero = so3_exp([0.1, -0.2, 0.3])
+        target = zero @ so3_exp([-0.3, 0, 0]) @ so3_exp([0, 0.2, 0.4])
+        velocity = np.array([.01, -.02, .03, .2, -.3, .4])
+        actual, speed = recovery.apply_side_angle(
+            target, zero, zero, -.3, -.1, velocity, False, .02)
+        np.testing.assert_allclose(actual, target, atol=1e-12)
+        np.testing.assert_allclose(speed, velocity, atol=1e-12)
+
+    def test_reverse_is_immediate_beyond_the_clipped_goal(self):
+        recovery = CZeroRecoveryTarget()
+        zero = so3_exp([.1, -.2, .3])
+        rest = so3_exp([0, .2, 0]) @ so3_exp([0, 0, .4])
+        target = zero @ so3_exp([math.radians(-88), 0, 0]) @ rest
+        reached = zero @ so3_exp([math.radians(-65), 0, 0]) @ rest
+        recovery.apply_side_angle(target, reached, zero, math.radians(-140),
+                                  0, np.zeros(6), True, .02)
+        result, speed = recovery.apply_side_angle(
+            target, reached, zero, math.radians(-130), math.radians(10),
+            np.zeros(6), False, .02)
+        expected = zero @ so3_exp([math.radians(-65 * 130 / 140), 0, 0]) @ rest
+        np.testing.assert_allclose(result, expected, atol=1e-12)
+        self.assertGreater(float((zero.T @ speed[3:])[0]), 0)
+        np.testing.assert_allclose(speed[:3], 0, atol=1e-12)
+        result, _ = recovery.apply_side_angle(zero, reached, zero, 0, 0,
+                                              np.zeros(6), False, .02)
+        np.testing.assert_allclose(result, zero, atol=1e-12)
+        self.assertEqual(recovery.side_gain, 1.0)
+
+    def test_clearing_obstacle_does_not_release_stationary_yaw_backlog(self):
+        recovery = CZeroRecoveryTarget()
+        zero = np.eye(3)
+        target = so3_exp([math.radians(88), 0, 0])
+        reached = so3_exp([math.radians(65), 0, 0])
+        recovery.apply_side_angle(target, reached, zero, math.radians(140),
+                                  0, np.zeros(6), True, .02)
+        for _ in range(100):
+            result, speed = recovery.apply_side_angle(target, reached, zero,
+                math.radians(140), 0, np.zeros(6), False, .02)
+        np.testing.assert_allclose(result, reached, atol=1e-12)
+        np.testing.assert_allclose(speed, 0, atol=1e-12)
+
+
 class CZeroRecoveryTargetTest(unittest.TestCase):
     def test_geometry_release_cannot_rebuild_backlog_while_robot_stays_still(self):
         recovery = CZeroRecoveryTarget()

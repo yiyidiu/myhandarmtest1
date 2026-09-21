@@ -4,6 +4,7 @@ set -Eeuo pipefail
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export TELEOP_HAND_BACKEND=hamer
 export TELEOP_CONTROL_REFERENCE=mano-five-point-palm
+export TELEOP_WRIST_DEPTH_MODE="${TELEOP_WRIST_DEPTH_MODE:-joint0-surface}"
 case "${TELEOP_PALM_TRANSLATION_FRAME:-base}" in
   base) export TELEOP_MAPPING_PROFILE=palm_axes_base_translation ;;
   tool_zero) export TELEOP_MAPPING_PROFILE=palm_axes_tool_zero ;;
@@ -21,6 +22,9 @@ export TELEOP_FOREARM_FUSION=false
 export TELEOP_EMPTY_SCENE="${TELEOP_EMPTY_SCENE:-true}"
 export TELEOP_ALIGNMENT_VIEWS="${TELEOP_ALIGNMENT_VIEWS:-true}"
 printf '%s\n' '新版左手坐标：红X朝手心外，绿Y食指→小指，蓝Z手腕→指根中心。'
+if [[ "$TELEOP_WRIST_DEPTH_MODE" == joint0-surface ]]; then
+  printf '%s\n' '位置：腕点0局部实测深度＋模型表面到关节点偏移；不经过腕环。'
+fi
 if [[ "$TELEOP_REVERSE_PALM_TURN" == true ]]; then
   printf '%s\n' '手掌顺/逆时针对应的末端转向已交换：绕手+X→末端−X；其余旋转仍为+Y→−Y、+Z→+Z。'
 else

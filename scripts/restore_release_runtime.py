@@ -11,7 +11,7 @@ import subprocess
 import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
-MANIFEST = json.loads((ROOT / 'reproduction/20260917/runtime_reference.json').read_text())
+MANIFEST = json.loads((ROOT / 'reproduction/20260921/runtime_reference.json').read_text())
 
 
 def sha256(path):

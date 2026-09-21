@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <deque>
 #include <limits>
 #include <map>
 #include <memory>
@@ -28,7 +29,9 @@
 #include <qpOASES.hpp>
 
 #include <geometric_shapes/shapes.h>
+#include <geometric_shapes/mesh_operations.h>
 #include <moveit/collision_detection_fcl/collision_common.h>
+#include <fcl/narrowphase/collision.h>
 #include <fcl/narrowphase/distance.h>
 #include <moveit/collision_detection/collision_tools.h>
 #include <moveit/planning_scene/planning_scene.h>
@@ -128,6 +131,8 @@ public:
     private_nh_.param("state_timeout_s", state_timeout_s_, 0.25);
     private_nh_.param("status_rate_hz", status_rate_hz_, 50.0);
     private_nh_.param("inverse_damping", inverse_damping_, 0.0);
+    private_nh_.param("independent_palm_rotation_axes", independent_palm_rotation_axes_, false);
+    private_nh_.param("allow_partial_spatial_rotation", allow_partial_spatial_rotation_, false);
     private_nh_.param<std::string>(
         "raw_velocity_topic", raw_velocity_topic_,
         "/full_robot_self_collision_guard/raw_arm_velocity");
@@ -182,10 +187,17 @@ public:
     validateRequiredJoints();
     validateArmJoints();
     validateHandReference();
+    for (const auto& name : arm_joint_names_)
+    {
+      const auto& bounds = model_->getVariableBounds(name);
+      operating_lower_limits_.push_back(bounds.min_position_);
+      operating_upper_limits_.push_back(bounds.max_position_);
+    }
     scene_.reset(new planning_scene::PlanningScene(model_));
     strict_acm_.reset(new collision_detection::AllowedCollisionMatrix(
         scene_->getAllowedCollisionMatrix()));
     configureStrictAllowedCollisionMatrix();
+    configureExactPalmContacts();
     latest_state_.reset(new moveit::core::RobotState(model_));
     latest_state_->setToDefaultValues();
     latest_state_->update();
@@ -195,6 +207,20 @@ public:
     {
       nh_.param("/shared_teleop/control/constrained_velocity_projection",
                 constrained_velocity_projection_, false);
+      if (constrained_velocity_projection_)
+        for (std::size_t i = 0; i < arm_joint_names_.size(); ++i)
+        {
+          std::vector<double> degrees;
+          if (!nh_.getParam("/shared_teleop/control/operational_joint_limits_deg/" +
+                            arm_joint_names_[i], degrees)) continue;
+          if (degrees.size() != 2 || !std::isfinite(degrees[0]) ||
+              !std::isfinite(degrees[1]) || degrees[0] >= degrees[1])
+            throw std::runtime_error("invalid operational joint limits: " + arm_joint_names_[i]);
+          operating_lower_limits_[i] = std::max(operating_lower_limits_[i], degrees[0]*M_PI/180.0);
+          operating_upper_limits_[i] = std::min(operating_upper_limits_[i], degrees[1]*M_PI/180.0);
+          if (operating_lower_limits_[i] >= operating_upper_limits_[i])
+            throw std::runtime_error("empty operational joint range: " + arm_joint_names_[i]);
+        }
       std::string solver;
       nh_.param<std::string>("/shared_teleop/control/joint_velocity_solver", solver, "qp");
       if (solver != "qp" && solver != "servo")
@@ -336,19 +362,47 @@ public:
         "arm_position_reference_topic", "");
     if (!arm_reference_topic.empty())
     {
+      if (constrained_velocity_projection_)
+      {
+        std::vector<double> following_limits;
+        if (!nh_.getParam("/egm_position_reference_adapter/maximum_following_error_rad",
+                          following_limits) || following_limits.size() != arm_joint_names_.size() ||
+            !std::all_of(following_limits.begin(), following_limits.end(),
+                         [](double x) { return std::isfinite(x) && x > 0.0; }))
+          throw std::runtime_error("QP requires the position adapter's following-error limits");
+        for (std::size_t i = 0; i < following_limits.size(); ++i)
+          reference_following_error_[arm_joint_names_[i]] = following_limits[i];
+        const double reference_rate_hz = nh_.param<double>(
+            "/egm_position_reference_adapter/rate_hz", 250.0);
+        if (!std::isfinite(reference_rate_hz) || reference_rate_hz <= 0.0)
+          throw std::runtime_error("QP requires a positive position reference publication rate");
+        reference_step_s_ = 1.0 / reference_rate_hz;
+      }
       std::vector<double> accelerations;
       if (nh_.getParam("/egm_position_reference_adapter/maximum_acceleration", accelerations) &&
           accelerations.size() == arm_joint_names_.size())
         for (std::size_t i = 0; i < accelerations.size(); ++i)
           if (std::isfinite(accelerations[i]) && accelerations[i] > 0.0)
             reference_acceleration_[arm_joint_names_[i]] = accelerations[i];
-      arm_reference_subscriber_ = nh_.subscribe<std_msgs::Float64MultiArray>(
+      ros::NodeHandle reference_nh(nh_);
+      if (constrained_velocity_projection_)
+        reference_nh.setCallbackQueue(&feedback_queue_);
+      arm_reference_subscriber_ = reference_nh.subscribe<std_msgs::Float64MultiArray>(
           arm_reference_topic, 1,
           [this](const std_msgs::Float64MultiArrayConstPtr& message) {
             if ((message->data.size() != arm_joint_names_.size() &&
                  message->data.size() != 2 * arm_joint_names_.size()) ||
                 !std::all_of(message->data.begin(), message->data.end(),
                              [](double x) { return std::isfinite(x); })) return;
+            if (constrained_velocity_projection_)
+            {
+              // The reference integrator keeps running while the solver is
+              // busy. Receive its positions AND ramp velocities alongside
+              // joint feedback; do not queue them behind the geometry check.
+              std::lock_guard<std::mutex> lock(feedback_mutex_);
+              pending_arm_reference_ = message;
+              return;
+            }
             std::lock_guard<std::mutex> lock(mutex_);
             for (std::size_t i = 0; i < arm_joint_names_.size(); ++i)
             {
@@ -389,10 +443,22 @@ private:
   {
     std::array<sensor_msgs::JointStateConstPtr, 2> messages;
     std::array<ros::WallTime, 2> received;
+    std_msgs::Float64MultiArrayConstPtr reference;
     {
       std::lock_guard<std::mutex> lock(feedback_mutex_);
       messages.swap(pending_states_);
       received = pending_state_received_;
+      reference.swap(pending_arm_reference_);
+    }
+    if (reference)
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      for (std::size_t i = 0; i < arm_joint_names_.size(); ++i)
+      {
+        latest_arm_reference_[arm_joint_names_[i]] = reference->data[i];
+        if (reference->data.size() == 2 * arm_joint_names_.size())
+          latest_reference_velocity_[arm_joint_names_[i]] = reference->data[i + arm_joint_names_.size()];
+      }
     }
     // Gazebo publishes arm and finger states separately on /joint_states.
     // One latest-message slot would discard one half. Merge the newest of
@@ -417,12 +483,13 @@ private:
   double armMargin(const moveit::core::RobotState& state) const
   {
     double result = std::numeric_limits<double>::max();
-    for (const auto& name : arm_joint_names_)
+    for (std::size_t i = 0; i < arm_joint_names_.size(); ++i)
     {
+      const auto& name = arm_joint_names_[i];
       const auto& bounds = model_->getVariableBounds(name);
       if (!bounds.position_bounded_) continue;
       const double q = state.getVariablePosition(name);
-      result = std::min(result, std::min(q - bounds.min_position_, bounds.max_position_ - q));
+      result = std::min(result, std::min(q - operating_lower_limits_[i], operating_upper_limits_[i] - q));
     }
     return result;
   }
@@ -552,7 +619,7 @@ private:
     }
     for (bool self : { true, false })
     {
-      request.acm = self ? strict_acm_.get() : &scene_->getAllowedCollisionMatrix();
+      request.acm = self ? arm_distance_acm_.get() : &scene_->getAllowedCollisionMatrix();
       collision_detection::DistanceResult distances;
       if (self) scene_->getCollisionEnv()->distanceSelf(request, distances, state);
       else scene_->getCollisionEnv()->distanceRobot(request, distances, state);
@@ -680,14 +747,8 @@ private:
           // Normal close assembly pairs keep their established 1 mm margin;
           // moving non-adjacent arm/hand surfaces retain 5 mm plus this
           // measured-motion reserve. Binary self checks remain unchanged.
-          bool structural_pair = false;
-          if (self)
-            for (const auto& pair : model_->getSRDF()->getDisabledCollisionPairs())
-              if (pair.reason_ == "StructuralAdjacent" &&
-                  ((pair.link1_ == contact.link_names[0] && pair.link2_ == contact.link_names[1]) ||
-                   (pair.link2_ == contact.link_names[0] && pair.link1_ == contact.link_names[1])))
-                structural_pair = true;
-          const double clearance_margin = self && !structural_pair ? 0.005 : 0.001;
+          const double clearance_margin = self ?
+              selfClearanceMargin(contact.link_names[0], contact.link_names[1]) : 0.001;
           const double braking_margin = self ?
               std::max(0.0, closing_speed) * (0.5 * braking_time + 0.02) : 0.0;
           rows.push_back(gradient);
@@ -857,8 +918,8 @@ private:
     Eigen::MatrixXd weighted_jacobian = jacobian;
     Eigen::VectorXd target = requested;
     // Compare fractions of the existing linear/angular speed caps, not
-    // metres with radians. The angular hierarchy below preserves the desired
-    // rotation axis instead of trading it against position error.
+    // metres with radians. Palm angle intervals below prevent unwanted
+    // rotation while allowing position and rotation to share joint motion.
     const double position_task_scale = 2.0 / 0.30;
     weighted_jacobian.topRows(3) *= position_task_scale;
     target.head(3) *= position_task_scale;
@@ -905,10 +966,61 @@ private:
       lb[i] = -speed; ub[i] = speed;
       if (bound.position_bounded_)
       {
+        double lower_reserve = 0.0, upper_reserve = 0.0;
+        if (operating_lower_limits_[i] > bound.min_position_ + 1e-9 ||
+            operating_upper_limits_[i] < bound.max_position_ - 1e-9)
+        {
+          // Stop before the working boundary, accounting for reference
+          // tracking lag and the motion already committed during braking.
+          const auto reference = latest_arm_reference_.find(arm_joint_names_[i]);
+          const double following = reference == latest_arm_reference_.end() ? 0.0 :
+              std::abs(reference->second - q);
+          const auto rate = latest_reference_velocity_.find(arm_joint_names_[i]);
+          const auto acceleration = reference_acceleration_.find(arm_joint_names_[i]);
+          const double speed_now = rate == latest_reference_velocity_.end() ? 0.0 : rate->second;
+          const double brake_time = acceleration == reference_acceleration_.end() ? 0.0 :
+              std::abs(speed_now) / acceleration->second;
+          lower_reserve = following + std::max(0.0, -speed_now)*(0.5*brake_time + 0.02);
+          upper_reserve = following + std::max(0.0, speed_now)*(0.5*brake_time + 0.02);
+        }
         lb[i] = std::max(lb[i], std::min(0.0, approach_rate *
-                    (bound.min_position_ + joint_limit_margin_ - q)));
+                    (operating_lower_limits_[i] + joint_limit_margin_ + lower_reserve - q)));
         ub[i] = std::min(ub[i], std::max(0.0, approach_rate *
-                    (bound.max_position_ - joint_limit_margin_ - q)));
+                    (operating_upper_limits_[i] - joint_limit_margin_ - upper_reserve - q)));
+      }
+      // Plan within the SAME reference lead that the execution adapter can
+      // accept. Otherwise one saturated wrist joint stops the whole checked
+      // step after optimization, including feasible motion of other joints.
+      // External deflection never authorizes moving an old reference: zero
+      // remains feasible, with only error-reducing motion beyond the limit.
+      const auto reference = latest_arm_reference_.find(arm_joint_names_[i]);
+      const auto following = reference_following_error_.find(arm_joint_names_[i]);
+      if (reference != latest_arm_reference_.end() && following != reference_following_error_.end())
+      {
+        const double error = reference->second - q;
+        // The lead changes at qdot_reference - qdot_measured. Treating the
+        // moving robot as stationary imposed an unrelated absolute speed
+        // cap (e.g. 0.02 rad / 0.08 s) during ordinary following. Zero remains
+        // admissible under an external deflection; it must not force the
+        // reference to chase the load. The geometric sweep still checks qdot.
+        const double measured_rate = state.hasVelocities() ?
+            state.getVariableVelocity(arm_joint_names_[i]) : 0.0;
+        lb[i] = std::max(lb[i], std::min(0.0, measured_rate +
+            (-following->second - error) / prediction_horizon_s_));
+        ub[i] = std::min(ub[i], std::max(0.0, measured_rate +
+            (following->second - error) / prediction_horizon_s_));
+        // The executor also checks lead against CURRENT measured position,
+        // before any predicted feedback motion occurs. Contact jitter made
+        // measured_rate large enough to buy outward velocity at an already
+        // saturated wrist joint. Its rejected step then scaled ALL six
+        // joints to zero, including a feasible retreat. Enforce both time
+        // scales here; zero remains feasible after external deflection.
+        // Using one publication step avoids imposing an unrelated slow
+        // absolute speed cap during normal following over the full horizon.
+        lb[i] = std::max(lb[i], std::min(0.0,
+            (-following->second - error) / reference_step_s_));
+        ub[i] = std::min(ub[i], std::max(0.0,
+            (following->second - error) / reference_step_s_));
       }
     }
     qpOASES::Options options;
@@ -922,58 +1034,117 @@ private:
     // A positive dot product with the requested angular velocity was not
     // enough: it allowed large perpendicular angular velocities. The Sep 10
     // recording reached 27 degrees of orientation error on an almost level
-    // target. First find the feasible angular task under the SAME collision
-    // and joint bounds; then optimize translation without changing that task.
-    // Active operator rotation is retained, including combined 6-D motions.
+    // target. Bound each requested palm angle rate below; unrequested axes
+    // remain fixed. Other profiles retain the angular-first hierarchy.
     if (requested.tail(3).norm() > 1e-9)
     {
-      // If the desired rotation cannot be executed, reduce its rate instead
-      // of substituting a different rotation axis to go around a constraint.
-      // The existing progress row selects the nonnegative direction.
-      const Eigen::Vector3d angular_direction = requested.tail(3).normalized();
-      const Eigen::Vector3d angular_normal = angular_direction.unitOrthogonal();
-      const Eigen::Vector3d angular_binormal = angular_direction.cross(angular_normal);
-      matrix.conservativeResize(rows.size() + 2, n);
-      lower.resize(rows.size() + 2, 0.0);
-      upper.resize(rows.size() + 2, 0.0);
-      matrix.row(rows.size()) = angular_normal.transpose() * jacobian.bottomRows(3);
-      matrix.row(rows.size() + 1) = angular_binormal.transpose() * jacobian.bottomRows(3);
-      Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> angular_hessian =
-          jacobian.bottomRows(3).transpose() * jacobian.bottomRows(3);
-      // Both levels need the same weak-direction regularization. Otherwise
-      // exact first-level angular tracking can demand opposing, near-limit
-      // wrist velocities at a singularity, which level two cannot undo.
-      angular_hessian += hessian - weighted_jacobian.transpose() * weighted_jacobian;
-      const Eigen::VectorXd angular_gradient =
-          -jacobian.bottomRows(3).transpose() * requested.tail(3);
-      qpOASES::QProblem angular_problem(n, static_cast<int>(lower.size()), qpOASES::HST_POSDEF);
-      angular_problem.setOptions(options);
-      qpOASES::int_t angular_iterations = 100;
-      std::vector<double> angular_solution(n, 0.0);
-      const auto angular_result = angular_problem.init(
-          angular_hessian.data(), angular_gradient.data(), matrix.data(),
-          lb.data(), ub.data(), lower.data(), upper.data(), angular_iterations);
-      if (angular_result != qpOASES::SUCCESSFUL_RETURN ||
-          angular_problem.getPrimalSolution(angular_solution.data()) != qpOASES::SUCCESSFUL_RETURN)
-      {
-        reason = "CONSTRAINED_ANGULAR_SOLVE_FAILED:" + std::to_string(static_cast<int>(angular_result));
-        return false;
-      }
-      const Eigen::Vector3d angular_task = jacobian.bottomRows(3) *
-          Eigen::Map<Eigen::VectorXd>(angular_solution.data(), n);
-      // Replace the single angular-progress row, avoiding redundant equality
-      // constraints. Collision and positional-progress rows are unchanged.
       const std::size_t angular_row = collision_rows +
           (position_envelope ? 0 : requested.head(3).norm() > 1e-9 ? 5 : 3);
-      matrix.conservativeResize(angular_row + 3, n);
-      lower.resize(angular_row + 3);
-      upper.resize(angular_row + 3);
-      for (int axis = 0; axis < 3; ++axis)
+      Eigen::MatrixXd angular_jacobian = jacobian.bottomRows(3);
+      Eigen::Vector3d angular_target = requested.tail(3);
+      bool ordered_axes = false;
+      if (independent_palm_rotation_axes_ && have_robot_zero_)
       {
-        matrix.row(angular_row + axis) = jacobian.row(3 + axis);
-        lower[angular_row + axis] = angular_task[axis];
-        upper[angular_row + axis] = angular_task[axis];
+        const Eigen::Matrix3d relative = robot_zero_rotation_.transpose() *
+            state.getGlobalLinkTransform("tool0").linear();
+        const double ct = std::hypot(relative(1, 2), relative(2, 2));
+        if (ct > 1e-4)
+        {
+          const double side = std::atan2(-relative(1, 2), relative(2, 2));
+          const double ss = std::sin(side), cs = std::cos(side);
+          const double st = relative(0, 2);
+          Eigen::Matrix3d spatial_to_rates;
+          spatial_to_rates << 1.0, ss*st/ct, -cs*st/ct,
+                              0.0, cs, ss,
+                              0.0, -ss/ct, cs/ct;
+          spatial_to_rates = (spatial_to_rates * robot_zero_rotation_.transpose()).eval();
+          angular_jacobian = spatial_to_rates * jacobian.bottomRows(3);
+          angular_target = spatial_to_rates * requested.tail(3);
+          ordered_axes = true;
+        }
       }
+      const bool partial_spatial = allow_partial_spatial_rotation_ && have_robot_zero_ && !ordered_axes;
+      if (partial_spatial)
+      {
+        // Keep the full SO(3) target/error. At a constraint, a blocked component
+        // must not veto every other angular component via omega=lambda*error.
+        // Express the spatial angular error in the fixed tool-C basis, without
+        // an Euler decomposition (and without its +/-90-degree chart).
+        angular_jacobian = robot_zero_rotation_.transpose() * jacobian.bottomRows(3);
+        angular_target = robot_zero_rotation_.transpose() * requested.tail(3);
+      }
+      const bool bounded_components = ordered_axes || partial_spatial;
+      if (bounded_components)
+      {
+        // Each requested palm angle may slow independently at a constraint.
+        // An unreachable roll must not erase a feasible yaw/tilt. Zero axes
+        // stay zero, and no axis may reverse or exceed its requested rate.
+        // Replace (rather than duplicate) the old angular progress row.
+        matrix.conservativeResize(angular_row + 3, n);
+        lower.resize(angular_row + 3);
+        upper.resize(angular_row + 3);
+        for (int axis = 0; axis < 3; ++axis)
+        {
+          matrix.row(angular_row + axis) = angular_jacobian.row(axis);
+          lower[angular_row + axis] = std::min(0.0, angular_target[axis]);
+          upper[angular_row + axis] = std::max(0.0, angular_target[axis]);
+        }
+      }
+      else
+      {
+        // Other profiles and the undefined +/-90-degree tilt chart retain
+        // the previous exact spatial rotation direction.
+        const Eigen::Vector3d angular_direction = requested.tail(3).normalized();
+        const Eigen::Vector3d angular_normal = angular_direction.unitOrthogonal();
+        const Eigen::Vector3d angular_binormal = angular_direction.cross(angular_normal);
+        matrix.conservativeResize(rows.size() + 2, n);
+        lower.resize(rows.size() + 2, 0.0);
+        upper.resize(rows.size() + 2, 0.0);
+        matrix.row(rows.size()) = angular_normal.transpose() * jacobian.bottomRows(3);
+        matrix.row(rows.size() + 1) = angular_binormal.transpose() * jacobian.bottomRows(3);
+      }
+      if (!bounded_components)
+      {
+        Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> angular_hessian =
+            angular_jacobian.transpose() * angular_jacobian;
+        // Both levels need the same weak-direction regularization. Otherwise
+        // exact first-level angular tracking can demand opposing, near-limit
+        // wrist velocities at a singularity, which level two cannot undo.
+        angular_hessian += hessian - weighted_jacobian.transpose() * weighted_jacobian;
+        const Eigen::VectorXd angular_gradient =
+            -angular_jacobian.transpose() * angular_target;
+        qpOASES::QProblem angular_problem(n, static_cast<int>(lower.size()), qpOASES::HST_POSDEF);
+        angular_problem.setOptions(options);
+        qpOASES::int_t angular_iterations = 100;
+        std::vector<double> angular_solution(n, 0.0);
+        const auto angular_result = angular_problem.init(
+            angular_hessian.data(), angular_gradient.data(), matrix.data(),
+            lb.data(), ub.data(), lower.data(), upper.data(), angular_iterations);
+        if (angular_result != qpOASES::SUCCESSFUL_RETURN ||
+            angular_problem.getPrimalSolution(angular_solution.data()) != qpOASES::SUCCESSFUL_RETURN)
+        {
+          reason = "CONSTRAINED_ANGULAR_SOLVE_FAILED:" + std::to_string(static_cast<int>(angular_result));
+          return false;
+        }
+        const Eigen::Vector3d angular_task = jacobian.bottomRows(3) *
+            Eigen::Map<Eigen::VectorXd>(angular_solution.data(), n);
+        // Replace the single angular-progress row, avoiding redundant equality
+        // constraints. Collision and positional-progress rows are unchanged.
+        matrix.conservativeResize(angular_row + 3, n);
+        lower.resize(angular_row + 3);
+        upper.resize(angular_row + 3);
+        for (int axis = 0; axis < 3; ++axis)
+        {
+          matrix.row(angular_row + axis) = jacobian.row(3 + axis);
+          lower[angular_row + axis] = angular_task[axis];
+          upper[angular_row + axis] = angular_task[axis];
+        }
+      }
+      // Do not freeze a first-stage angular optimum for ordered palm axes.
+      // At a wrist limit that optimum can consume every feasible joint
+      // direction and force translation to zero. The existing normalized
+      // 6-D objective instead shares motion, subject to the angle intervals:
+      // no unrequested rotation, reversal, or faster-than-requested angle.
       constraint_count = lower.size();
     }
     qpOASES::QProblem problem(n, static_cast<int>(lower.size()), qpOASES::HST_POSDEF);
@@ -1057,6 +1228,10 @@ private:
   void processCartesianCommand(const handarm_moveit_demo::HandCommandConstPtr& message,
                                const std::vector<double>* servo_solution)
   {
+    const auto entry_began = ros::WallTime::now();
+    const double exact_palm_began_ms = exact_palm_total_ms_;
+    const double collision_began_ms = proxy_collision_total_ms_;
+    const auto prediction_samples_began = prediction_samples_total_;
     refreshRobotFeedback();
     const auto began = ros::WallTime::now();
     auto output = *message;
@@ -1087,11 +1262,19 @@ private:
     std::map<std::string, double> hand_reference;
     std::map<std::string, double> arm_reference;
     bool ready;
+    std::string readiness_reason;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       ready = have_complete_state_ && have_scene_snapshot_ && !fault_latched_ &&
           !hand_motion_active_ &&
           (began - latest_state_wall_time_).toSec() <= state_timeout_s_;
+      // A latched collision must not masquerade as missing robot feedback.
+      // Keep the physical fault visible to the controller and recorder.
+      if (fault_latched_) readiness_reason = fault_reason_;
+      else if (!have_complete_state_) readiness_reason = "WAITING_FOR_COMPLETE_JOINT_STATE";
+      else if (!have_scene_snapshot_) readiness_reason = "WAITING_FOR_PLANNING_SCENE";
+      else if (hand_motion_active_) readiness_reason = "HAND_MOTION_INTERLOCK_ACTIVE";
+      else if (!ready) readiness_reason = "JOINT_STATE_TIMEOUT";
       state = *latest_state_;
       hand_reference = latest_hand_reference_;
       arm_reference = latest_arm_reference_;
@@ -1118,7 +1301,7 @@ private:
     if (!ready)
     {
       output.valid = false;
-      reason = "WAITING_FOR_FRESH_ROBOT_AND_SCENE";
+      reason = readiness_reason;
     }
     else if (message->valid && requested.allFinite() && age >= -future_tolerance && age <= 0.15 &&
              message->header.frame_id == "base_link")
@@ -1276,10 +1459,56 @@ private:
           projected_command_safe = projectJointVelocity(state, jacobian, requested,
               projected_joint_velocity, projection_constraint_count, reason);
         projection_ms = (ros::WallTime::now() - projection_began).toSec() * 1000.0;
+        if (projected_command_safe)
+        {
+          // Validate from the robot/reference actually reached during the
+          // solve, not from a snapshot taken before 10--25 ms of computation.
+          // Keep the same checked horizon; refresh its origin and deadlines.
+          refreshRobotFeedback();
+          std::lock_guard<std::mutex> lock(mutex_);
+          state_age_at_check_s = (ros::WallTime::now() - latest_state_wall_time_).toSec();
+          if (fault_latched_ || state_age_at_check_s > state_timeout_s_)
+          {
+            projected_command_safe = false;
+            reason = "ROBOT_FEEDBACK_CHANGED_DURING_SOLVE";
+          }
+          else
+          {
+            state = *latest_state_;
+            hand_reference = latest_hand_reference_;
+            arm_reference = latest_arm_reference_;
+            projected_motion_deadline = latest_state_ros_time_.toSec() + prediction_horizon_s_;
+            projected_deadline = std::min(latest_state_wall_time_.toSec() + state_timeout_s_,
+                ros::WallTime::now().toSec() + command_timeout_s_);
+          }
+        }
         const auto prediction_began = ros::WallTime::now();
         if (projected_command_safe)
           projected_command_safe = predictedVelocityIsSafe(projected_joint_velocity,
               state, hand_reference, arm_reference, reason);
+        bool clearance_speed_reduced = false;
+        if (!projected_command_safe && projected_joint_velocity.size() == arm_joint_names_.size() &&
+            reason.find("PREDICTED_SELF_CLEARANCE:") == 0)
+        {
+          // A finite curved step can overshoot the QP's tangent clearance
+          // bound by micrometres. Don't turn every such result into a full
+          // stop: retain the coordinated joint direction at a checked lower
+          // speed. Keep the same gap, feedback snapshot and expiry; actual
+          // collisions/limits still reject the command without this retry.
+          auto slower = projected_joint_velocity;
+          for (int attempt = 0; attempt < 3; ++attempt)
+          {
+            for (double& rate : slower) rate *= 0.5;
+            if (predictedVelocityIsSafe(slower, state, hand_reference, arm_reference, reason))
+            {
+              projected_joint_velocity = slower;
+              projected_command_safe = true;
+              clearance_speed_reduced = true;
+              break;
+            }
+            if (reason.find("PREDICTED_SELF_CLEARANCE:") != 0) break;
+          }
+        }
         prediction_ms = (ros::WallTime::now() - prediction_began).toSec() * 1000.0;
         if (!projected_command_safe && projected_joint_velocity.size() == arm_joint_names_.size() &&
             reason.find("PREDICTED_SELF_COLLISION:") == 0)
@@ -1337,7 +1566,8 @@ private:
         {
           selected = jacobian * Eigen::Map<Eigen::VectorXd>(projected_joint_velocity.data(),
                                                          projected_joint_velocity.size());
-          reason = translation_retreat ? "TRANSLATION_ALLOWED_ROTATION_WOULD_PRESS_WORLD" :
+          reason = clearance_speed_reduced ? "SELF_CLEARANCE_SPEED_REDUCED" :
+              translation_retreat ? "TRANSLATION_ALLOWED_ROTATION_WOULD_PRESS_WORLD" :
               (selected - requested).norm() < 1e-5 ?
               "FULL_COMMAND_ALLOWED" : "FEASIBLE_TRANSLATION_AND_ROTATION";
         }
@@ -1456,9 +1686,9 @@ private:
     else output.valid = false;
     if (constrained_velocity_projection_)
     {
-      // In this opt-in mode the QP is the sole joint-velocity producer. Servo
-      // continues collision monitoring, but its direction-blind velocity
-      // scaling must not undo an already constrained escape command.
+      // This constrained backend is the sole joint-velocity producer. Any
+      // enabled Servo monitor must not veto an already checked escape with
+      // its direction-blind scalar. QP-only launch omits that unused monitor.
       last_raw_command_wall_time_ = began;
       have_raw_command_ = true;
       if (projected_command_safe && ros::WallTime::now().toSec() < projected_deadline &&
@@ -1494,11 +1724,17 @@ private:
            << ",\"joint_velocity_solver\":\"" << (use_servo_solver_ ? "servo" : "qp") << "\""
            << ",\"processing_includes_solver\":" << (servo_solution ? "false" : "true")
            << ",\"constrained_velocity_projection\":" << (constrained_velocity_projection_ ? "true" : "false")
+           << ",\"independent_palm_rotation_axes\":" << (independent_palm_rotation_axes_ ? "true" : "false")
+           << ",\"allow_partial_spatial_rotation\":" << (allow_partial_spatial_rotation_ ? "true" : "false")
            << ",\"side_limit_reference_ready\":" << (have_robot_zero_ ? "true" : "false")
            << ",\"maximum_side_angle_deg\":" << maximum_side_angle_ * 180.0/M_PI
            << ",\"position_accommodation_m\":" << position_accommodation_m_
            << ",\"position_accommodation_active\":" << (position_accommodation_active_ ? "true" : "false")
            << ",\"projection_constraints\":" << projection_constraint_count
+           << ",\"prediction_samples\":" << prediction_samples_total_ - prediction_samples_began
+           << ",\"feedback_refresh_ms\":" << (began - entry_began).toSec() * 1000.0
+           << ",\"exact_palm_ms\":" << exact_palm_total_ms_ - exact_palm_began_ms
+           << ",\"proxy_collision_ms\":" << proxy_collision_total_ms_ - collision_began_ms
            << ",\"input_age_s\":" << age
            << ",\"input_valid\":" << (message->valid ? "true" : "false")
            << ",\"state_age_at_check_ms\":"
@@ -1530,6 +1766,8 @@ private:
            << ",\"translation_limited_axes\":[";
     for (int i = 0; i < 3; ++i)
       stream << (i ? "," : "") << (output.valid && std::abs(selected[i] - requested[i]) > 1e-9 ? "true" : "false");
+    stream << "],\"requested_velocity\":[";
+    for (int i = 0; i < 6; ++i) stream << (i ? "," : "") << requested[i];
     stream << "],\"approved_velocity\":[";
     for (int i = 0; i < 6; ++i) stream << (i ? "," : "") << selected[i];
     stream << "],\"measured_velocity\":[";
@@ -1613,6 +1851,36 @@ private:
     ROS_INFO_STREAM("Strict MoveIt ACM loaded: " << adjacent_count
                     << " true adjacent exemptions; " << reenabled_count
                     << " structural proximity pairs re-enabled");
+    // Only the arm velocity optimization uses this distance-query matrix.
+    // Bodies carried by the same last arm joint have zero relative-distance
+    // derivative with respect to every arm DOF (e.g. finger versus palm).
+    // Previously these expensive mesh distances were computed, differentiated
+    // and only then discarded by gradient.norm()==0. Keep ALL these pairs in
+    // strict_acm_ for measured-state, hand-motion and swept collision checks.
+    arm_distance_acm_.reset(new collision_detection::AllowedCollisionMatrix(*strict_acm_));
+    const auto arm_carrier = [this](const moveit::core::LinkModel* link) {
+      for (auto* ancestor = link; ancestor; ancestor = ancestor->getParentLinkModel())
+      {
+        const auto* joint = ancestor->getParentJointModel();
+        if (joint && std::find(arm_joint_names_.begin(), arm_joint_names_.end(),
+                               joint->getName()) != arm_joint_names_.end())
+          return joint;
+      }
+      return static_cast<const moveit::core::JointModel*>(nullptr);
+    };
+    const auto& links = model_->getLinkModelsWithCollisionGeometry();
+    for (std::size_t i = 0; i < links.size(); ++i)
+      for (std::size_t j = i + 1; j < links.size(); ++j)
+        if (arm_carrier(links[i]) == arm_carrier(links[j]))
+          arm_distance_acm_->setEntry(links[i]->getName(), links[j]->getName(), true);
+    // The extra 5 mm sweep concerns non-adjacent moving bodies. Normal
+    // assembly clearances retain their 1 mm local constraint and binary
+    // swept checks; repeatedly querying their large close meshes would
+    // consume the command's checked motion horizon before it can execute.
+    swept_margin_acm_.reset(new collision_detection::AllowedCollisionMatrix(*arm_distance_acm_));
+    for (const auto& pair : model_->getSRDF()->getDisabledCollisionPairs())
+      if (pair.reason_ == "StructuralAdjacent")
+        swept_margin_acm_->setEntry(pair.link1_, pair.link2_, true);
   }
 
   void validateRequiredJoints()
@@ -1831,6 +2099,46 @@ private:
     return true;
   }
 
+  struct ExactContactMesh
+  {
+    const moveit::core::LinkModel* link{nullptr};
+    shapes::ShapeConstPtr shape;
+    collision_detection::FCLGeometryConstPtr geometry;
+  };
+
+  ExactContactMesh loadExactContactMesh(const std::string& name) const
+  {
+    ExactContactMesh mesh;
+    mesh.link = model_->getLinkModel(name);
+    if (!mesh.link || mesh.link->getVisualMeshFilename().empty())
+      throw std::runtime_error("missing original contact mesh: " + name);
+    mesh.shape.reset(shapes::createMeshFromResource(
+        mesh.link->getVisualMeshFilename(), mesh.link->getVisualMeshScale()));
+    if (!mesh.shape)
+      throw std::runtime_error("cannot load original contact mesh: " + name);
+    mesh.geometry = collision_detection::createCollisionGeometry(mesh.shape, mesh.link, 0);
+    if (!mesh.geometry)
+      throw std::runtime_error("cannot construct original contact geometry: " + name);
+    mesh.geometry->collision_geometry_->computeLocalAABB();
+    return mesh;
+  }
+
+  void configureExactPalmContacts()
+  {
+    exact_palm_ = loadExactContactMesh("handbase_link");
+    proxy_self_acm_.reset(new collision_detection::AllowedCollisionMatrix(*strict_acm_));
+    for (const std::string name : {"f1link2", "f1link3", "f2link1", "f2link2", "f3link2", "f3link3"})
+    {
+      collision_detection::AllowedCollision::Type type;
+      if (strict_acm_->getEntry("handbase_link", name, type) &&
+          type == collision_detection::AllowedCollision::ALWAYS) continue;
+      exact_palm_fingers_.push_back(loadExactContactMesh(name));
+      // Replace this proxy check with the original-mesh test below. These
+      // pairs are not exempted from measured or swept collision protection.
+      proxy_self_acm_->setEntry("handbase_link", name, true);
+    }
+  }
+
   bool collisionFree(moveit::core::RobotState& state,
                      collision_detection::CollisionResult& result) const
   {
@@ -1838,8 +2146,69 @@ private:
     request.contacts = true;
     request.max_contacts = 1;
     request.max_contacts_per_pair = 1;
-    scene_->checkSelfCollision(request, result, state, *strict_acm_);
-    return !result.collision;
+    const auto proxy_began = ros::WallTime::now();
+    scene_->checkSelfCollision(request, result, state, *proxy_self_acm_);
+    proxy_collision_total_ms_ += (ros::WallTime::now() - proxy_began).toSec() * 1000.0;
+    if (result.collision) return false;
+    // Arm-only changes cannot alter any palm/finger contact. Reuse only an
+    // EXACT same eight-angle configuration; no rounding or angle tolerance.
+    // Other arm/hand collision pairs were still checked above on every call.
+    const std::array<double, 8> hand_angles = {{
+        state.getVariablePosition("f1j1"), state.getVariablePosition("f3j1"),
+        state.getVariablePosition("f1j2"), state.getVariablePosition("f1j3"),
+        state.getVariablePosition("f2j1"), state.getVariablePosition("f2j2"),
+        state.getVariablePosition("f3j2"), state.getVariablePosition("f3j3")}};
+    {
+      std::lock_guard<std::mutex> lock(exact_palm_cache_mutex_);
+      if (std::find(exact_palm_safe_angles_.begin(), exact_palm_safe_angles_.end(),
+                    hand_angles) != exact_palm_safe_angles_.end()) return true;
+    }
+    // A coarse palm grid caused two permanent stops at configurations where
+    // the original surfaces were still separated. Original-mesh AABBs are a
+    // cheap conservative broad phase; testing them independently of the proxy
+    // also avoids missing a true contact where vertex rounding shrinks it.
+    const auto palm_transform = state.getGlobalLinkTransform(exact_palm_.link) *
+        exact_palm_.link->getVisualMeshOrigin();
+    const fcl::Transform3d identity = fcl::Transform3d::Identity();
+    const auto& palm_bounds = exact_palm_.geometry->collision_geometry_->aabb_local;
+    for (const auto& finger : exact_palm_fingers_)
+    {
+      // Work in the palm frame and rotate the local box's actual extents.
+      // FCL's default rotated-object box uses a bounding sphere, causing
+      // unnecessary original-mesh queries during ordinary wrist rotation.
+      const fcl::Transform3d transform = palm_transform.inverse() *
+          state.getGlobalLinkTransform(finger.link) * finger.link->getVisualMeshOrigin();
+      const auto& local = finger.geometry->collision_geometry_->aabb_local;
+      const Eigen::Vector3d center = transform * local.center();
+      const Eigen::Vector3d half = transform.linear().cwiseAbs() *
+          ((local.max_ - local.min_) * 0.5);
+      if (!palm_bounds.overlap(fcl::AABBd(center - half, center + half))) continue;
+      fcl::CollisionResultd precise;
+      const auto exact_began = ros::WallTime::now();
+      fcl::collide(exact_palm_.geometry->collision_geometry_.get(), identity,
+                   finger.geometry->collision_geometry_.get(), transform,
+                   fcl::CollisionRequestd(1, true), precise);
+      exact_palm_total_ms_ += (ros::WallTime::now() - exact_began).toSec() * 1000.0;
+      if (!precise.isCollision()) continue;
+      const auto& hit = precise.getContact(0);
+      collision_detection::Contact contact;
+      contact.body_name_1 = exact_palm_.link->getName();
+      contact.body_name_2 = finger.link->getName();
+      contact.body_type_1 = contact.body_type_2 = collision_detection::BodyType::ROBOT_LINK;
+      contact.pos = palm_transform * hit.pos;
+      contact.normal = palm_transform.linear() * hit.normal;
+      contact.depth = hit.penetration_depth;
+      result.collision = true;
+      result.contact_count = 1;
+      result.contacts[std::minmax(contact.body_name_1, contact.body_name_2)].push_back(contact);
+      return false;
+    }
+    {
+      std::lock_guard<std::mutex> lock(exact_palm_cache_mutex_);
+      exact_palm_safe_angles_.push_front(hand_angles);
+      if (exact_palm_safe_angles_.size() > 32) exact_palm_safe_angles_.pop_back();
+    }
+    return true;
   }
 
   std::string stateText(const moveit::core::RobotState& state) const
@@ -1896,12 +2265,63 @@ private:
     command_diagnostic_publisher_.publish(diagnostic);
   }
 
+  double selfClearanceMargin(const std::string& first, const std::string& second) const
+  {
+    for (const auto& pair : model_->getSRDF()->getDisabledCollisionPairs())
+      if (pair.reason_ == "StructuralAdjacent" &&
+          ((pair.link1_ == first && pair.link2_ == second) ||
+           (pair.link2_ == first && pair.link1_ == second))) return 0.001;
+    return 0.005;
+  }
+
   bool predictedVelocityIsSafe(const std::vector<double>& velocity,
                                moveit::core::RobotState& start,
                                const std::map<std::string, double>& hand_reference,
                                const std::map<std::string, double>& arm_reference,
-                               std::string& reason, bool check_world = true) const
+                               std::string& reason, bool check_world = true,
+                               const std::map<std::string, double>* requested_hand_effort = nullptr) const
   {
+    // The local QP damper preserves clearance only to first order. A curved
+    // wrist motion could pass its tangent inequality and the old binary-only
+    // sweep, consuming the whole 5 mm before the next update could brake.
+    // Apply the SAME pair margins over the actual bounded reference path.
+    // A robot already inside a margin may still escape without first having
+    // to clear it in one step. This is not an exemption from binary checks.
+    collision_detection::DistanceRequest margin_request;
+    margin_request.group_name = "abbarm";
+    margin_request.enableGroup(model_);
+    margin_request.acm = swept_margin_acm_.get();
+    margin_request.type = collision_detection::DistanceRequestType::SINGLE;
+    margin_request.distance_threshold = 0.005;
+    std::map<std::pair<std::string, std::string>, double> starting_gaps;
+    if (constrained_velocity_projection_)
+    {
+      const auto retain_existing_gap = [&](const moveit::core::RobotState& snapshot) {
+        collision_detection::DistanceResult gaps;
+        scene_->getCollisionEnv()->distanceSelf(margin_request, gaps, snapshot);
+        for (const auto& pair : gaps.distances)
+          for (const auto& contact : pair.second)
+          {
+            if (contact.distance < 0.0) continue;  // Never authorize penetration.
+            const auto key = std::minmax(contact.link_names[0], contact.link_names[1]);
+            const auto old = starting_gaps.find(key);
+            if (old == starting_gaps.end()) starting_gaps[key] = contact.distance;
+            else old->second = std::min(old->second, contact.distance);
+          }
+      };
+      retain_existing_gap(start);
+      // The already-issued reference can lie a few micrometres inside the
+      // nominal margin while the measured robot is outside it. Even zero
+      // new velocity then crosses the nominal line. Compare an escape with
+      // BOTH existing states, not a fictitious reference with no lead.
+      // The QP retains the 5 mm approach bound; binary swept checks remain.
+      auto held_reference = start;
+      for (const auto& reference : arm_reference)
+        held_reference.setVariablePosition(reference.first, reference.second);
+      preserveMeasuredHandDeflection(start, held_reference);
+      held_reference.update();
+      retain_existing_gap(held_reference);
+    }
     // An incidental fingertip contact must not make every retreat impossible.
     // Compare contact depth along the actual bounded reference prediction;
     // merely remaining in contact for the first part of a retreat is not a
@@ -1957,6 +2377,7 @@ private:
       return v0 * ramp + 0.5 * a * ramp * ramp + target * (t - ramp);
     };
     const auto check_scenario = [this, &start, &reason, &arm_reference, &reference_travel,
+                                &margin_request, &starting_gaps,
                                 &starting_contacts, check_world](
         const std::map<std::string, double>& predicted_velocity,
         const std::string& source) -> bool
@@ -1989,10 +2410,23 @@ private:
         reason = "PREDICTION_RESOLUTION_LIMIT";
         return false;
       }
+      prediction_samples_total_ += samples;
       moveit::core::RobotState candidate(start);
       auto previous_contacts = starting_contacts;
-      for (std::size_t sample = 1; sample <= samples; ++sample)
+      // The recorded boundary retries repeatedly failed at sample 7/7:
+      // checking each rejected prefix first spent most of the 80 ms motion
+      // horizon before publishing the eventually safe slower command.
+      // In self-only operation, bounds/collision/clearance checks of these
+      // fixed states are independent. Reject an unsafe endpoint first, then
+      // still check EVERY remaining sample before approving the trajectory.
+      // Keep chronological order for world-contact separation, whose depth
+      // monotonicity uses previous_contacts. No horizon/margin is relaxed.
+      const bool endpoint_first = scene_->getWorld()->getObjectIds().empty() &&
+                                  starting_contacts.empty();
+      for (std::size_t order = 0; order < samples; ++order)
       {
+        const std::size_t sample = endpoint_first ?
+            (order == 0 ? samples : order) : order + 1;
         const double prediction_time = prediction_horizon_s_ *
             static_cast<double>(sample) / static_cast<double>(samples);
         candidate = start;
@@ -2030,6 +2464,28 @@ private:
                  << ":source=" << source;
           reason = stream.str();
           return false;
+        }
+        if (constrained_velocity_projection_)
+        {
+          collision_detection::DistanceResult gaps;
+          scene_->getCollisionEnv()->distanceSelf(margin_request, gaps, candidate);
+          for (const auto& pair : gaps.distances)
+            for (const auto& contact : pair.second)
+            {
+              double margin = selfClearanceMargin(contact.link_names[0], contact.link_names[1]);
+              const auto initial_gap = starting_gaps.find(
+                  std::minmax(contact.link_names[0], contact.link_names[1]));
+              if (initial_gap != starting_gaps.end()) margin = std::min(margin, initial_gap->second);
+              if (contact.distance < margin - 1e-6)
+              {
+                std::ostringstream detail;
+                detail << "PREDICTED_SELF_CLEARANCE:" << contact.link_names[0] << ","
+                       << contact.link_names[1] << ":distance=" << contact.distance
+                       << ":required=" << margin << ":sample=" << sample << "/" << samples;
+                reason = detail.str();
+                return false;
+              }
+            }
         }
         if (constrained_velocity_projection_ && check_world)
         {
@@ -2128,8 +2584,17 @@ private:
     for (const auto& target : hand_reference)
     {
       const auto& bounds = model_->getVariableBounds(target.first);
+      const auto& effort = requested_hand_effort ? *requested_hand_effort : latest_hand_effort_;
+      const auto motor = effort.find(target.first);
+      // Positive direct torque continues closing until object contact or the
+      // existing mechanical limit. The old position target is only metadata
+      // in this mode: using it predicted an opening from 80 toward 49 degrees
+      // while the motors were still closing. Keep the bounded-rate prediction,
+      // but use the actual mode and original travel endpoint.
+      const double endpoint = motor != effort.end() && motor->second > 0.0 &&
+          bounds.position_bounded_ ? bounds.max_position_ : target.second;
       const double requested_rate =
-          (target.second - start.getVariablePosition(target.first)) /
+          (endpoint - start.getVariablePosition(target.first)) /
           prediction_horizon_s_;
       // A contact-preloaded finger cannot reach its empty-hand CLOSE target
       // instantaneously. Predict at its bounded commanded speed, so holding
@@ -2287,6 +2752,21 @@ private:
     return true;
   }
 
+  bool decodeHandEffort(const trajectory_msgs::JointTrajectoryConstPtr& message,
+                        std::map<std::string, double>& accepted) const
+  {
+    accepted.clear();
+    const auto& effort = message->points.back().effort;
+    if (effort.empty()) return true;  // Position/open mode.
+    if (effort.size() != message->joint_names.size()) return false;
+    for (std::size_t i = 0; i < effort.size(); ++i)
+    {
+      if (!std::isfinite(effort[i]) || effort[i] < 0.0) return false;
+      accepted[message->joint_names[i]] = effort[i];
+    }
+    return true;
+  }
+
   void handCommandCallback(const ros::MessageEvent<const trajectory_msgs::JointTrajectory>& event)
   {
     // This node commits its checked target before publishing. Re-reading an
@@ -2296,9 +2776,12 @@ private:
     const auto& message = event.getMessage();
     std::map<std::string, double> accepted;
     if (!decodeHandCommand(message, accepted)) return;
+    std::map<std::string, double> effort;
+    if (!decodeHandEffort(message, effort)) return;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       latest_hand_reference_ = accepted;
+      latest_hand_effort_ = effort;
     }
   }
 
@@ -2356,6 +2839,10 @@ private:
     hold.joint_names = hand_reference_joint_names_;
     trajectory_msgs::JointTrajectoryPoint point;
     for (const auto& name : hold.joint_names) point.positions.push_back(frozen_hand_safety_target_.at(name));
+    // An arm stop or stale camera observation must not unload a held object.
+    // Preserve the accepted motor mode/torque as well as the position target.
+    if (!latest_hand_effort_.empty())
+      for (const auto& name : hold.joint_names) point.effort.push_back(latest_hand_effort_.at(name));
     // Replace the old motor trajectory immediately; a slow interpolation
     // from its old OPEN target would keep opening while nominally holding.
     point.time_from_start = ros::Duration(0.004);
@@ -2368,13 +2855,35 @@ private:
   {
     std::map<std::string, double> target;
     if (!decodeHandCommand(message, target) || message->points.size() != 1) return;
-    if (!hand_safety_holding_ && target == latest_hand_reference_ && !fault_latched_)
+    std::map<std::string, double> effort;
+    if (!decodeHandEffort(message, effort)) return;
+    if (!hand_safety_holding_ && target == latest_hand_reference_ &&
+        effort == latest_hand_effort_ && !fault_latched_)
     {
       std_msgs::String status; status.data = "HAND_PATH_ALLOWED";
       hand_safety_diagnostic_publisher_.publish(status);
       return;  // The actuator already holds this accepted target.
     }
     refreshRobotFeedback();
+    const bool was_gripping = std::any_of(latest_hand_effort_.begin(), latest_hand_effort_.end(),
+        [](const auto& item) { return item.second > 0.0; });
+    const bool requests_grip = std::any_of(effort.begin(), effort.end(),
+        [](const auto& item) { return item.second > 0.0; });
+    if (was_gripping && !requests_grip)
+    {
+      // Explicit release unloads all three motors immediately, even if the
+      // opening path must wait for arm feedback/self-collision clearance.
+      latest_hand_effort_.clear();
+      for (const auto& name : hand_reference_joint_names_) latest_hand_effort_[name] = 0.0;
+      if (have_complete_state_)
+        publishHandHold(*latest_state_, true);
+      else
+      {
+        auto unload = *message;
+        unload.points.front().effort.assign(unload.joint_names.size(), 0.0);
+        checked_hand_publisher_.publish(unload);
+      }
+    }
     std::string reason;
     const bool ready = have_complete_state_ && !fault_latched_ &&
         (ros::WallTime::now() - latest_state_wall_time_).toSec() <= state_timeout_s_;
@@ -2390,7 +2899,7 @@ private:
       if (found != latest_reference_velocity_.end()) arm_rates[i] = found->second;
     }
     bool safe = ready && predictedVelocityIsSafe(arm_rates, *latest_state_, target,
-        latest_arm_reference_, reason, false);
+        latest_arm_reference_, reason, false, &effort);
     if (safe && ((ros::Time::now() - latest_state_ros_time_).toSec() >= prediction_horizon_s_ ||
                  (ros::WallTime::now() - began).toSec() >= command_timeout_s_))
     {
@@ -2402,6 +2911,7 @@ private:
       // Commit the checked hand reference before the next arm solve; the
       // physical hand never receives the unchecked request.
       latest_hand_reference_ = target;
+      latest_hand_effort_ = effort;
       hand_safety_holding_ = false;
       checked_hand_publisher_.publish(*message);
     }
@@ -2745,6 +3255,16 @@ private:
   moveit::core::RobotModelPtr model_;
   planning_scene::PlanningScenePtr scene_;
   std::unique_ptr<collision_detection::AllowedCollisionMatrix> strict_acm_;
+  std::unique_ptr<collision_detection::AllowedCollisionMatrix> arm_distance_acm_;
+  std::unique_ptr<collision_detection::AllowedCollisionMatrix> swept_margin_acm_;
+  std::unique_ptr<collision_detection::AllowedCollisionMatrix> proxy_self_acm_;
+  ExactContactMesh exact_palm_;
+  std::vector<ExactContactMesh> exact_palm_fingers_;
+  mutable std::size_t prediction_samples_total_{0};
+  mutable double exact_palm_total_ms_{0.0};
+  mutable double proxy_collision_total_ms_{0.0};
+  mutable std::mutex exact_palm_cache_mutex_;
+  mutable std::deque<std::array<double, 8>> exact_palm_safe_angles_;
   moveit::core::RobotStatePtr latest_state_;
   std::mutex mutex_;
   ros::Subscriber requested_hand_subscriber_;
@@ -2761,10 +3281,14 @@ private:
   std::map<std::string, ros::WallTime> latest_joint_wall_times_;
   std::map<std::string, ros::Time> latest_joint_ros_times_;
   std::map<std::string, double> latest_hand_reference_;
+  std::map<std::string, double> latest_hand_effort_;
   std::map<std::string, double> latest_arm_reference_;
   std::map<std::string, double> latest_reference_velocity_;
   std::map<std::string, double> reference_acceleration_;
+  std::map<std::string, double> reference_following_error_;
+  double reference_step_s_{ 0.004 };
   ros::Subscriber arm_reference_subscriber_;
+  std_msgs::Float64MultiArrayConstPtr pending_arm_reference_;
   ros::Subscriber robot_zero_subscriber_;
   ros::Subscriber target_pose_subscriber_;
   Eigen::Vector3d operator_target_position_{ Eigen::Vector3d::Zero() };
@@ -2774,6 +3298,8 @@ private:
   mutable bool position_accommodation_active_{ false };
   Eigen::Matrix3d robot_zero_rotation_{ Eigen::Matrix3d::Identity() };
   bool have_robot_zero_{ false };
+  bool independent_palm_rotation_axes_{ false };
+  bool allow_partial_spatial_rotation_{ false };
   double maximum_side_angle_{ M_PI/2.0 };
   ros::WallTime latest_state_wall_time_;
   ros::Time latest_state_ros_time_;
@@ -2828,6 +3354,8 @@ private:
   double singularity_soft_{ 17.0 };
   double singularity_hard_{ 30.0 };
   double joint_limit_margin_{ 0.08 };
+  std::vector<double> operating_lower_limits_;
+  std::vector<double> operating_upper_limits_;
   ros::Publisher geometric_command_publisher_;
   ros::Publisher geometric_diagnostic_publisher_;
   ros::Subscriber geometric_command_subscriber_;

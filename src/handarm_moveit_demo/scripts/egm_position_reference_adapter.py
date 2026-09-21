@@ -29,12 +29,23 @@ class EgmPositionReferenceAdapter:
             "/shared_teleop/control/constrained_velocity_projection", False))
         if self.rate_hz <= 0.0:
             raise ValueError("rate_hz must be positive")
+        lower_limits = list(rospy.get_param("~lower_limits", DEFAULT_LOWER))
+        upper_limits = list(rospy.get_param("~upper_limits", DEFAULT_UPPER))
+        if self.constrained_velocity_projection:
+            for name, degrees in rospy.get_param(
+                    "/shared_teleop/control/operational_joint_limits_deg", {}).items():
+                if (name not in self.joints or len(degrees) != 2 or
+                        not np.all(np.isfinite(degrees)) or degrees[0] >= degrees[1]):
+                    raise ValueError("invalid operational joint limits: " + name)
+                index = self.joints.index(name)
+                lower_limits[index] = max(lower_limits[index], np.deg2rad(degrees[0]))
+                upper_limits[index] = min(upper_limits[index], np.deg2rad(degrees[1]))
         self.model = EgmPositionReferenceModel(
             joint_names=self.joints,
             initial_reference=rospy.get_param(
                 "~initial_reference", [0.0, 0.0, 0.0, 0.0, 1.5707963267948966, 0.0]),
-            lower_limits=rospy.get_param("~lower_limits", DEFAULT_LOWER),
-            upper_limits=rospy.get_param("~upper_limits", DEFAULT_UPPER),
+            lower_limits=lower_limits,
+            upper_limits=upper_limits,
             maximum_velocity=rospy.get_param(
                 "~maximum_velocity", DEFAULT_MAXIMUM_VELOCITY),
             maximum_acceleration=rospy.get_param(
@@ -53,6 +64,12 @@ class EgmPositionReferenceAdapter:
         self.latest_actual = None
         self.latest_servo_status = 0
         self.latest_collision_scale = 1.0
+        self.require_servo_monitor = bool(rospy.get_param("~require_servo_monitor", True))
+        if not self.require_servo_monitor and not (
+                self.constrained_velocity_projection and
+                rospy.get_param('/use_sim_time', False) and
+                rospy.get_param('/shared_teleop/control/joint_velocity_solver', 'qp') == 'qp'):
+            raise ValueError("Only the Gazebo constrained QP backend can own collision approval without Servo")
         self.last_collision_scale_monotonic = None
         self.collision_monitor_seen_once = False
         self.strict_command_safe = False
@@ -232,7 +249,7 @@ class EgmPositionReferenceAdapter:
                 if self.last_collision_scale_monotonic is None else
                 max(0.0, now_monotonic -
                     self.last_collision_scale_monotonic))
-            collision_monitor_stale = bool(
+            collision_monitor_stale = bool(self.require_servo_monitor and
                 collision_scale_age_s > self.collision_scale_timeout_s)
             strict_command_age_s = (
                 float("inf")
@@ -254,7 +271,7 @@ class EgmPositionReferenceAdapter:
             # older direction-blind distance scalar must not veto it again.
             # Missing monitors, a rejected command or its original expiry
             # still force the hold below; the legacy profile is unchanged.
-            proximity_hold = collision_proximity_hold_required(
+            proximity_hold = self.require_servo_monitor and collision_proximity_hold_required(
                 self.latest_collision_scale,
                 self.hard_stop_collision_scale,
                 self.retreat_authorized,
@@ -268,6 +285,10 @@ class EgmPositionReferenceAdapter:
             if hard_safety_hold and self.latest_actual is not None:
                 if self.constrained_velocity_projection:
                     # A timing hold retains the already checked reference.
+                    # A swept clearance-margin hold does too: its existing
+                    # position reference is still collision-free. Repeatedly
+                    # snapping it to gravity-deflected feedback ratcheted
+                    # joint 2 downward until the finger touched link 1.
                     # A geometric rejection can invalidate its remaining
                     # position lead: at the recorded wrist stop that lead
                     # kept pressing toward self contact and vetoed every
@@ -378,6 +399,7 @@ class EgmPositionReferenceAdapter:
                 "collision_reference_resets": self.collision_reference_resets,
                 "collision_proximity_hold": proximity_hold,
                 "collision_monitor_stale": collision_monitor_stale,
+                "require_servo_monitor": self.require_servo_monitor,
                 "collision_scale_age_s": (
                     collision_scale_age_s
                     if np.isfinite(collision_scale_age_s) else None),

@@ -83,6 +83,7 @@ class ThreeFingerRetargetingNode:
         self.watchdog_latched = False
         self.command_state_lock = threading.RLock()
         self.last_command_target = None
+        self.last_command_effort = []
         self.hold_target = None
         self.command_count = 0
         rospy.Subscriber(
@@ -129,7 +130,7 @@ class ThreeFingerRetargetingNode:
             return self.positions.copy()
 
     def publish_trajectory(
-        self, positions, duration_s=None, release_hold=False
+        self, positions, duration_s=None, release_hold=False, effort=None
     ):
         target = np.asarray(positions, dtype=float)
         if target.shape != (4,) or not np.all(np.isfinite(target)):
@@ -139,6 +140,11 @@ class ThreeFingerRetargetingNode:
         message.joint_names = list(self.joint_names)
         point = JointTrajectoryPoint()
         point.positions = target.tolist()
+        if effort is None:
+            torque = self.retargeter.constant_grasp_torque_nm
+            effort = ([0.0, torque, torque, torque]
+                      if torque > 0.0 and self.retargeter.grip_latched else [])
+        point.effort = list(effort)
         point.time_from_start = rospy.Duration(
             self.retargeter.command_duration_s
             if duration_s is None else float(duration_s)
@@ -149,6 +155,7 @@ class ThreeFingerRetargetingNode:
                 self.hold_target = None
             self.publisher.publish(message)
             self.last_command_target = target.copy()
+            self.last_command_effort = list(effort)
             self.command_count += 1
 
     def publish_frozen_hold_trajectory(self, current):
@@ -159,7 +166,8 @@ class ThreeFingerRetargetingNode:
                 self.hold_target, current, self.last_command_target
             )
             target = self.hold_target.copy()
-            self.publish_trajectory(target, duration_s=0.05)
+            self.publish_trajectory(target, duration_s=0.05,
+                                    effort=self.last_command_effort)
             return target
 
     def publish_hold(self, reason):
@@ -208,6 +216,7 @@ class ThreeFingerRetargetingNode:
             "actual_joint_position_rad": None,
             "joint_names": list(self.joint_names),
             "command_count": command_count,
+            "command_motor_torque_nm": list(self.last_command_effort),
         }
         for key, value in values.items():
             if isinstance(value, np.ndarray):

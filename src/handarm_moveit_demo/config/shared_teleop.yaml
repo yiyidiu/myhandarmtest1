@@ -17,7 +17,8 @@ frames:
   base: base_link
   flange: flange
   servo_control: tool0
-  palm_center: handbase_link
+  # Axial palm-surface approximation. handbase_link remains the mount frame.
+  palm_center: tool0
   # No independent calibrated grasp-center frame exists in the current URDF.
   grasp_center: tool0
 
@@ -72,6 +73,24 @@ mapping:
 # The ground profile is deliberately independent, so an operator can return to
 # the preserved 0.6x behavior without restoring or editing any file.
 mapping_profiles:
+  whole_wrist_pose:
+    # F_wrist.T F_palm, from the fixed left neutral MANO template. This only
+    # expresses native ring angular commands in the existing control axes;
+    # no live palm fit or IMU fitting is used by the ring pose estimator.
+    wrist_ring_to_palm_basis:
+      - [-0.982424437758978, -0.11611814486246759, 0.14614650364499082]
+      - [0.10949405791255043, -0.9925942694063542, -0.05260862689245337]
+      - [0.1511729981703062, -0.0356818269622689, 0.9878631139225899]
+    # Scale the complete C-relative axis-angle, then apply the existing
+    # side-turn target bound (88 deg) and actual-motion protection (90 deg).
+    orientation_gain: 1.3
+    # User's camera placement: depth controls height, image up controls
+    # forward. Optical axes: +X image right, +Y image down, +Z away.
+    # Camera -Z -> base -Z; camera -Y -> base +X; camera -X -> base +Y.
+    translation_matrix: [[0.0, -1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
+    # Base X/Y/Z gains. Reduce lateral hand travel by 20%, retaining the
+    # established forward and height response for placement adjustments.
+    translation_gain: [1.6, 2.0, 1.2]
   camera_ground_workspace:
     mode: CAMERA_RANGE_TO_GROUND_SECTOR
     status: SIMULATION_PROFILE_REQUIRES_PER_OPERATOR_CAMERA_RANGE_CALIBRATION
@@ -109,8 +128,9 @@ mapping_profiles:
     robot_workspace:
       model: FRONT_GROUND_CLIPPED_ELLIPSOID
       reference_link: tool0
-      # One-million-sample FK envelope from the project URDF, including the
-      # 0.17 m flange->tool0 offset. Raw extrema were approximately
+      # Historical FK envelope measured with a 0.17 m flange->tool0 offset,
+      # before the palm TCP changed to 0.1658 m. Not used by live profiles.
+      # Raw extrema were approximately
       # X[-0.8190,+0.8190], Y[-0.8191,+0.8197], Z[-0.3514,+1.1111] m.
       center_base_m: [0.00001, 0.00033, 0.37982]
       radii_m: [0.81900, 0.81940, 0.73123]
@@ -207,7 +227,7 @@ safety:
 
 workspace:
   # Non-binding envelope from the URDF chain: shoulder z=0.290 m;
-  # sum of remaining link offsets to tool0 is 0.884 m. This box contains
+  # sum of remaining link offsets to tool0 is 0.8798 m. This box contains
   # that sphere, including the soft margin. It does NOT certify reachability.
   # Actual allowable motion is decided by joint/singularity limits and the
   # swept full-robot self/world collision guard at the current orientation.
@@ -219,11 +239,12 @@ workspace:
 transforms:
   flange_to_palm_center:
     status: URDF_ONLY_NOT_PHYSICALLY_MEASURED
-    translation_m: [0.0, 0.0, 0.0]
-    quaternion_xyzw: [0.0, 0.7068251811, 0.0, 0.7073882692]
+    # User requested the axial 16.58 cm approximation, with axes unchanged.
+    translation_m: [0.1658, 0.0, 0.0]
+    quaternion_xyzw: [0.0, 0.7071067812, 0.0, 0.7071067812]
   flange_to_grasp_center:
     status: TEMPORARY_FROM_EXISTING_TOOL0_URDF_NOT_PHYSICALLY_MEASURED
-    translation_m: [0.17, 0.0, 0.0]
+    translation_m: [0.1658, 0.0, 0.0]
     quaternion_xyzw: [0.0, 0.7071067812, 0.0, 0.7071067812]
   servo_control_to_grasp_center:
     status: TEMPORARY_TOOL0_EQUALS_GRASP_CENTER
@@ -282,6 +303,9 @@ finger_retargeting:
   # individual index control left one finger at only 40% while carrying.
   human_close_excursion: [0.32, 0.32, 0.32]
   grip_latch_enabled: true
+  # A confirmed grasp switches all three root motors to this fixed torque.
+  # Zero selects the prior continuous position-controlled grasp for rollback.
+  constant_grasp_torque_nm: 1.8
   one_euro_minimum_cutoff_hz: 2.0
   one_euro_beta: 0.15
   one_euro_derivative_cutoff_hz: 1.0
@@ -300,6 +324,12 @@ finger_retargeting:
 control:
   # Generic profiles retain legacy control; the live launcher selects the tested controller.
   constrained_velocity_projection: false
+  # Live Gazebo operating envelope, separate from the hardware joint travel.
+  # The Sep 18 human run crossed the straight elbow at joint_3 ~= -90 deg
+  # and reached wrist turns near +/-170 deg before becoming difficult to retreat.
+  operational_joint_limits_deg:
+    joint_3: [-50.0, 70.0]
+    joint_6: [-150.0, 150.0]
   mode: RELATIVE_POSE_TRACKING
   rate_hz: 50.0
   # AprilTag V3 pose tracker relation: feed-forward + pose-error feedback.

@@ -8,9 +8,10 @@ visible oscillation.  ``rigid_transport`` removes the mimic PID selector; the
 four active joints likewise use gazebo_ros_control's native position path when
 their plant PIDs are not loaded by the launch file.  Hand trajectories still
 work, but this mode is kinematic and is not the physical-contact validation
-profile.  ``physical_grasp`` replaces both controller paths with one finite-
-compliance implicit spring/damper plugin, so collision reaction is resolved by
-ODE instead of fighting a SetPosition constraint. The physical profile also
+profile.  ``physical_grasp`` uses self-locking worm drives only at the four
+actuated joints, with passive spatial transmission constraints for 1:1 followers.
+Contact loads are transmitted through the coupled finger to its root motor.
+The physical profile also
 uses a bounded-position arm backend that handles joint_6's multi-turn range
 without changing its URDF limits or PID gains. ``--profile original``
 returns the input byte-for-byte.
@@ -79,12 +80,12 @@ def _set_text(parent, tag, text):
 
 
 def render_physical_grasp_hand(xml_text):
-    """Return a contact-capable implicit spring/damper hand plant.
+    """Return a contact-capable self-locking hand plant.
 
     The arm remains owned by gazebo_ros_control. The eight hand joints are
     deliberately removed from that hardware interface and are all owned by a
-    single Gazebo plugin, avoiding two controllers imposing contradictory
-    constraints during object contact.
+    single Gazebo plugin. Only active joints receive motor references;
+    follower joints use passive fixed-ratio constraints rather than servos.
     """
 
     root = ET.fromstring(xml_text)
@@ -126,7 +127,17 @@ def render_physical_grasp_hand(xml_text):
     # link_4/link_6 report 1.05 mm while their displayed surfaces are 16.87 mm
     # apart. These modest meshes (about 6300/900 faces) retain the real outer
     # shape in both ODE and MoveIt without changing visuals or inertias.
-    for name in ("link_4", "link_6"):
+    # The old link_5 proxy also bridges empty space at the palm mount.
+    # Sep 19: the lower-arm coarse hull also fills a recess near finger 3.
+    # At the recorded 1:33 stop it reports 6.45 mm, while the CAD surfaces
+    # are 12.03 mm apart. Use the modest 2888/5740-face lower-arm meshes too;
+    # retain clearance/braking margins and all collision pairs.
+    # The palm's rounded 2 mm mesh also bridges empty space. At the Sep 19
+    # fault it intersects link_4 while the original CAD retains 1.197 mm.
+    # Use the original palm for BOTH simulation contact and every MoveIt
+    # distance/collision query; an exact binary check alone would leave the
+    # QP and trajectory sweep rejecting the same false contact.
+    for name in ("link_1", "link_2", "link_4", "link_5", "link_6", "handbase_link"):
         link = root.find("link[@name='{}']".format(name))
         visual = link.find("visual")
         for collision in list(link.findall("collision")):
@@ -140,18 +151,27 @@ def render_physical_grasp_hand(xml_text):
     # Replace the root bounding boxes that created an invisible bottle
     # support. Low-face convex hulls retain the outer root shape without
     # putting the 160k-face visual meshes in the real-time collision loop.
-    for name in ("f1link1", "f3link1"):
+    # Finger capsules falsely overlapped the palm at f3j2=1.23865 rad while
+    # the original finger/palm surfaces were 6.35 mm apart. A single convex
+    # hull also fills the proximal link's side recess, so preserve it with
+    # three longitudinal convex sections. The sections contain the original
+    # CAD surfaces; no shrinking, joint-limit reduction or collision-pair
+    # exemption is used. See meshes/finger_collision_geometry.md.
+    for name in FINGER_LINKS:
         link = root.find("link[@name='{}']".format(name))
         visual = link.find("visual")
         for collision in list(link.findall("collision")):
             link.remove(collision)
-        collision = ET.SubElement(link, "collision")
-        for key in ("origin", "geometry"):
-            element = visual.find(key)
-            if element is not None:
-                collision.append(copy.deepcopy(element))
-        collision.find("geometry/mesh").set(
-            "filename", "package://handarm_sim_demo/meshes/{}_collision_hull.stl".format(name))
+        part_count = 3 if name in ("f1link2", "f2link1", "f3link2") else 1
+        for part in range(part_count):
+            collision = ET.SubElement(link, "collision")
+            for key in ("origin", "geometry"):
+                element = visual.find(key)
+                if element is not None:
+                    collision.append(copy.deepcopy(element))
+            suffix = "hull" if name in ("f1link1", "f3link1") else "part{}".format(part)
+            collision.find("geometry/mesh").set(
+                "filename", "package://handarm_sim_demo/meshes/{}_collision_{}.stl".format(name, suffix))
 
     # Gazebo's default contact stiffness is much too hard for these small
     # finger inertias. A moderately compliant, damped surface avoids the
@@ -172,13 +192,13 @@ def render_physical_grasp_hand(xml_text):
             "input URDF is missing Gazebo finger surfaces for: {}".format(
                 ", ".join(missing_links)))
 
-    # Tell Gazebo/ODE to solve the joint springs inside the constraint solver.
-    # This is the key difference from explicit high-gain PID torques and from
-    # direct SetPosition: contact and actuator compliance share one solve.
+    # Passive/arm damping remains implicit. Active worm-drive brakes own
+    # their ODE stops, with motion bounded by the original motor speed.
     for joint_name in ALL_HAND_JOINTS + tuple(
             "joint_{}".format(index) for index in range(1, 7)):
         joint_gazebo = ET.SubElement(root, "gazebo", {"reference": joint_name})
-        _add_text(joint_gazebo, "implicitSpringDamper", "true")
+        _add_text(joint_gazebo, "implicitSpringDamper",
+                  "false" if joint_name in ACTIVE_JOINTS else "true")
 
     wrapper = ET.SubElement(root, "gazebo")
     plugin = ET.SubElement(
@@ -190,18 +210,13 @@ def render_physical_grasp_hand(xml_text):
     _add_text(plugin, "mimicJointNames", _space_join(MIMIC_JOINTS))
     _add_text(plugin, "mimicSourceIndex", "0 1 2 3")
     _add_text(plugin, "initialPositions", "0.18 0.08726646259971647 0.08726646259971647 0.08726646259971647")
-    # f1j1 configures the opposed finger and needs more holding torque. The
-    # flexion joints stay deliberately compliant so a grasp stops on contact.
+    # Position-mode motor gains/effort only; non-backdrivability comes from
+    # mechanical shaft constraints, not a compliant holding spring.
     _add_text(plugin, "activeStiffness", "25.0 12.0 12.0 12.0")
-    _add_text(plugin, "activeDamping", "1.50 0.60 0.60 0.60")
-    # Preserve the established finite drive limits. The current transfer
-    # task uses the user's explicit 20%-loaded bottle/carton masses, retaining
-    # real-size geometry. A separate full-bottle 2 Nm experiment did not
-    # establish reliable holding and is not the delivered drive profile.
-    _add_text(plugin, "activeMaxEffort", "3.0 1.20 1.20 1.20")
-    _add_text(plugin, "mimicStiffness", "25.0 10.0 10.0 10.0")
-    _add_text(plugin, "mimicDamping", "1.50 0.50 0.50 0.50")
-    _add_text(plugin, "mimicMaxEffort", "3.0 0.80 0.80 0.80")
+    # Only the four actuated joints have a drive. The three distal joints
+    # and mirrored spread joint use passive 1:1 transmission constraints.
+    # These are joint torque caps, not a calibrated fingertip force in N.
+    _add_text(plugin, "activeMaxEffort", "3.0 1.80 1.80 1.80")
     _add_text(plugin, "commandTopic", "/controller_gazebo_hand/command")
     _add_text(plugin, "stateTopic", "/joint_states")
     _add_text(

@@ -22,6 +22,62 @@ def payload(*detections):
 
 
 class AutomaticActiveHandSelectorTest(unittest.TestCase):
+    def test_fixed_left_reacquires_left_after_gap_with_both_hands_visible(self):
+        selector = AutomaticActiveHandSelector(fixed_is_right=False)
+        selector.select(payload(detection(False, [352, 105, 399, 174])), 191.5)
+        # Sep 19: both boxes no longer overlap the old crop after a pause.
+        # The idle right hand has higher confidence, but must never inherit C.
+        left = detection(False, [363, 156, 406, 244], .9757)
+        right = detection(True, [188, 397, 262, 487], .9921)
+        self.assertFalse(selector.select(payload(left, right), 195.7)['valid'])
+        chosen = selector.select(payload(left, right), 195.75)
+        self.assertEqual(chosen['bbox'], left['bbox'])
+        self.assertFalse(chosen['is_right'])
+        self.assertTrue(chosen['track_discontinuity'])
+        self.assertEqual(chosen['active_hand_generation'], 1)
+
+    def test_fixed_left_never_switches_to_only_remote_right_hand(self):
+        selector = AutomaticActiveHandSelector(fixed_is_right=False)
+        selector.select(payload(detection(False, [300, 100, 360, 200])), 1.)
+        other = payload(detection(True, [100, 350, 180, 460], .99))
+        for t in [1.05, 1.1, 1.2, 2., 20.]:
+            result = selector.select(other, t)
+            self.assertFalse(result['valid'])
+            self.assertFalse(result['active_hand_is_right'])
+            self.assertEqual(result['active_hand_generation'], 1)
+
+    def test_fixed_left_label_flip_requires_fresh_spatial_evidence(self):
+        selector = AutomaticActiveHandSelector(fixed_is_right=False)
+        left = detection(False, [300, 100, 360, 200])
+        selector.select(payload(left), 1.)
+        edge_on = detection(True, [302, 101, 362, 201])
+        followed = selector.select(payload(edge_on), 1.05)
+        self.assertTrue(followed['valid'])
+        self.assertFalse(followed['is_right'])
+        self.assertTrue(followed['detector_reported_is_right'])
+        self.assertFalse(followed['track_discontinuity'])
+        self.assertFalse(selector.select(payload(edge_on), 2.)['valid'])
+        self.assertFalse(selector.select(payload(left), 2.05)['valid'])
+        restored = selector.select(payload(left), 2.10)
+        self.assertTrue(restored['valid'])
+        self.assertTrue(restored['track_discontinuity'])
+
+    def test_fixed_left_is_required_before_first_calibration(self):
+        selector = AutomaticActiveHandSelector(fixed_is_right=False)
+        self.assertFalse(selector.select(payload(detection(True, [0, 0, 100, 100])), 1.)['valid'])
+        self.assertIsNone(selector.active_is_right)
+
+    def test_other_hand_one_frame_false_left_label_cannot_poison_track(self):
+        selector = AutomaticActiveHandSelector(fixed_is_right=False)
+        left = detection(False, [372, 122, 479, 225])
+        selector.select(payload(left), 200.206)
+        wrong = detection(False, [179, 406, 242, 477])
+        self.assertFalse(selector.select(payload(wrong), 200.239)['valid'])
+        right = detection(True, wrong['bbox'])
+        returned = selector.select(payload(detection(False, [327, 131, 428, 234]), right), 200.273)
+        self.assertTrue(returned['valid'])
+        self.assertLess(returned['bbox'][1], 200)
+
     def test_other_visible_hand_cannot_steal_active_crop(self):
         selector = AutomaticActiveHandSelector(switch_frames=3)
         right = detection(True, [100, 100, 220, 260], 0.8)

@@ -48,12 +48,16 @@ def append_robot_feedback(image: np.ndarray) -> np.ndarray:
     color = (255, 195, 70) if state.get("level") != "normal" else (100, 240, 150)
     draw.text((12, 3), "机械臂：" + state["status_text"], font=large, fill=color)
     gap = state.get("target_gap_cm")
-    text = "偏航上限：左右各 90°；横滚可调整"
+    details = []
     if gap is not None:
-        text += "    目标与实际相差：%.1f cm" % gap
+        details.append("位置差：%.1f cm" % gap)
+    rotation_gap = state.get("rotation_gap_deg")
+    if rotation_gap is not None:
+        details.append("姿态差：%.1f°" % rotation_gap)
     closure = state.get("closure")
     if closure is not None:
-        text += "    握拳输入：%d%%" % round(100*float(np.mean(closure)))
+        details.append("握拳输入：%d%%" % round(100*float(np.mean(closure))))
+    text = "    ".join(details) if details else "等待有效控制数据"
     if state.get("release_phase"):
         text += "（同步张开中）"
     elif state.get("grip_latched"):
@@ -145,8 +149,34 @@ def rotation_geodesic_deg(rotation: Any) -> float:
     return math.degrees(math.acos(cosine))
 
 
+def draw_reference_hand_box(canvas, bbox, image_width, image_height):
+    """Draw the accepted C-frame box, independently of current detection."""
+    if bbox is None:
+        return canvas
+    x1, y1, x2, y2 = np.rint(bbox).astype(int)
+    x1, x2 = np.clip([x1, x2], 0, image_width - 1)
+    y1, y2 = np.clip([y1, y2], 0, image_height - 1)
+    color = (0, 220, 255)
+    # Dashed yellow stays distinguishable from the live green box even when
+    # the hand returns to C and the two outlines overlap.
+    for offset in range(0, canvas.shape[1] - image_width + 1, image_width):
+        for x in range(x1, x2, 16):
+            for y in (y1, y2):
+                cv2.line(canvas, (offset+x, y), (offset+min(x+9, x2), y), color, 2)
+        for y in range(y1, y2, 16):
+            for x in (x1, x2):
+                cv2.line(canvas, (offset+x, y), (offset+x, min(y+9, y2)), color, 2)
+        label_x = offset + min(x1, max(0, image_width - 125))
+        label_y = y1 - 8 if y1 >= 25 else min(y2 + 20, image_height - 8)
+        cv2.putText(canvas, "C ZERO (fixed)", (label_x, label_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, .48, (0, 0, 0), 3, cv2.LINE_AA)
+        cv2.putText(canvas, "C ZERO (fixed)", (label_x, label_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, .48, color, 1, cv2.LINE_AA)
+    return canvas
+
+
 def draw_wrist_axes_diagnostic(rgb, raw_frame, observation, bbox=None,
-                               live_rgb=None, live_bbox=None):
+                               live_rgb=None, live_bbox=None, single_panel=False):
     """Display-only wrist axes on their exact inference RGB, plus a fixed view.
 
     The on-hand arrows are perspective projections of 8 cm camera-frame axes.
@@ -156,10 +186,15 @@ def draw_wrist_axes_diagnostic(rgb, raw_frame, observation, bbox=None,
     remain in the explicitly labelled estimate-frame footer, never projected
     onto a different camera frame. Neither drawing feeds back into control.
     """
+    if single_panel:
+        # Keep the RGB that produced the control axes; don't draw a stale
+        # orientation on a newer image or render a second hidden panel.
+        live_rgb = None
     height, width = rgb.shape[:2]
-    canvas = np.zeros((height + (144 if live_rgb is not None else 120), width * 2, 3), dtype=np.uint8)
+    panels = 1 if single_panel else 2
+    canvas = np.zeros((height + (144 if live_rgb is not None else 120), width * panels, 3), dtype=np.uint8)
     bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-    for offset in (0, width):
+    for offset in range(0, width * panels, width):
         canvas[:height, offset:offset+width] = bgr
         canvas[height:, offset:offset+width] = (24, 24, 24)
         if bbox is not None:
@@ -181,6 +216,15 @@ def draw_wrist_axes_diagnostic(rgb, raw_frame, observation, bbox=None,
     titles = ['RAW WRIST: before filtering',
               'PROCESSED WRIST: RGB-D corrected' if observation.get('imu_calibrated_pose')
               else 'PROCESSED WRIST: filtered estimate']
+    palm_axes = (raw_frame or {}).get('reference_kind') == 'MANO_FIVE_POINT_PALM_USER_XYZ'
+    if palm_axes:
+        titles = ['RAW FIVE-POINT PALM AXES', 'CONTROL FIVE-POINT PALM AXES']
+    if single_panel:
+        frames, titles = frames[1:], titles[1:]
+        if not palm_axes:
+            titles = ['CONTROL WRIST-RING AXES' if
+                      (raw_frame or {}).get('reference_kind') == 'MANO_WRIST_RING_16'
+                      else 'CONTROL POSE AXES']
     if live_rgb is not None:
         titles[0] = 'LIVE CAMERA / raw orientation below'
     for index, (frame, title) in enumerate(zip(frames, titles)):
@@ -240,6 +284,7 @@ class RelativeWristPoseDisplay:
         self._lock = threading.RLock()
         self._zero_center_m: Optional[np.ndarray] = None
         self._zero_frame: Optional[np.ndarray] = None
+        self._zero_hand_bbox: Optional[Tuple[float, float, float, float]] = None
         self._latest_center_m: Optional[np.ndarray] = None
         self._latest_frame: Optional[np.ndarray] = None
         self._latest_confidence: Optional[np.ndarray] = None
@@ -265,11 +310,13 @@ class RelativeWristPoseDisplay:
         with self._lock:
             self._zero_center_m = None
             self._zero_frame = None
+            self._zero_hand_bbox = None
             self._latest_reason = str(reason)
             self._delta = self._compute_locked()
 
     def calibrate_from_latest(
-        self, expected_presence_generation: Optional[int] = None
+        self, expected_presence_generation: Optional[int] = None,
+        reference_bbox: Optional[Sequence[float]] = None,
     ) -> bool:
         with self._lock:
             if (
@@ -288,9 +335,19 @@ class RelativeWristPoseDisplay:
                 return False
             self._zero_center_m = self._latest_center_m.copy()
             self._zero_frame = self._latest_frame.copy()
+            # The display box belongs to the exact accepted C packet. Never
+            # replace it when the detector moves, loses or reacquires a hand.
+            self._zero_hand_bbox = (
+                tuple(float(v) for v in reference_bbox)
+                if reference_bbox is not None else None
+            )
             self._latest_reason = "ok"
             self._delta = self._compute_locked()
             return True
+
+    def reference_hand_bbox(self):
+        with self._lock:
+            return self._zero_hand_bbox
 
     def update_from_packet(
         self, packet: Dict[str, Any], presence_generation: int
@@ -491,7 +548,8 @@ class RelativeWristPoseDisplay:
 
 
 def draw_hand_pose_panel(
-    image: np.ndarray, delta: WristPoseDelta, panel_width: int = 410
+    image: np.ndarray, delta: WristPoseDelta, panel_width: int = 410,
+    control_reference: str = "mano-wrist-ring",
 ) -> np.ndarray:
     """Append an ASCII diagnostics panel without covering the MANO rendering."""
 
@@ -521,16 +579,18 @@ def draw_hand_pose_panel(
         y += gap
 
     line("HAND 6D POSE + GAZEBO CONTROL", (80, 230, 255), 25)
+    palm_axes = control_reference == "mano-five-point-palm"
     line(
         (
-            "REF: MANO WRIST + RGB-D FOREARM"
+            "REF: 5-POINT PALM / ORIGIN: WRIST J0"
+            if palm_axes else "REF: MANO WRIST + RGB-D FOREARM"
             if delta.forearm_applied
             else "REF: MANO WRIST (forearm fallback)"
         ),
         (190, 190, 190),
         21,
     )
-    line("CAM: +X RIGHT  +Y DOWN  +Z FORWARD", (190, 190, 190), 28)
+    line("CAM: +X RIGHT  +Y DOWN  +Z AWAY", (190, 190, 190), 28)
     if not delta.valid:
         line("MEASUREMENT: INVALID", (60, 80, 255), 24)
         line("reason: " + delta.reason[:43], (150, 150, 150), 24)
@@ -570,7 +630,8 @@ def draw_hand_pose_panel(
         )
     line(
         (
-            "FOREARM FUSED conf %.2f weight %.2f"
+            "PALM: X out / Y to little / Z to fingers"
+            if palm_axes else "FOREARM FUSED conf %.2f weight %.2f"
             % (delta.forearm_confidence, delta.forearm_fusion_weight)
             if delta.forearm_applied
             else "FOREARM MANO-ONLY  " + delta.forearm_status[:24]
@@ -588,10 +649,10 @@ def draw_hand_pose_panel(
 
     relative_mm = 1000.0 * delta.delta_m
     line("GAZEBO CONTROL: ENABLED", (80, 255, 120), 25)
-    line("RELATIVE TO C-ZERO", (80, 230, 255), 25)
+    line("HAND RELATIVE TO C (camera frame)", (80, 230, 255), 25)
     line("dX RIGHT(+)/LEFT(-)    %+8.1f mm" % relative_mm[0], gap=22)
     line("dY DOWN(+)/UP(-)       %+8.1f mm" % relative_mm[1], gap=22)
-    line("dZ FORWARD(+)          %+8.1f mm" % relative_mm[2], gap=28)
+    line("dZ AWAY FROM CAMERA(+) %+8.1f mm" % relative_mm[2], gap=28)
     line("PITCH about camera Y   %+8.2f deg" % delta.pitch_deg, (100, 245, 160), 22)
     line("YAW   about camera Z   %+8.2f deg" % delta.yaw_deg, (100, 245, 160), 22)
     line("ROLL  about camera X   %+8.2f deg" % delta.roll_deg, (100, 245, 160), 22)

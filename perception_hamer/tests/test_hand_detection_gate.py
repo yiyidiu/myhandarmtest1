@@ -8,6 +8,34 @@ from perception_hamer.src.hand_detection_gate import (
 
 
 class HandDetectionGateTest(unittest.TestCase):
+    def test_unconfirmed_reacquisition_does_not_use_old_crop_during_miss_grace(self):
+        gate = ContinuousHandPresenceGate(required_frames=2, timeout_s=.30,
+                                          negative_grace_frames=2, negative_grace_s=.15)
+        old = {'valid': True, 'bbox': [100, 100, 160, 200], 'is_right': False}
+        gate.observe(old, 1.)
+        self.assertTrue(gate.observe(old, 1.05)['valid'])
+        pending = gate.observe({'valid': False, 'reason': 'fixed_hand_reacquiring',
+                                'track_discontinuity': True}, 1.10)
+        self.assertFalse(pending['valid'])
+        self.assertIsNone(pending['confirmed_detection'])
+
+    def test_relocated_same_hand_resets_presence_before_new_pose(self):
+        gate = ContinuousHandPresenceGate(required_frames=2, timeout_s=.30,
+                                          negative_grace_frames=2, negative_grace_s=.15)
+        old = {'valid': True, 'bbox': [100, 100, 160, 200], 'is_right': False}
+        gate.observe(old, 1.)
+        before = gate.observe(old, 1.05)
+        new = {'valid': True, 'bbox': [300, 200, 360, 300], 'is_right': False,
+               'track_discontinuity': True}
+        changed = gate.observe(new, 1.10)
+        self.assertFalse(changed['valid'])
+        self.assertIsNone(changed['confirmed_detection'])
+        self.assertGreater(changed['generation'], before['generation'])
+        new['track_discontinuity'] = False
+        recovered = gate.observe(new, 1.15)
+        self.assertTrue(recovered['valid'])
+        self.assertEqual(recovered['confirmed_detection']['bbox'], new['bbox'])
+
     def test_clipped_fingertip_does_not_erase_a_visible_palm(self):
         xy = np.tile([300., 420.], (21, 1))
         xy[4, 1] = 482.

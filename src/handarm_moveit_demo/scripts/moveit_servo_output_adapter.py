@@ -43,7 +43,8 @@ class MoveItServoOutputAdapter:
         self.workspace_mode = "AXIS_ALIGNED_BOX"
         self.ground_sector_workspace = None
         if self.mapping_profile_name in (
-                "current_linear", "palm_axes_tool_zero", "palm_axes_base_translation"):
+                "current_linear", "palm_axes_tool_zero", "palm_axes_base_translation",
+                "whole_wrist_pose"):
             selected_workspace = workspace
         else:
             profile = self.config.get("mapping_profiles", {}).get(
@@ -212,10 +213,11 @@ class MoveItServoOutputAdapter:
 
     def estop_callback(self, message):
         with self.lock:
+            newly_latched = bool(message.data) and not self.estop_latched
             self.estop_signal = bool(message.data)
             if self.estop_signal:
                 self.estop_latched = True
-        if message.data:
+        if newly_latched:
             rospy.logerr("Emergency stop latched; Servo command forced to zero")
 
     def reset_estop(self, _request):

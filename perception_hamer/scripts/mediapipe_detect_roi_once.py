@@ -103,7 +103,11 @@ def _detect(
         # is not mirrored, so exchange Left/Right for the physical operator.
         media_pipe_label = handedness.label.lower()
         candidate.update({
-            "is_right": False if fixed_left_hand else media_pipe_label == "left",
+            # Keep the observed identity of EVERY candidate. Relabelling the
+            # idle right hand as left made it steal the active crop after a
+            # tracking gap. Fixed-hand policy belongs to candidate selection,
+            # not to the detector's per-hand evidence.
+            "is_right": media_pipe_label == "left",
             "detector_reported_is_right": media_pipe_label == "left",
             "handedness_policy": "fixed_left" if fixed_left_hand else "automatic",
             "confidence": float(handedness.score),
@@ -139,25 +143,27 @@ def main() -> int:
     parser.add_argument("--height", type=int, required=True)
     parser.add_argument("--margin", type=float, default=0.18)
     parser.add_argument("--min-detection-confidence", type=float, default=0.45)
-    # The Sept 8 recording has confidently detected fists at 0.009--0.011
-    # of the image. The old 0.012 open-hand gate discarded them and disabled
-    # both arm and fingers. Keep a resolution floor below those observations;
-    # detector confidence, visible palm anchors and downstream depth/pose
-    # validity still decide whether the current image can control the robot.
-    parser.add_argument("--min-bbox-area-fraction", type=float, default=0.006)
+    # Whole-hand area shrinks with flexion and edge-on views. Sept 20 raw
+    # frames contain correctly tracked control hands down to 0.00333; the
+    # 0.006 gate dropped three visible-hand intervals. Retain only a small
+    # resolution floor. Identity, visible palm anchors and current RGB-D
+    # pose support still decide usability; this never holds an old pose.
+    parser.add_argument("--min-bbox-area-fraction", type=float, default=0.002)
     parser.add_argument("--edge-margin-px", type=float, default=8.0)
     parser.add_argument("--fixed-left-hand", action="store_true",
-                        help="use the known single-left-hand identity; retain raw classification for diagnostics")
+                        help="request fixed-left selection; never relabel other detected hands")
     parser.add_argument("--stream", action="store_true",
                         help="read fixed-size RGB frames until stdin closes")
     args = parser.parse_args()
     expected = args.width * args.height * 3
     with mp.solutions.hands.Hands(
-        # Presence must be decided independently for every D455 image.  The
-        # MediaPipe tracking shortcut can otherwise propagate stale landmarks
-        # for several frames after the real hand has left and create a ghost
-        # crop/HaMeR mesh.
-        static_image_mode=True,
+        # Continuous video must retain landmark tracking through edge-on
+        # palm views. Re-running the full-image palm detector independently
+        # dropped 241/1047 visible-hand frames in the Sep 19 replay. Video
+        # mode still evaluates the current crop's landmark/presence model;
+        # this does not reuse an old HaMeR pose or extrapolate robot motion.
+        # One-shot preflight remains an independent full-image detection.
+        static_image_mode=not args.stream,
         # Return both physical hands as 2-D candidates.  The parent process
         # automatically keeps one active hand; a simultaneously visible other
         # hand is ignored and is never sent to the single HaMeR/MANO model.
@@ -177,6 +183,7 @@ def main() -> int:
                 args.min_bbox_area_fraction, args.edge_margin_px,
                 fixed_left_hand=args.fixed_left_hand,
             )
+            result["detection_mode"] = "video_tracking" if args.stream else "static_detection"
             print(json.dumps(result, separators=(",", ":")), flush=True)
             if not args.stream:
                 return 0 if result.get("valid") else 2

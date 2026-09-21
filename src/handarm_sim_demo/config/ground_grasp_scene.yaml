@@ -1,4 +1,4 @@
-# Left cylinder diameter 90 mm; front carton resting on its largest face.
+# Left cylinder diameter 80 mm; front carton resting on its largest face.
 schema_version: 1
 frame_id: world
 units:
@@ -44,15 +44,15 @@ objects:
       position:
       - 0.24
       - -0.41
-      - 0.1693333333333333
+      - 0.18433333333333329
       orientation_rpy:
       - 0.0
       - 0.0
       - 0.0
     size:
-    - 0.09
-    - 0.09
-    - 0.15666666666666665
+    - 0.08
+    - 0.08
+    - 0.18666666666666665
     mass: 0.27
     static: false
     collision_enabled: true
@@ -108,6 +108,12 @@ objects:
       - 0
       - 0.107
     mass: 0.11399999999999999
+    # Assumed rigid load model: 20 g shell + remaining mass as bottom water.
+    # No liquid slosh; local model frame, tensor about the stated COM.
+    center_of_mass_model_m: [0.0, 0.0, -0.07988115909200791]
+    inertia_about_com_kg_m2: [0.00028070284729957666, 0.00028070284729957666, 6.277999999999999e-05]
+    assumed_shell_mass_kg: 0.020
+    assumed_water_radius_m: 0.030
     static: false
     collision_enabled: true
     planning_scene_enabled: true
@@ -131,7 +137,7 @@ objects:
     size:
     - 0.069
     - 0.076
-    - 0.11666666666666667
+    - 0.18666666666666668
     mass: 0.1028
     static: false
     collision_enabled: true

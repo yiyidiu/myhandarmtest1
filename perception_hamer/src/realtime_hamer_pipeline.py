@@ -214,11 +214,10 @@ def project_hamer_vertices_to_original(
     affine_original_to_crop: Any,
     image_size: int = 256,
 ) -> tuple:
-    """Project MANO vertices into the original RGB image for visualization.
+    """Project MANO vertices into RGB for drawing and surface correspondence.
 
-    HaMeR's crop camera is used only for drawing the recovered mesh.  This
-    projection is deliberately separate from the D455 metric wrist position
-    used by teleoperation.
+    The crop camera establishes image correspondence, not a metric global
+    hand translation. Teleoperation obtains metric depth from the D455.
     """
 
     points = np.asarray(vertices, dtype=np.float64)

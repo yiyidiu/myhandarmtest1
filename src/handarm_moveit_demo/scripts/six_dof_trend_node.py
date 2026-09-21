@@ -20,11 +20,12 @@ from handarm_moveit_demo.msg import HamerHandPose, HandCommand
 from handarm_moveit_demo.hamer_input_contract import (
     authoritative_camera_c_gate_lock,
 )
+from handarm_moveit_demo.self_detour import SelfDetour
 from handarm_moveit_demo.shared_teleop_core import (
     AprilTagV3PoseContinuityFilter, CollisionRetreatGuard, CZeroRecoveryTarget, PoseSample,
     sampled_velocity_freshness,
     CameraRangeWorkspaceMapper, GroundSectorWorkspace,
-    RelativePoseMapper, PalmAxesToolZeroMapper, RelativePoseServoController,
+    RelativePoseMapper, PalmAxesToolZeroMapper, WholeWristPoseMapper, RelativePoseServoController,
     SixDofTrendEstimator, StationaryFeedforwardGate,
     SymmetricSideGraspProjector,
     confirmed_position_reference_hold,
@@ -127,7 +128,24 @@ class SixDofTrendNode:
             smoothing_alpha=trend.get("causal_smoothing_alpha", 0.45),
             reanchor_after_rejections=trend.get("reanchor_after_rejections", 3),
         )
-        if self.mapping_profile_name in (
+        if self.mapping_profile_name == "whole_wrist_pose":
+            whole_wrist = config["mapping_profiles"]["whole_wrist_pose"]
+            self.mapper = WholeWristPoseMapper(
+                translation_matrix=whole_wrist["translation_matrix"],
+                translation_gain=whole_wrist.get("translation_gain", mapping["translation_gain"]),
+                orientation_gain=whole_wrist.get("orientation_gain", 1.0),
+                maximum_relative_translation=control["maximum_relative_translation_m"],
+                maximum_relative_rotation_rad=math.radians(control["maximum_relative_rotation_deg"]),
+                maximum_side_rotation_rad=math.radians(
+                    mapping["maximum_side_rotation_deg"] -
+                    mapping.get("side_rotation_tracking_margin_deg", 0.0)),
+            )
+            if rospy.get_param("~hand_reference_kind", "mano-five-point-palm") == "mano-wrist-ring":
+                basis = np.asarray(whole_wrist["wrist_ring_to_palm_basis"], dtype=float)
+                if not np.allclose(basis.T @ basis, np.eye(3), atol=1e-8) or np.linalg.det(basis) < 0:
+                    raise ValueError("invalid fixed wrist-ring basis")
+                self.mapper.rotation_matrix = self.mapper.rotation_matrix @ basis.T
+        elif self.mapping_profile_name in (
                 "current_linear", "palm_axes_tool_zero", "palm_axes_base_translation"):
             new_palm_axes = self.mapping_profile_name != "current_linear"
             mapper_type = PalmAxesToolZeroMapper if new_palm_axes else RelativePoseMapper
@@ -281,7 +299,8 @@ class SixDofTrendNode:
                       self.mapping_profile_name)
         side_grasp = config.get("side_grasp_projection", {})
         self.side_grasp_projector = SymmetricSideGraspProjector(
-            enabled=side_grasp.get("enabled", False),
+            enabled=(side_grasp.get("enabled", False) and
+                     self.mapping_profile_name != "whole_wrist_pose"),
             axis=side_grasp.get("local_axis", "x"),
             blend_start_rad=math.radians(side_grasp.get(
                 "blend_start_deg", 30.0)),
@@ -373,11 +392,20 @@ class SixDofTrendNode:
         self.recovery_target = CZeroRecoveryTarget()
         # The constrained velocity solver already limits execution. Scaling
         # the hand goal again made a fixed request move by centimetres as a
-        # blocked axis was released. Keep one fixed C-relative pose goal.
+        # blocked axis was released. Keep the C-relative translation goal;
+        # the limited side angle has its own recovery below.
         self.compensate_blocked_target = not bool(rospy.get_param(
             "/shared_teleop/control/constrained_velocity_projection", False))
+        self.side_angle_recovery = bool(rospy.get_param("~side_angle_recovery", True)) and (
+            not self.compensate_blocked_target and self.mapping_profile_name in
+            ("palm_axes_tool_zero", "palm_axes_base_translation") and
+            self.mapper.maximum_side_rotation_rad is not None)
         self.recovery_last_tick = None
         self.geometric_feedback = ({}, -float("inf"))
+        self.self_detour = SelfDetour(
+            self.mapping_profile_name == "whole_wrist_pose" and
+            bool(rospy.get_param("~self_detour_enabled", False)),
+            control.get("operational_joint_limits_deg", {}))
         if self.geometric_recovery_filter:
             rospy.Subscriber("/shared_teleop/geometric_filter_diagnostics", String,
                              self.geometric_filter_callback, queue_size=1)
@@ -678,6 +706,7 @@ class SixDofTrendNode:
         self.target_hold_reason = None
         self.collision_retreat_guard.reset()
         self.recovery_target.reset()
+        self.self_detour.cancel("CANCELLED_NEW_C")
         self.geometric_feedback = ({}, -float("inf"))
         self.pose_reachability_cache = []
         self.pose_reachability_last = {
@@ -1203,8 +1232,12 @@ class SixDofTrendNode:
                     robot_zero_position=robot_zero_position,
                     **({"relative_hand_rotation": side_projection.rotation}
                        if self.mapping_profile_name in (
-                           "current_linear", "palm_axes_tool_zero", "palm_axes_base_translation")
+                           "current_linear", "palm_axes_tool_zero", "palm_axes_base_translation",
+                           "whole_wrist_pose")
                        else {}))
+            raw_side_angle, raw_side_rate = (self.mapper.unbounded_side_motion(
+                side_projection.rotation, hand_zero_rotation.T @ result.raw_velocity[3:])
+                if self.side_angle_recovery else (None, None))
             mapping_diagnostics = self.mapper.mapping_diagnostics()
             if self.pose_reachability_enabled:
                 mapping_diagnostics["reachability_projection"] = dict(
@@ -1231,6 +1264,8 @@ class SixDofTrendNode:
                 return
             mapped_confidence = self.mapper.map_confidence(result.confidence)
             tracking = {
+                "raw_side_angle": raw_side_angle,
+                "raw_side_rate": raw_side_rate,
                 "reference_revision": reference_revision,
                 "header_stamp": message.header.stamp,
                 "source_stamp": result.timestamp,
@@ -1337,6 +1372,8 @@ class SixDofTrendNode:
             self.position_hold_publisher.publish(
                 Bool(data=position_reference_hold))
         valid = state["valid"]
+        if not valid or position_reference_hold or target_hold_reason is not None:
+            self.self_detour.cancel("CANCELLED_INPUT_UNAVAILABLE")
         reason = (
             target_hold_reason if holding_last_target and
             target_hold_reason is not None else state["reason"])
@@ -1395,10 +1432,69 @@ class SixDofTrendNode:
                         position_error = control_target_position - current_position
                         rotation_error = so3_log(
                             control_target_rotation @ current_rotation.T)
+                    if self.side_angle_recovery:
+                        feedback, received_at = self.geometric_feedback
+                        fresh_feedback = time.monotonic() - received_at <= 0.20
+                        zero_rotation = state["robot_zero_rotation"]
+                        current_normal = (zero_rotation.T @ current_rotation)[:, 2]
+                        target_normal = (zero_rotation.T @ control_target_rotation)[:, 2]
+                        side = math.atan2(-current_normal[1], current_normal[2])
+                        requested_side = math.atan2(-target_normal[1], target_normal[2])
+                        def side_rate(base_angular):
+                            derivative = np.cross(zero_rotation.T @ np.asarray(base_angular), current_normal)
+                            denominator = current_normal[1]**2 + current_normal[2]**2
+                            return ((-current_normal[2]*derivative[1] + current_normal[1]*derivative[2]) /
+                                    denominator if denominator > 1e-6 else 0.0)
+                        allowed_rate = side_rate(feedback.get("approved_velocity", [0.0]*6)[3:])
+                        measured_rate = side_rate(feedback.get("measured_velocity", [0.0]*6)[3:])
+                        checked_rate = side_rate(feedback.get("requested_velocity", [0.0]*6)[3:])
+                        # Compare input/output from the SAME geometric check.
+                        # A zero crossing in normal motion is not blockage;
+                        # comparing a new goal with an older near-zero output
+                        # repeatedly collapsed the side gain far from a limit.
+                        geometry_stopped = (fresh_feedback and feedback.get("input_valid", False) and
+                            feedback.get("rotation_limited", False) and
+                            abs(requested_side - side) > math.radians(1.0) and
+                            checked_rate * (requested_side - side) > 0.0 and
+                            abs(checked_rate) > math.radians(0.5) and
+                            abs(allowed_rate) < 0.1 * abs(checked_rate) and
+                            abs(allowed_rate) < math.radians(0.5) and
+                            abs(measured_rate) < math.radians(5.0))
+                        mapping_stopped = (fresh_feedback and
+                            abs(state["raw_side_angle"]) > abs(requested_side) + math.radians(1.0) and
+                            side * requested_side > 0.0 and
+                            abs(side) >= abs(requested_side) - math.radians(0.3) and
+                            abs(measured_rate) < math.radians(1.0))
+                        side_velocity = np.zeros(6)
+                        side_velocity[3] = state["raw_side_rate"]
+                        quiet_gated_side_rate = self.feedforward_gate.apply(side_velocity).velocity[3]
+                        with self.lock:
+                            if state["reference_revision"] != self.reference_revision:
+                                return
+                            control_target_rotation, target_velocity = self.recovery_target.apply_side_angle(
+                                control_target_rotation, current_rotation, zero_rotation,
+                                state["raw_side_angle"], quiet_gated_side_rate * velocity_freshness,
+                                target_velocity, geometry_stopped or mapping_stopped, recovery_dt)
+                        rotation_error = so3_log(control_target_rotation @ current_rotation.T)
+                    feedback, received_at = self.geometric_feedback
+                    detour = self.self_detour.target(
+                        state["target_position"], state["target_rotation"],
+                        current_position, current_rotation, feedback,
+                        time.monotonic()-received_at <= .20,
+                        state["reference_revision"], target_hold_reason is None and target_age_s <= .20)
+                    if detour is not None:
+                        control_target_position, control_target_rotation = detour
+                        position_error = control_target_position-current_position
+                        rotation_error = so3_log(control_target_rotation @ current_rotation.T)
+                        target_velocity = np.zeros(6)
                     velocity = self.pose_servo.command(
                         current_position, current_rotation,
                         control_target_position, control_target_rotation,
-                        target_velocity)
+                        target_velocity,
+                        ordered_rotation_zero=(state["robot_zero_rotation"]
+                            if isinstance(self.mapper, PalmAxesToolZeroMapper) and
+                            self.mapper.maximum_side_rotation_rad is not None
+                            else None))
                     velocity[:3][
                         np.abs(position_error) <= self.position_tolerance] = 0.0
                     if (np.linalg.norm(rotation_error) <=
@@ -1524,6 +1620,10 @@ class SixDofTrendNode:
                 state["target_rotation"]).tolist(),
             "recovery_translation_gain": self.recovery_target.translation_gain.tolist(),
             "recovery_rotation_gain": self.recovery_target.rotation_gain,
+            "recovery_side_gain": self.recovery_target.side_gain,
+            "self_detour_status": self.self_detour.status,
+            "self_detour_planning_ms": self.self_detour.last_planning_ms,
+            "raw_side_angle_rad": state.get("raw_side_angle"),
             "target_position": control_target_position.tolist(),
             "target_quaternion_xyzw": matrix_to_quaternion_xyzw(
                 control_target_rotation).tolist(),
@@ -1539,6 +1639,9 @@ class SixDofTrendNode:
                 (state["target_position"] - current_position).tolist()),
             "rotation_error_rad": (
                 None if rotation_error is None else rotation_error.tolist()),
+            "requested_rotation_error_rad": (
+                None if current_rotation is None else
+                so3_log(state["target_rotation"] @ current_rotation.T).tolist()),
             "processing_ms": (
                 state["callback_processing_ms"] +
                 (time.perf_counter() - began) * 1000.0),

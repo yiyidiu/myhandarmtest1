@@ -75,7 +75,7 @@ def run(args):
     if scene.world.collision_objects or scene.world.octomap.octomap.data:
         raise RuntimeError('Controller received forbidden environment geometry')
     solver = rospy.get_param('/shared_teleop/control/joint_velocity_solver')
-    profiles = dict(servo=rospy.get_param('/servo_server'),
+    profiles = dict(servo=rospy.get_param('/servo_server', {}),
                     reference=rospy.get_param('/egm_position_reference_adapter'),
                     control=rospy.get_param('/shared_teleop'))
     source_commit = subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
@@ -152,13 +152,16 @@ def run(args):
     else:
         raise RuntimeError('Robot feedback/controller not ready')
     warm = time.monotonic()
-    while time.monotonic() - warm < 3.0:
+    initial_target = np.array([0., 0., 0., 0., np.pi/2, 0.])
+    while time.monotonic() - warm < 15.0:
         publish(zero, True)
         time.sleep(.05)
+        if (time.monotonic() - warm >= 3.0 and
+                np.max(np.abs(np.array(latest['q']) - initial_target)) <= .01):
+            break
     initial_q = latest['q']
-    initial_target = np.array([0., 0., 0., 0., np.pi/2, 0.])
     if np.max(np.abs(np.array(initial_q) - initial_target)) > .01:
-        raise RuntimeError('Replay must start from the same approved initial joints')
+        raise RuntimeError('Replay must start from the same approved initial joints: ' + str(initial_q))
     print('START', solver, args.source.name, 'video', round(first_c, 3),
           'through', round(records[-1]['t'], 3), 'initial_q', initial_q, flush=True)
     begun[0] = time.monotonic()

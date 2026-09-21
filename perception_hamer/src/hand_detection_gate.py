@@ -158,6 +158,7 @@ class ContinuousHandPresenceGate:
             negative_age = max(0.0, now - self.first_negative_monotonic)
             if (
                 self.valid
+                and not (isinstance(detection, dict) and detection.get("track_discontinuity", False))
                 and self.consecutive_negative_results
                 <= self.negative_grace_frames
                 and negative_age <= self.negative_grace_s
@@ -182,11 +183,14 @@ class ContinuousHandPresenceGate:
 
         self.consecutive_negative_results = 0
         self.first_negative_monotonic = None
-        if (self.valid and self.confirmed_detection is not None and
-                detection.get("is_right") != self.confirmed_detection.get("is_right")):
+        if (detection.get("track_discontinuity", False) or
+                (self.valid and self.confirmed_detection is not None and
+                 detection.get("is_right") != self.confirmed_detection.get("is_right"))):
             # A newly selected opposite hand must invalidate the old confirmed
             # crop. Otherwise valid stays true across the switch, HaMeR never
             # sees a new presence interval and keeps the old reflection mode.
+            # Reacquisition after a spatial/time discontinuity must also clear
+            # the old orientation filter; C itself remains unchanged.
             self._confirmation.reset()
             self.confirmed_detection = None
             self._set_valid(False)

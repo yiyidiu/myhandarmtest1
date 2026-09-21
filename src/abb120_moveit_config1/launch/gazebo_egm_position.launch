@@ -39,7 +39,7 @@
          value="$(eval arg('hand_stability_profile') != 'physical_grasp')" />
   </include>
   <!-- Preserve the standard hand FollowJointTrajectory API while one
-       finite-compliance plugin owns all eight Gazebo hand joints. -->
+       self-locking drive/passive-coupling plugin owns all eight Gazebo hand joints. -->
   <node if="$(eval arg('hand_stability_profile') == 'physical_grasp')"
         name="physical_hand_trajectory_action_server"
         pkg="handarm_sim_demo"

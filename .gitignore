@@ -52,6 +52,7 @@ __pycache__/
 /teleop_machine.env
 /teleop_machine.env.previous
 /.venvs/
+/third_party/wildhands_demo/
 
 # Accidental download residue seen in the original workspace
 /]+.deb[^'<> ]*

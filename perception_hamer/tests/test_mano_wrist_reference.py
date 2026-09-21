@@ -102,12 +102,13 @@ class ManoWristReferenceTest(unittest.TestCase):
         weights = np.asarray(estimate.quality["vertex_weights"])
         self.assertLess(weights[3], np.median(weights))
 
-    def test_live_finger_joint_changes_cannot_turn_wrist_ring_axes(self):
+    def test_unchanged_wrist_vertices_do_not_read_live_joint_arrays(self):
         vertices, joints, faces = _synthetic_mano_geometry()
         definition = build_mano_wrist_definition(vertices, joints, faces, True)
         first = estimate_mano_wrist_frame(vertices, definition)
-        # No live joints are accepted by estimate_mano_wrist_frame; changing
-        # finger articulation therefore cannot rotate its control frame.
+        # This only checks the estimator's input dependency. Actual changes
+        # in MANO hand_pose can deform wrist vertices upstream; holding the
+        # vertices fixed here does not prove articulation invariance.
         changed_joints = joints.copy()
         changed_joints[[5, 9, 17]] += [[0.2, 0.1, -0.1]] * 3
         second = estimate_mano_wrist_frame(vertices.copy(), definition)

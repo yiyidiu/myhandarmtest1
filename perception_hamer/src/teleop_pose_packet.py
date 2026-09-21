@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Convert existing HaMeR output plus aligned D455 depth to teleop pose packets."""
 
+from functools import lru_cache
 from typing import Any, Mapping, Sequence, Tuple
 
 import cv2
@@ -15,6 +16,7 @@ from .realtime_hamer_pipeline import (
     project_hamer_vertices_to_original,
 )
 from .rgbd_rigid_tracker import deproject_pixels
+from .mano_wrist_reference import find_boundary_edges, ordered_largest_boundary_loop
 
 
 class CameraViewBiasCorrection:
@@ -504,6 +506,228 @@ def metric_wrist_ring_from_arrays(
     return center_m, confidence, diagnostics, ring_pixels
 
 
+@lru_cache(maxsize=2)
+def _open_wrist_loop(face_bytes: bytes) -> np.ndarray:
+    faces = np.frombuffer(face_bytes, dtype=np.int64).reshape(-1, 3)
+    boundary = find_boundary_edges(faces)
+    if not len(boundary):
+        return np.empty(0, dtype=np.int64)
+    loop = ordered_largest_boundary_loop(boundary)
+    if len(loop) != 16:
+        raise ValueError("WRIST0_UNEXPECTED_OPEN_MODEL_BOUNDARY")
+    return loop
+
+
+def _wrist_depth_surface(vertices, joints, faces):
+    """Continue the open MANO skin locally; never move the joint-0 origin.
+
+    The real forearm continues past MANO's cut wrist. Without that surface,
+    rays on one side of the 5x5 patch hit the back wall THROUGH the opening.
+    Adding its offset to real front-skin depth produced two joint estimates
+    6--9 cm apart even on a flat measured patch. A short open cuff supplies
+    front skin correspondence at that cut. It is only a local depth-offset
+    approximation, not an observed forearm or an orientation measurement.
+    """
+    if len(vertices) != 778 or len(joints) < 18:
+        return vertices, faces, False
+    loop = _open_wrist_loop(np.asarray(faces, dtype=np.int64).tobytes())
+    if not len(loop):
+        return vertices, faces, False
+    ring = vertices[loop]
+    axis = joints[[5, 9, 13, 17]].mean(axis=0) - ring.mean(axis=0)
+    length = float(np.linalg.norm(axis))
+    if length < 1e-6:
+        raise ValueError("WRIST0_DEGENERATE_WRIST_SURFACE")
+    extended = ring - 0.03 * axis / length
+    n = len(vertices)
+    i = np.arange(len(loop))
+    j = (i + 1) % len(loop)
+    extra_faces = np.vstack((np.column_stack((loop[i], loop[j], n+j)),
+                             np.column_stack((loop[i], n+j, n+i))))
+    return np.vstack((vertices, extended)), np.vstack((faces, extra_faces)), True
+
+
+def metric_palm_skin_from_arrays(palm_pixels, origin_pixel, aligned_depth_raw,
+                                depth_scale_m_per_unit, color_intrinsics):
+    """Same-frame visible palm skin Z, without any model depth/offset/hold.
+
+    Both pose methods sample the identical 7x7 palm-centre patch inside the
+    projected palm hull, eroded by one pixel to reduce silhouette mixing.
+    Their native origin rays remain distinct. The returned control point is
+    a skin-depth proxy on that ray, not a measured internal anatomical joint.
+    """
+    points = np.asarray(palm_pixels, dtype=float)
+    origin = np.asarray(origin_pixel, dtype=float)
+    depth = np.asarray(aligned_depth_raw)
+    scale = float(depth_scale_m_per_unit)
+    if (points.shape != (5, 2) or origin.shape != (2,) or
+            not np.all(np.isfinite(points)) or not np.all(np.isfinite(origin)) or
+            depth.ndim != 2 or not np.issubdtype(depth.dtype, np.integer) or
+            not np.isfinite(scale) or scale <= 0):
+        raise ValueError("PALM_SKIN_INVALID_INPUT")
+    h, w = depth.shape
+    center = 0.5 * (points[0] + points[1:].mean(axis=0))
+    if not (0 <= origin[0] < w and 0 <= origin[1] < h and
+            0 <= center[0] < w and 0 <= center[1] < h):
+        raise ValueError("PALM_SKIN_PIXEL_OUTSIDE_IMAGE")
+    x, y = np.rint(center).astype(int)
+    x0, x1 = max(0, x-3), min(w, x+4)
+    y0, y1 = max(0, y-3), min(h, y+4)
+    # Rasterize locally; no full-resolution mesh or segmentation pass.
+    mask = np.zeros((y1-y0+2, x1-x0+2), np.uint8)
+    hull = cv2.convexHull(np.rint(points-[x0-1, y0-1]).astype(np.int32))
+    cv2.fillConvexPoly(mask, hull, 1)
+    mask = cv2.erode(mask, np.ones((3,3),np.uint8))[1:-1,1:-1].astype(bool)
+    values = depth[y0:y1, x0:x1][mask].astype(float) * scale
+    good = values[(values > .12) & (values < 3.0)]
+    if len(good) < 6:
+        raise ValueError("PALM_SKIN_INSUFFICIENT_MEASURED_DEPTH")
+    median = float(np.median(good))
+    mad = float(np.median(np.abs(good-median)))
+    inliers = good[np.abs(good-median) <= max(.006, 3*mad)]
+    if (len(inliers) < max(6, int(np.ceil(2*len(good)/3))) or
+            np.percentile(inliers,90)-np.percentile(inliers,10) > .025):
+        raise ValueError("PALM_SKIN_DEPTH_DISCONTINUITY")
+    z = float(np.median(inliers))
+    point = deproject_pixels(origin.reshape(1,2), np.asarray([z]), dict(color_intrinsics))[0]
+    confidence = float(np.sqrt(len(inliers)/49)*np.exp(-.5*(mad/.010)**2))
+    return point, confidence, dict(method="direct_palm_skin_depth", depth_m=z,
+        measured_surface_depth_m=z, center_pixel=center.tolist(), origin_pixel=origin.tolist(),
+        patch_radius_px=3, sample_count=len(inliers), total_sample_count=int(mask.sum()),
+        depth_mad_m=mad, depth_consensus_fraction=len(inliers)/len(good),
+        model_depth_offset_m=0.0, depth_reference_hold_used=False,
+        position_semantics="NATIVE_ORIGIN_RAY_AT_VISIBLE_PALM_SKIN_DEPTH_NOT_ANATOMICAL_BONE")
+
+
+def metric_wrist_zero_from_arrays(
+    canonical_vertices: Any,
+    canonical_joints: Any,
+    normalized_keypoints: Any,
+    mano_faces: Any,
+    camera_translation: Any,
+    focal_length: Any,
+    affine_original_to_crop: Any,
+    aligned_depth_raw: Any,
+    depth_scale_m_per_unit: float,
+    color_intrinsics: Mapping[str, Any],
+    crop_image_size: int = 256,
+    patch_radius: int = 2,
+) -> Tuple[np.ndarray, float, dict]:
+    """Estimate joint 0 from local measured depth plus a model surface offset.
+
+    The 5x5 color-grid neighborhood is centered on joint 0, never on a ring
+    or MCP. At each pixel use the frontmost projected MANO triangle, with
+    perspective-correct interpolation, to obtain Z_joint0 - Z_surface.
+    Add that offset to the SAME pixel's aligned real depth, robustly combine
+    the joint-depth estimates, then deproject on the joint-0 camera ray.
+    The crop camera only establishes correspondence; its absolute Z is not
+    a metric position source. Missing/ambiguous support fails without a
+    previous-depth, other-joint, wrist-ring, or monocular-depth fallback.
+    """
+    vertices = np.asarray(canonical_vertices, dtype=np.float64)
+    joints = np.asarray(canonical_joints, dtype=np.float64)
+    faces = np.asarray(mano_faces)
+    depth = np.asarray(aligned_depth_raw)
+    scale = float(depth_scale_m_per_unit)
+    radius = int(patch_radius)
+    if (vertices.ndim != 2 or vertices.shape[1] != 3 or
+            joints.ndim != 2 or joints.shape[1] != 3 or len(joints) < 1 or
+            not np.all(np.isfinite(vertices)) or not np.all(np.isfinite(joints)) or
+            faces.ndim != 2 or faces.shape[1] != 3 or len(faces) == 0 or
+            not np.issubdtype(faces.dtype, np.integer) or
+            np.any(faces < 0) or np.any(faces >= len(vertices))):
+        raise ValueError("WRIST0_INVALID_MODEL_GEOMETRY")
+    if (depth.ndim != 2 or not np.issubdtype(depth.dtype, np.integer) or
+            not np.isfinite(scale) or scale <= 0.0 or radius < 1):
+        raise ValueError("WRIST0_INVALID_DEPTH_IMAGE")
+    pixels = normalized_crop_points_to_original(
+        normalized_keypoints, affine_original_to_crop, crop_image_size)
+    if len(pixels) < 1:
+        raise ValueError("WRIST0_MISSING_PIXEL")
+    center = pixels[0].astype(np.float64)
+    height, width = depth.shape
+    if not (0 <= center[0] < width and 0 <= center[1] < height):
+        raise ValueError("WRIST0_PIXEL_OUTSIDE_DEPTH")
+    x, y = np.rint(center).astype(int)
+    yy, xx = np.mgrid[max(0, y-radius):min(height, y+radius+1),
+                       max(0, x-radius):min(width, x+radius+1)]
+    query = np.column_stack((xx.ravel(), yy.ravel()))
+    measured = depth[yy, xx].ravel().astype(float) * scale
+    vertices, faces, wrist_surface_extended = _wrist_depth_surface(vertices, joints, faces)
+    projected, camera_z = project_hamer_vertices_to_original(
+        vertices, camera_translation, focal_length,
+        affine_original_to_crop, crop_image_size)
+    triangles = projected[faces].astype(np.float64)
+    overlaps = ((triangles.max(axis=1) >= query.min(axis=0)).all(axis=1) &
+                (triangles.min(axis=1) <= query.max(axis=0)).all(axis=1))
+    triangles, faces = triangles[overlaps], faces[overlaps]
+    if not len(faces):
+        raise ValueError("WRIST0_NO_LOCAL_MODEL_SURFACE")
+    edge1, edge2 = triangles[:, 1]-triangles[:, 0], triangles[:, 2]-triangles[:, 0]
+    determinant = edge1[:, 0]*edge2[:, 1] - edge1[:, 1]*edge2[:, 0]
+    nondegenerate = np.abs(determinant) > 1e-8
+    determinant = np.where(nondegenerate, determinant, 1.0)
+    delta = query[None, :, :] - triangles[:, None, 0, :]
+    b = (delta[:, :, 0]*edge2[:, None, 1] - delta[:, :, 1]*edge2[:, None, 0]) / determinant[:, None]
+    c = (edge1[:, None, 0]*delta[:, :, 1] - edge1[:, None, 1]*delta[:, :, 0]) / determinant[:, None]
+    inside = nondegenerate[:, None] & (b >= -1e-7) & (c >= -1e-7) & (b+c <= 1+1e-7)
+    weights = np.stack((1-b-c, b, c), axis=2)
+    camera_z = vertices[:, 2] + float(np.asarray(camera_translation)[2])
+    inverse_z = (weights / camera_z[faces][:, None, :]).sum(axis=2)
+    surface_camera_z = np.divide(1.0, inverse_z,
+        out=np.full_like(inverse_z, np.inf), where=inside & (inverse_z > 0))
+    # A rear triangle must never supply the offset for a visible front skin pixel.
+    surface_camera_z = surface_camera_z.min(axis=0)
+    model_offsets = (joints[0, 2] + float(np.asarray(camera_translation)[2])
+                     - surface_camera_z)
+    supported = np.isfinite(model_offsets) & (measured > 0.12) & (measured < 3.0)
+    if int(supported.sum()) < 6:
+        raise ValueError("WRIST0_INSUFFICIENT_LOCAL_RGBD_SUPPORT")
+    estimates = measured[supported] + model_offsets[supported]
+    median = float(np.median(estimates))
+    mad = float(np.median(np.abs(estimates-median)))
+    inliers = np.abs(estimates-median) <= max(0.006, 3.0*mad)
+    if int(inliers.sum()) < 6:
+        raise ValueError("WRIST0_INSUFFICIENT_LOCAL_RGBD_INLIERS")
+    # Edge-on wrists often contain a few depth-edge outliers: the recorded
+    # 5x5 patches had 18--22 consistent points and 3--7 points ~6 cm away.
+    # Rejecting the whole patch BEFORE robust selection disabled valid RGB-D
+    # poses. Require a two-thirds majority, then apply the same spread bound to
+    # that consensus. Balanced/ambiguous surfaces still fail; no old depth,
+    # monocular estimate or nearest-surface guess substitutes for measurement.
+    if (int(inliers.sum()) < int(np.ceil(2.0 * len(estimates) / 3.0)) or
+            np.percentile(estimates[inliers], 90) -
+            np.percentile(estimates[inliers], 10) > 0.025):
+        raise ValueError("WRIST0_LOCAL_DEPTH_DISCONTINUITY")
+    measured_inliers = measured[supported][inliers]
+    offsets_inliers = model_offsets[supported][inliers]
+    joint_z = float(np.median(estimates[inliers]))
+    if not np.isfinite(joint_z) or not 0.12 < joint_z < 3.0:
+        raise ValueError("WRIST0_INVALID_ESTIMATED_DEPTH")
+    point = deproject_pixels(center.reshape(1, 2), np.asarray([joint_z]), dict(color_intrinsics))[0]
+    confidence = float(np.sqrt(inliers.sum()/len(query)) * np.exp(-0.5*(mad/0.010)**2))
+    diagnostics = {
+        "reference": "MANO_WRIST_JOINT_0",
+        "control_origin": "MANO_WRIST_JOINT_0",
+        "method": "joint0_local_rgbd_model_surface_offset",
+        "aggregation": "median_of_per_pixel_corrected_joint_depths",
+        "center_pixel": center.tolist(), "patch_radius_px": radius,
+        "depth_m": joint_z,
+        "measured_surface_depth_m": float(np.median(measured_inliers)),
+        "model_surface_to_joint0_offset_m": float(np.median(offsets_inliers)),
+        "model_offset_range_m": [float(offsets_inliers.min()), float(offsets_inliers.max())],
+        "depth_mad_m": mad, "sample_count": int(inliers.sum()),
+        "depth_consensus_fraction": float(inliers.sum()/len(estimates)),
+        "depth_outlier_count": int(len(estimates)-inliers.sum()),
+        "total_sample_count": int(len(query)),
+        "model_surface_pixel_count": int(np.isfinite(surface_camera_z).sum()),
+        "open_wrist_surface_extended": wrist_surface_extended,
+        "depth_reference_hold_used": False,
+        "position_semantics": "MODEL_JOINT0_ESTIMATE_FROM_MEASURED_SURFACE_NOT_MEASURED_BONE",
+    }
+    return point, confidence, diagnostics
+
+
 def metric_wrist_from_arrays(
     normalized_wrist_points: Any,
     affine_original_to_crop: Any,
@@ -614,6 +838,8 @@ def build_live_teleop_packet(
     required_reference_kind: str = None,
     palm_anchor_pixels: Any = None,
     depth_filter: Any = None,
+    wrist_depth_mode: str = "visible-surface",
+    mano_faces: Any = None,
 ) -> dict:
     """Build one fail-closed pose packet from the configured control frame."""
 
@@ -639,7 +865,35 @@ def build_live_teleop_packet(
     if required_reference_kind and reference_kind != required_reference_kind:
         raise ValueError("control reference kind differs from configured reference")
     position_diagnostics = None
-    if reference_kind in ("MANO_WRIST_RING_16", "MANO_FIVE_POINT_PALM_USER_XYZ"):
+    if wrist_depth_mode == "palm-skin":
+        pixels = normalized_crop_points_to_original(result.pred_keypoints_2d_crop_normalized,
+            result.quality["affine_original_to_crop"], 256)
+        origin = pixels[0]
+        if reference_kind == "MANO_WRIST_RING_16":
+            loop = control["quality"]["wrist_loop_vertex_indices"]
+            origin = project_hamer_vertices_to_original(
+                np.asarray(result.pred_vertices_mano_right_canonical)[loop].mean(axis=0)[None],
+                result.hamer_crop_projection_translation, result.hamer_nominal_crop_focal_length,
+                result.quality["affine_original_to_crop"], 256)[0][0]
+        wrist, depth_confidence, position_diagnostics = metric_palm_skin_from_arrays(
+            pixels[[0,5,9,13,17]], origin, frame.aligned_depth_raw,
+            frame.depth_scale_m_per_unit, frame.color_intrinsics)
+        position_diagnostics["control_origin"] = reference_kind
+        position_source = "DIRECT_CAMERA_PALM_SKIN_DEPTH_NO_MODEL_OFFSET"
+    elif wrist_depth_mode == "joint0-surface":
+        if reference_kind != "MANO_FIVE_POINT_PALM_USER_XYZ":
+            raise ValueError("joint0-surface requires the five-point palm reference")
+        wrist, depth_confidence, position_diagnostics = metric_wrist_zero_from_arrays(
+            result.pred_vertices_mano_right_canonical,
+            result.pred_keypoints_3d_mano_right_canonical,
+            result.pred_keypoints_2d_crop_normalized, mano_faces,
+            result.hamer_crop_projection_translation,
+            result.hamer_nominal_crop_focal_length,
+            result.quality["affine_original_to_crop"], frame.aligned_depth_raw,
+            frame.depth_scale_m_per_unit, frame.color_intrinsics,
+        )
+        position_source = "HAMER_WRIST_0_LOCAL_RGBD_WITH_MODEL_SURFACE_OFFSET"
+    elif reference_kind in ("MANO_WRIST_RING_16", "MANO_FIVE_POINT_PALM_USER_XYZ"):
         loop = control.get("quality", {}).get("wrist_loop_vertex_indices")
         wrist_offset = np.zeros(3)
         if reference_kind == "MANO_FIVE_POINT_PALM_USER_XYZ":
@@ -852,4 +1106,5 @@ __all__ = [
     "foreground_depth_component",
     "metric_wrist_from_arrays",
     "metric_wrist_ring_from_arrays",
+    "metric_wrist_zero_from_arrays",
 ]

@@ -21,6 +21,7 @@ class TeleopControlGate:
     def __init__(
         self, retain_reference_until_operator_action: bool = False,
         startup_rotation_noise_deg: float = 0.0,
+        confirmation_delay_s: float = 0.0,
     ) -> None:
         self._lock = threading.RLock()
         self._retain_reference_until_operator_action = bool(
@@ -32,6 +33,9 @@ class TeleopControlGate:
         self._lock_reason = "WAITING_FOR_OPERATOR_C_REFERENCE"
         self._confirmation_request = None
         self._confirmation_samples = []
+        self._confirmation_delay_s = float(confirmation_delay_s)
+        if not np.isfinite(self._confirmation_delay_s) or self._confirmation_delay_s < 0.0:
+            raise ValueError("confirmation delay must be finite and non-negative")
         self._reference_pose = None
         self._startup_rotation_noise_deg = float(startup_rotation_noise_deg)
         if not np.isfinite(self._startup_rotation_noise_deg) or not 0.0 <= self._startup_rotation_noise_deg < 5.0:
@@ -44,6 +48,15 @@ class TeleopControlGate:
     def confirmation_pending(self) -> bool:
         with self._lock:
             return self._confirmation_request is not None
+
+    def confirmation_countdown_s(self, now=None):
+        """Return time left to settle, zero while sampling, or None if idle."""
+        with self._lock:
+            if self._confirmation_request is None:
+                return None
+            began, _ = self._confirmation_request
+            current = time.monotonic() if now is None else float(now)
+            return max(0.0, began + self._confirmation_delay_s - current)
 
     @property
     def reference_pose(self):
@@ -60,10 +73,13 @@ class TeleopControlGate:
             )
             self._confirmation_samples = []
 
-    def confirm_packet(self, packet: Mapping[str, Any], calibrate_display, now=None):
+    def confirm_packet(self, packet: Mapping[str, Any], calibrate_display, now=None,
+                       source_monotonic_s=None):
         """Bind display and outgoing first enabled packet to the SAME frame.
 
-        Four quiet observations reject a one-frame depth outlier as C-zero.
+        After the operator settling delay, four quiet observations reject a
+        one-frame depth outlier as C-zero. Source acquisition must also start
+        after the delay; a queued pre-delay frame cannot become the new zero.
         This runs in the inference thread immediately after updating the
         display pose, before decorating/sending this very packet.
         """
@@ -71,10 +87,20 @@ class TeleopControlGate:
             if self._confirmation_request is None:
                 return None
             began, after_sequence = self._confirmation_request
-            if (time.monotonic() if now is None else float(now)) - began > 2.0:
+            current = time.monotonic() if now is None else float(now)
+            capture_after = began + self._confirmation_delay_s
+            # Preserve the existing two-second valid/stable-pose search
+            # window, but start it AFTER the operator's settling countdown.
+            if current - capture_after > 2.0:
                 self._confirmation_request = None
                 self._confirmation_samples = []
                 self._lock_reason = "C_REFERENCE_NOT_STABLE_RETRY"
+                return None
+            if current < capture_after or (self._confirmation_delay_s > 0.0 and (
+                    source_monotonic_s is None or
+                    not np.isfinite(float(source_monotonic_s)) or
+                    float(source_monotonic_s) < capture_after)):
+                self._confirmation_samples = []
                 return None
             position = np.asarray(packet.get("wrist_position_m", []), dtype=float)
             rotation = np.asarray(packet.get("palm_rotation_row_major", []), dtype=float)

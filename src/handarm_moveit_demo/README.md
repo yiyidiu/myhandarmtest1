@@ -309,7 +309,7 @@ rosservice call /shared_teleop/reset_emergency_stop
 
 权威配置是 `config/shared_teleop.yaml`：
 
-- D455：`camera_color_optical_frame`，x右/y下/z前；机器人基座：`base_link`；法兰：`flange`；现有手掌基座：`handbase_link`；Servo/临时抓取中心：`tool0`。
+- D455：`camera_color_optical_frame`，x右/y下/z前；机器人基座：`base_link`；法兰：`flange`；现有手掌安装基座：`handbase_link`；掌面控制点及临时抓取中心：`tool0`。
 - 平移点为 MANO 开放手腕口 16 个边界顶点中心的 RealSense 公制位置；旋转主体由同一手腕环稳健拟合得到。默认允许 D435i/D455 深度前臂纵轴以最高 20% 权重异步校正纵向轴，MANO 仍提供完整姿态与横滚；加 `--disable-forearm-fusion` 才是纯 MANO 模式。
 - `reference.frame=camera_color_optical_frame`、`direction_basis=FIXED_CAMERA_TRANSLATION_AND_C_ZERO_LOCAL_ROTATION`、`allow_automatic_rezero=false`；平移使用固定相机轴，姿态使用 C 零位局部轴。
 - 本系统把相机中人手相对零位的位移/旋转映射成机器人相对初始 `tool0` 的目标位姿，不把相机绝对坐标直接当机器人绝对坐标。因此不要求 `camera_color_optical_frame -> base_link` 的完整外参；`mapping.translation_matrix`、`mapping.rotation_matrix` 和两个 gain 数组定义轴对应、正负号与位姿比例。
@@ -317,7 +317,7 @@ rosservice call /shared_teleop/reset_emergency_stop
 - 当 C 零位局部 X 旋转超过 30°并成为主分量时，侧抓投影会在 30°--55°范围内平滑消除 MANO 附带的 Y/Z 耦合，但 X 角度始终保持 1:1；正负输入严格使用同一奇对称关系。IRB120 第 6 轴模型已按官方工作范围改为 ±400°，不再用错误的 ±180°提前触发关节边界。
 - 真人 Gazebo profile 为实时优先且静止自适应稳态：ROI 直接更新，感知和 ROS 位姿滤波在静止噪声带使用低增益、明确运动时接近直接更新；速度前馈只在静止噪声带归零，绝对位姿反馈始终保留。死区为 0，普通人手范围内的软件速度整形为 1 m/s、10 rad/s、50 m/s²、500 rad/s²；目标几何仍是 1:1，不是 3 倍增益。该 profile 关闭碰撞距离缩放，只允许仿真。
 - 轴映射/符号、平移与旋转增益、速度/加速度、小运动死区、跳变阈值、超时、工作空间、俯/侧抓方向范围均在 YAML 中。
-- 法兰到手掌来自当前 URDF；法兰到临时抓取中心沿用当前 `tool0` 的 `[0.17,0,0] + Ry(90°)`。二者均未实测，不能作为真实标定。
+- 2026-09-21 按用户要求，将 `tool0` 设为掌面中心的轴向近似：相对法兰 `[0.1658,0,0] + Ry(90°)`，坐标轴方向保持原样。`handbase_link` 仍是与法兰共点的安装坐标系。该偏移来自 CAD，未做实物标定；精确掌面面积中心还有不足 1 mm 的横向差异。本次没有修改初始关节角，重新启动并按 C 后使用新控制点。
 - `servo_control_to_grasp_center` 当前为单位变换，因为临时把 `tool0` 当抓取中心。填入实测值后，姿态辅助会求保持抓取中心不动的控制点位姿。
 
 实体 ABB 输出同时要求：`simulation:=false`、`enable_robot:=true`、实测标定确认和精确授权字符串。默认 YAML 将标定状态设为 false，本阶段没有提供实体启动命令。

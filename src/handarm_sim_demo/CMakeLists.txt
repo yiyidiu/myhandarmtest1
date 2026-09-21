@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.0.2)
 project(handarm_sim_demo)
 
+# Keep real-time physics plugins optimized when building without an explicit
+# configuration; an explicitly requested Debug build remains available.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 find_package(catkin REQUIRED COMPONENTS
   actionlib
   control_msgs
@@ -32,6 +38,11 @@ link_directories(${GAZEBO_LIBRARY_DIRS})
 add_library(handarm_deterministic_attach_plugin
   src/deterministic_attach_world_plugin.cpp)
 target_link_libraries(handarm_deterministic_attach_plugin
+  ${catkin_LIBRARIES} ${GAZEBO_LIBRARIES})
+
+add_library(handarm_pouring_visualization_plugin
+  src/pouring_visualization_plugin.cpp)
+target_link_libraries(handarm_pouring_visualization_plugin
   ${catkin_LIBRARIES} ${GAZEBO_LIBRARIES})
 
 add_library(handarm_stable_hand_spring_plugin
@@ -79,6 +90,7 @@ install(DIRECTORY config launch worlds meshes
 )
 
 install(TARGETS handarm_deterministic_attach_plugin
+                handarm_pouring_visualization_plugin
                 handarm_stable_hand_spring_plugin
                 handarm_bounded_position_hw_sim
                 handarm_gui_render_rate_limiter_plugin

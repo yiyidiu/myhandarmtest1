@@ -568,10 +568,10 @@
         <parent link="link_6" />
         <child link="flange" />
     </joint>
-    <!-- ROS-Industrial 'tool0' frame: all-zeros tool frame -->
+    <!-- Palm-surface control point: user-selected 165.8 mm axial offset. -->
     <link name="tool0" />
     <joint name="link_6-tool0" type="fixed">
-        <origin rpy="0 1.5707963267948966 0" xyz="0.17 0 0" />
+        <origin rpy="0 1.5707963267948966 0" xyz="0.1658 0 0" />
         <parent link="flange" />
         <child link="tool0" />
     </joint>

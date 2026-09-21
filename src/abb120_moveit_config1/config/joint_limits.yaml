@@ -65,25 +65,29 @@
 default_velocity_scaling_factor: 0.1
 default_acceleration_scaling_factor: 0.1
 
+# Hand drives use the same 0.8 rad/s bound as the URDF/physical plant.
+# A former 4 rad/s override made the 80 ms collision prediction traverse
+# five times the actual finger travel and interrupted arm command renewal.
+
 joint_limits:
   f1j1:
     has_velocity_limits: true
-    max_velocity: 4.0
+    max_velocity: 0.8
     has_acceleration_limits: true
     max_acceleration: 4.0
   f1j2:
     has_velocity_limits: true
-    max_velocity: 4.0
+    max_velocity: 0.8
     has_acceleration_limits: true
     max_acceleration: 4.0
   f2j1:
     has_velocity_limits: true
-    max_velocity: 4.0
+    max_velocity: 0.8
     has_acceleration_limits: true
     max_acceleration: 4.0
   f3j2:
     has_velocity_limits: true
-    max_velocity: 4.0
+    max_velocity: 0.8
     has_acceleration_limits: true
     max_acceleration: 4.0
   joint_1:

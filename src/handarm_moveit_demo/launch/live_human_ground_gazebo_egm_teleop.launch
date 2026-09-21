@@ -64,6 +64,8 @@
          value="[0.0, 0.0, 0.0, 0.0, 1.5707963267948966, 0.0]" />
     <arg name="legacy_moveit_servo_reference"
          value="$(arg legacy_moveit_servo_reference)" />
+    <arg name="run_servo_server"
+         value="$(eval not (arg('constrained_velocity_projection') and arg('joint_velocity_solver') == 'qp'))" />
     <arg name="stable_position_reference_profile"
          value="$(arg stable_position_reference_profile)" />
     <arg name="hand_stability_profile"
@@ -102,7 +104,9 @@
 
   <node if="$(arg grasp_alignment_views)" name="grasp_alignment_views"
         pkg="handarm_sim_demo" type="grasp_alignment_views.py" output="screen">
-    <param name="rate_hz" value="8.0" />
+    <param name="rate_hz" value="5.0" />
+    <!-- Used only to restore props on the observer's T key, never by control. -->
+    <param name="object_home_world" value="$(arg world_name)" />
     <env name="GDK_SCALE" value="1" />
     <env name="GDK_DPI_SCALE" value="1" />
   </node>

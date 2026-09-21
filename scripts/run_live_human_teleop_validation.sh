@@ -7,6 +7,7 @@ cd "$workspace"
 if [[ -f "$workspace/teleop_machine.env" ]]; then
   source "$workspace/teleop_machine.env"
 fi
+source "$script_directory/teleop_cpu_profile.sh"
 export PYTHONPATH="$workspace/third_party/hamer_runtime${PYTHONPATH:+:$PYTHONPATH}"
 
 # ROS Noetic setup hooks read optional variables before defining them.
@@ -32,10 +33,14 @@ case "$control_reference" in
   *) echo "Unsupported TELEOP_CONTROL_REFERENCE" >&2; exit 2 ;;
 esac
 case "$mapping_profile" in
-  current_linear|palm_axes_tool_zero|palm_axes_base_translation) ;;
+  current_linear|palm_axes_tool_zero|palm_axes_base_translation|whole_wrist_pose) ;;
   *) echo "Unsupported TELEOP_MAPPING_PROFILE" >&2; exit 2 ;;
 esac
-if [[ "$mapping_profile" == palm_axes_* || "$control_reference" == mano-five-point-palm ]]; then
+if [[ "$mapping_profile" == whole_wrist_pose ]]; then
+  if [[ "$hand_backend" != hamer || ( "$control_reference" != mano-five-point-palm && "$control_reference" != mano-wrist-ring ) ]]; then
+    echo '整体腕姿映射需要 HaMeR 掌骨或腕口输入。' >&2; exit 2
+  fi
+elif [[ "$mapping_profile" == palm_axes_* || "$control_reference" == mano-five-point-palm ]]; then
   if [[ "$hand_backend" != hamer || "$control_reference" != mano-five-point-palm || "$mapping_profile" == current_linear ]]; then
     echo "新版五点坐标必须与对应的平移/旋转映射配套，请运行 run_five_point_axes_teleop.sh。" >&2
     exit 2
@@ -67,10 +72,13 @@ asset_root="${TELEOP_HAMER_ASSET_ROOT:-$workspace/perception_hamer/_DATA}"
 checkpoint="$asset_root/hamer_ckpts/checkpoints/hamer.ckpt"
 empty_motion_scene="${TELEOP_EMPTY_SCENE:-false}"
 case "$empty_motion_scene" in true|false) ;; *) echo "TELEOP_EMPTY_SCENE must be true or false" >&2; exit 2 ;; esac
+ground_object_world="${TELEOP_GRASP_WORLD:-$workspace/src/handarm_sim_demo/worlds/handarm_ground_grasp.world}"
 diagnostic_arguments=()
 if [[ "${TELEOP_WRIST_DIAGNOSTICS:-false}" == true ]]; then
   diagnostic_arguments=(--show-wrist-axes --experiment DEV_HAMER_6DOF_OBSERVATION
     --experiment-jsonl-only --output-root "${TELEOP_WRIST_DIAGNOSTICS_DIRECTORY:?recording directory required}")
+elif [[ "${TELEOP_SINGLE_CAMERA_PREVIEW:-false}" == true ]]; then
+  diagnostic_arguments=(--show-wrist-axes)
 fi
 runtime_directory="$workspace/.runtime/live_human_validation_$(date +%Y%m%dT%H%M%S)"
 mkdir -p "$runtime_directory"
@@ -80,6 +88,9 @@ if [[ "$hand_backend" == hamer ]]; then
   required_files=("${hamer_command[0]}" "$mediapipe_python" "$checkpoint"
     "$asset_root/hamer_ckpts/model_config.yaml" "$asset_root/data/mano_mean_params.npz"
     "$asset_root/data/mano/MANO_RIGHT.pkl")
+fi
+if [[ "$empty_motion_scene" == false ]]; then
+  required_files+=("$ground_object_world")
 fi
 for required in "${required_files[@]}"; do
   if [[ ! -e "$required" ]]; then
@@ -127,17 +138,15 @@ else
   echo "本次使用本轮修改前的运动控制；物体使用当前布局。"
 fi
 simulation_affinity_arguments=()
-if command -v taskset >/dev/null 2>&1 && (( $(nproc) >= 12 )); then
-  # On this 12-thread host, keep one physical core for collision checking
-  # and reference generation. Rendering/capture/recording must not take its
-  # short command-renewal budget; HaMeR retains its existing cores 8-11.
-  simulation_affinity_arguments=(taskset -c 2-7)
-  export TELEOP_CONTROL_LAUNCH_PREFIX="${TELEOP_CONTROL_LAUNCH_PREFIX:-taskset -c 0-1}"
+if [[ -n "$teleop_ros_cpus" ]]; then
+  simulation_affinity_arguments=(taskset -c "$teleop_ros_cpus")
+  export TELEOP_CONTROL_LAUNCH_PREFIX="${TELEOP_CONTROL_LAUNCH_PREFIX:-taskset -c $teleop_control_cpus}"
 fi
 setsid "${simulation_affinity_arguments[@]}" roslaunch handarm_moveit_demo \
   live_human_ground_gazebo_egm_teleop.launch \
   gazebo_gui:=true with_ground_object:=true enable_logger:=false \
   empty_motion_scene:="$empty_motion_scene" \
+  ground_object_world:="$ground_object_world" \
   use_simulated_environment_for_control:=false \
   grasp_alignment_views:="${TELEOP_ALIGNMENT_VIEWS:-true}" \
   input_source:=udp \
@@ -174,6 +183,10 @@ if [[ "$ros_ready" != true ]]; then
   exit 4
 fi
 
+# The stock Gazebo launch cannot take a server launch-prefix. Reserve its
+# physical core after identifying its own ROS PID, before starting vision.
+teleop_pin_gazebo_physics
+
 echo "Gazebo 和控制器已就绪。控制器不读取仿真桌子、物体或地面坐标，自碰撞保护保留。"
 echo "正在打开相机窗口……"
 echo "本次运行日志：$runtime_directory"
@@ -188,13 +201,11 @@ link_monitor_pid=$!
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 camera_affinity_arguments=()
-if command -v taskset >/dev/null 2>&1 && (( $(nproc) >= 12 )); then
-  # i5-12400F: HaMeR gets the final two physical cores while the GUI and
-  # MediaPipe use the preceding two. Capture stays off the control core.
+if [[ -n "$teleop_inference_cpus" ]]; then
   camera_affinity_arguments+=(
-    --inference-cpu-affinity 8-11
-    --sidecar-cpu-affinity 4-7
-    --capture-cpu-affinity 2-3
+    --inference-cpu-affinity "$teleop_inference_cpus"
+    --sidecar-cpu-affinity "$teleop_sidecar_cpus"
+    --capture-cpu-affinity "$teleop_capture_cpus"
   )
 fi
 if [[ "$hand_backend" != hamer ]]; then

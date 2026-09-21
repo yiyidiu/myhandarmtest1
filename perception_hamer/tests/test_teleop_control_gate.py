@@ -14,6 +14,66 @@ from perception_hamer.src.hand_pose_overlay import RelativeWristPoseDisplay
 
 
 class TeleopControlGateTest(unittest.TestCase):
+    def test_delayed_c_uses_post_countdown_frame_not_keypress_or_queued_pose(self):
+        gate = TeleopControlGate(confirmation_delay_s=2.0)
+        display = RelativeWristPoseDisplay()
+        gate.request_confirmation(0, now=10.0)
+        self.assertEqual(gate.confirmation_countdown_s(now=10.0), 2.0)
+        self.assertAlmostEqual(gate.confirmation_countdown_s(now=11.5), .5)
+        packet = {"valid": True, "hand_identity_present": True,
+                  "presence_generation": 3, "active_hand_generation": 1,
+                  "hand_is_right": False, "confidence": [.8]*6,
+                  "palm_rotation_row_major": np.eye(3).reshape(-1).tolist(),
+                  "finger_observation": {"valid": True, "flexion": [.1]*5}}
+        # The operator moves after pressing C. Later, four distinct queued
+        # poses finish computing after the countdown, but were acquired before it.
+        observations = [(10.+j*.1, 10.+j*.1, [0.,0.,.85]) for j in range(1,8)]
+        observations += [(11.80+j*.04, 12.01+j*.04, [.12,0.,.92]) for j in range(4)]
+        # Only these new frames represent the user's settled initial position.
+        target = [.04,-.02,1.05]
+        observations += [(12.20+j*.06, 12.25+j*.06, target) for j in range(4)]
+        first_enabled = None
+        for seq,(source,received,position) in enumerate(observations,1):
+            packet.update(sequence=seq, stamp=source, wrist_position_m=position)
+            display.update_from_packet(packet,3)
+            gate.confirm_packet(packet,display.calibrate_from_latest,
+                                now=received,source_monotonic_s=source)
+            outgoing=gate.decorate(packet,'delayed-zero')
+            if seq < len(observations):
+                self.assertFalse(outgoing['control_enabled'])
+                self.assertFalse(outgoing['valid'])
+                self.assertFalse(display.calibrated)
+            else:
+                first_enabled=outgoing
+        self.assertTrue(first_enabled['control_enabled'])
+        self.assertEqual(first_enabled['control_reference_pose']['wrist_position_m'],target)
+        self.assertGreater(first_enabled['control_reference_pose']['stamp'],12.0)
+        self.assertEqual(display.snapshot().sequence,first_enabled['sequence'])
+        np.testing.assert_allclose(display.snapshot().delta_m,[0,0,0])
+        self.assertIsNone(gate.confirmation_countdown_s(now=13.0))
+
+    def test_delayed_c_restart_and_missing_source_never_reuse_an_older_zero(self):
+        gate=TeleopControlGate(confirmation_delay_s=2.0)
+        gate.confirm(3,1,False)
+        gate.request_confirmation(20,now=10.)
+        self.assertFalse(gate.enabled)
+        gate.request_confirmation(21,now=11.)
+        self.assertEqual(gate.confirmation_countdown_s(now=12.),1.)
+        # The stable-pose search timeout runs after, not during, settling.
+        self.assertIsNone(gate.confirm_packet({'valid':False},lambda:True,now=13.1))
+        self.assertTrue(gate.confirmation_pending)
+        packet={"sequence":22,"stamp":13.1,"valid":True,"wrist_position_m":[0,0,1],
+                "palm_rotation_row_major":np.eye(3).reshape(-1).tolist(),
+                "confidence":[1.]*6,"presence_generation":3,"active_hand_generation":1,
+                "hand_is_right":False,"finger_observation":{"valid":True,"flexion":[.1]*5}}
+        for seq in range(22,26):
+            packet['sequence']=seq
+            self.assertIsNone(gate.confirm_packet(packet,lambda:True,now=13.2))
+        self.assertFalse(gate.enabled)
+        gate.confirm_packet({'valid':False},lambda:True,now=15.01)
+        self.assertFalse(gate.confirmation_pending)
+        self.assertFalse(gate.enabled)
+
     def test_startup_noise_hold_preserves_zero_and_releases_full_five_degrees(self):
         gate = TeleopControlGate(startup_rotation_noise_deg=1.5)
         gate.request_confirmation(0, now=0)
