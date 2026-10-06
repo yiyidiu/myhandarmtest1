@@ -297,6 +297,8 @@ setsid "${recording_affinity_arguments[@]}" rosbag record --buffsize=64 -O "$ses
   /egm_position_reference/diagnostics \
   /egm_position_reference/command_state \
   /egm_position_reference/collision_checked_joint_velocity \
+  /abbarm_velocity_controller/command /direct_velocity/diagnostics \
+  /direct_velocity/execution_state /direct_velocity/plant_state \
   /full_robot_self_collision_guard/command_safe \
   /full_robot_self_collision_guard/requested_hand_command \
   /full_robot_self_collision_guard/hand_diagnostic \
