@@ -1,72 +1,63 @@
-# 整体腕姿映射与四场景固定版 · 2026-09-21
+# 视角修正与关节速度控制基线 · 2026-10-06
 
-固定标签：**`teleop-whole-wrist-scenes-20260921`**。本版保存当前实际使用的 HaMeR 腕口整体映射、机械臂控制、场景、观察窗口和录制代码。下载时请选择这个标签或同名 Release；根目录 `run.sh` 已更新为本版入口。
+固定标签：**`teleop-view-velocity-baseline-20261006`**。本版以 9 月 21 日完整工程为基础，合入后来修正过的 **原始 HaMeR＋纯视角几何处理＋16 点腕环**，并将机械臂执行接口换为 **直接关节速度控制**。作为后续论文实验的明确代码基线；完整任务效果仍须实际测量。
 
-## 当前控制配置
+## 运行
 
-- HaMeR 左手模型，以16点腕口配准得到手部姿态；掌部皮肤深度用于位置估计。
-- 以 C 零位为参考做整体旋转映射，整体转角统一放大1.3倍；偏航目标限于±88°，实际保护上限±90°。
-- 人手小指侧靠近相机对应右偏航，大拇指侧靠近对应左偏航；四指靠近对应向下俯仰，远离对应向上俯仰；转掌对应末端横滚。
-- 靠近相机对应向下平移，远离对应向上；画面上方对应向前，下方对应向后。基座 X/Y/Z 平移增益为1.6/2.0/1.2。
-- 控制点使用已调整的掌面中心偏移16.58厘米，保留当前约束速度控制、关节和自碰撞保护。
-- 控制器不读取 Gazebo 桌子或物体坐标；倒水显示对瓶口和杯口的计算只用于仿真画面及水量记录。
-- 四个场景使用同一套感知与运动控制。切换场景不会切换手模型、坐标系或映射比例。
+本机已准备好的保存目录：
+
+```bash
+bash /home/dongtian/myhandarmtest1-view-velocity-baseline-20261006/run.sh
+```
+
+默认倒水场景，**不录屏、不保存 RGB-D、不读取 IMU**。使用左手，在相机窗口按 **C**，静止等待两秒倒计时及标定完成，然后开始控制 Gazebo。按 **Q** 退出。窗口标题包含 `PURE VIEW CORRECTION - WRIST RING 16`；终端显示机械臂底层使用关节速度指令。
+
+在工程目录内可选场景；四个场景共用相同感知、映射与控制参数：
+
+| 场景 | 命令 |
+|---|---|
+| 倒水 | `bash run.sh` |
+| 方块堆叠 | `bash run.sh --stacking-scene` |
+| 三物体抓取 | `bash run.sh --grasp-scene` |
+| 空场景动作观察 | `bash run.sh --empty-scene` |
+
+需要保存试验时加 `--record`，例如 `bash run.sh --stacking-scene --record`。数据保存在本工程 `.runtime/` 下，启动时打印路径，不上传到 GitHub。各场景原有 `scripts/run_*_observation.sh` 入口也使用新感知和速度接口，保留其默认录制行为。控制诊断日志仍保存在本机。
+
+## 本版到底使用什么
+
+1. **图像处理**：结合真实 RGB 相机内参及手部框中心，构造同光心、朝向手中心的虚拟视角，变换图像后送入原始 HaMeR；将预测三维点恢复到真实相机坐标。没有额外学习修正权重，不使用 9 月 28 日 v1 或公开训练候选。
+2. **腕姿与位置**：使用 16 个 MANO 腕口点与中立腕环配准求朝向；C 标定后固定手形。五个掌部点仅用于掌面皮肤深度采样。RGB-D 深度用于位置；这一层纯视角腕姿修正没有利用深度拟合朝向。
+3. **映射与控制**：沿用 9 月 21 日的整体腕姿映射、滤波、关节与自碰撞约束、原 QP 求解和三指手控制。整体转角为 1.3 倍，基座 X/Y/Z 平移增益为 1.6/2.0/1.2。未合入后续 NEO 对照或受限 6D 软协调研究原型。
+4. **机械臂底层**：`velocity_controllers/JointGroupVelocityController` 接收六关节速度，250 Hz 发布；不启动外部关节位置积分器。Gazebo 内部采用速度 PI、模型重力补偿和有界驱动力，保留质量、惯量、重力与接触模型。速度指令经过原加速度过渡及失效归零处理。
+
+原 9 月 21 日链路虽然上层求解速度，底层接收的仍是积分后关节位置。本版改变的是这项执行接口。历史文件名中的 `egm_position` 不代表新入口仍使用位置控制；以实际加载的控制器、硬件接口和发布指令为准。
 
 ## 下载和恢复
 
 ```bash
-git clone --branch teleop-whole-wrist-scenes-20260921 --single-branch   https://github.com/yiyidiu/myhandarmtest1.git myhandarmtest1-whole-wrist-scenes-20260921
-cd myhandarmtest1-whole-wrist-scenes-20260921
-```
-
-GitHub 的 Source code ZIP 也可使用。源码包含程序、场景、机器人网格、倒水显示插件源码和固定依赖恢复入口；编译产物、Python环境、实验录像及授权模型不放进源码包。
-
-目标平台为 **Ubuntu 20.04 x86_64、ROS Noetic、Gazebo 11、X11、支持 CUDA 11.8 的 NVIDIA 显卡，以及 D435/D455 USB3 相机**。新电脑先准备 ROS、显卡驱动与相机权限，再恢复程序依赖：
-
-```bash
+git clone --branch teleop-view-velocity-baseline-20261006 --single-branch \
+  https://github.com/yiyidiu/myhandarmtest1.git myhandarmtest1-view-velocity-baseline-20261006
+cd myhandarmtest1-view-velocity-baseline-20261006
 bash scripts/setup_current_release.sh --mano /实际路径/MANO_RIGHT.pkl
+bash run.sh
 ```
 
-若已有完整的授权 HaMeR `_DATA` 目录，可用 `--assets-from /实际路径/_DATA` 代替 `--mano`，避免重复下载权重。已有系统依赖与两个Python环境时：
+目标环境：Ubuntu 20.04、ROS Noetic、Gazebo 11、X11、NVIDIA CUDA 11.8 兼容显卡与 RealSense RGB-D 相机。已有依赖及两个 Python 环境时：
 
 ```bash
-bash scripts/setup_current_release.sh --skip-apt   --existing-env-root "$HOME/anaconda3/envs"   --assets-from /实际路径/_DATA
+bash scripts/setup_current_release.sh --skip-apt \
+  --existing-env-root "$HOME/anaconda3/envs" \
+  --assets-from /已有授权模型路径/_DATA
 ```
 
-安装入口会生成**当前目录**的 `teleop_machine.env` 并进行 Release 编译，包括新增倒水插件；不要复制别的工程的 `build/`、`devel/` 或本机路径配置。Python环境分卷复用已发布的固定依赖，控制代码使用本标签。依赖及模型来源见 [依赖清单](reproduction/20260921/runtime_reference.json)。MANO文件须由使用者自行取得授权；不在公开仓库再分发。
+依赖和原始模型版本继续使用 [9 月 21 日依赖清单](reproduction/20260921/runtime_reference.json)。设置程序生成当前目录的 `teleop_machine.env` 并重新编译。不要复制其他版本的 `build/`、`devel/`。源码发布包含模型接口、机器人网格、仿真插件和场景；模型权重、MANO 授权资产、Python 环境、个人录像及本机路径不随新源码上传。
 
-## 四个场景的命令
+## 论文使用与证据边界
 
-在本工程目录内执行任意一条。默认均录制屏幕、RGB-D、手部逐帧数据及机械臂控制数据，**不采集IMU**。
+将本版称为“2026-10-06 纯视角修正、16 点腕环与直接关节速度执行基线”，同时记录 Git 标签及提交。9 月 21 日基线作为旧版对照保留；两项改动的各自收益需用统一条件分别评价，不能把已有单模块结果当作本组合的完整任务效果。
 
-| 场景 | 命令 | 布置 |
-|---|---|---|
-| 倒水 | `bash scripts/run_pouring_observation.sh` | 右侧台子上的开盖水瓶与空杯；杯外径8厘米、高12厘米 |
-| 方块堆叠 | `bash scripts/run_stacking_observation.sh` | 前方台子上的两个18.67×7.6×6.9厘米长方体，中心间距36厘米 |
-| 三物体抓取 | `bash scripts/run_grasp_observation.sh` | 左侧绿色圆柱、前方橙色纸盒、右侧水瓶与三个台子 |
-| 空场景动作观察 | `bash scripts/run_empty_observation.sh` | 机械臂、三指手、地面；无桌子和物体 |
+既有腕环录像对照中，纯视角修正减少部分横向平移误转，但真实转腕存在欠跟；没有证明在所有条件下更准确或响应不变。本文新增速度执行器是 Gazebo 近似，未标定实体 ABB 电机响应，也未验证实体 EGM 速度通信。
 
-`bash run.sh` 等同于倒水入口。为避免场景混用，日常使用上表四个独立命令。旧的 `run_grasp_feedback_recording.sh` 等历史入口保留供追溯，不代表本版整体腕姿预设。
+倒水场景沿用简化水流和水量显示，不模拟真实液体动力学。控制器仍不读取仿真桌子或物体坐标。
 
-需要明确开启IMU时，可以使用共同入口，例如：
-
-```bash
-TELEOP_RECORD_IMU=true bash scripts/run_hand_imu_observation.sh --empty-scene
-```
-
-## 操作与保存
-
-- 相机窗口按 **C**，用2秒倒计时把手和身体放稳；程序随后取有效稳定帧标定，提示完成后开始控制。
-- 有物体的场景打开正面、侧面两个观察窗，显示频率5 Hz。滚轮可放大，Esc关闭观察窗。
-- 松开物体并移开机械手后，在观察窗按 **T**，恢复物体原位置。倒水场景同时恢复瓶内94毫升虚拟水量和空杯；不重置机械臂零位。
-- 相机窗口按 **Q** 结束，等待数据保存完毕。
-
-每次录制保存到本工程 `.runtime/hand_imu_observation_日期时间_随机码/`，启动时打印完整路径。目录包含 `screen.mp4`、`rgbd.db3`、`control_chain.bag`、实际场景快照 `scene.world`、手部数据与时间对应信息。倒水时同时记录瓶内、杯内、洒出水量。未启用IMU时不会要求接收器在线。
-
-## 倒水显示范围
-
-可看到瓶口水流及杯内水面；进入杯口才增加杯内水量，倒偏计入洒出量，摆正停止出水。水流和水量是简化的可视化计算，不是完整流体动力学：不模拟晃动、液体力或随水量变化的刚体载荷。它用于练习抓瓶、对准和倾倒，不用于证明真实液体控制精度。
-
-## 固定版本边界
-
-本版将运行入口、实际控制源码、模型接口、场景及依赖恢复信息一起保存；旧9月17日等标签继续保留。新开发应另建目录或分支，不移动本标签。相同代码不代表不同硬件上的帧率和延迟必然相同。保存与验证记录见 [版本验证](reproduction/20260921/VALIDATION.md)。
+本次实际核对、源码来源与验证范围见 [新基线验证说明](reproduction/20261006/VALIDATION.md)。固定保存目录不继续开发；后续变化另存版本，保留旧版。

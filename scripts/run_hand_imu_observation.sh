@@ -10,14 +10,16 @@ case "${1:-}" in
   --stacking-scene) observation_scene=stacking; shift ;;
   --grasp-scene) observation_scene=grasp; shift ;;
 esac
-if (( $# > 1 )) || [[ "${1:-}" == --* ]]; then
-  echo "用法：$0 [--pouring-scene|--stacking-scene|--grasp-scene|--empty-scene] [新的录制文件夹]（默认倒水场景并录屏）" >&2
+if (( $# > 1 )) || { [[ "${1:-}" == --* ]] && [[ "${1:-}" != --no-recording ]]; }; then
+  echo "用法：$0 [--pouring-scene|--stacking-scene|--grasp-scene|--empty-scene] [新的录制文件夹|--no-recording]（默认倒水场景并录屏）" >&2
   exit 2
 fi
 export TELEOP_RECORD_IMU="${TELEOP_RECORD_IMU:-false}"
 case "$TELEOP_RECORD_IMU" in true|false) ;; *) echo 'TELEOP_RECORD_IMU 只能是 true 或 false。' >&2; exit 2 ;; esac
 export TELEOP_REQUIRE_IMU="$TELEOP_RECORD_IMU"
 export TELEOP_MOTION_CONTROLLER=constrained
+export TELEOP_ARM_CONTROL_MODE=velocity
+export TELEOP_PURE_VIEW_CORRECTION=true
 export TELEOP_EMPTY_SCENE=false
 export TELEOP_ALIGNMENT_VIEWS=true
 case "$observation_scene" in
@@ -42,7 +44,7 @@ export TELEOP_IMU_MOUNTING=left_hand_x_distal_y_ulnar_z_dorsal
 export TELEOP_CONTROL_REFERENCE=mano-wrist-ring
 export TELEOP_WRIST_DEPTH_MODE=palm-skin
 case "$TELEOP_CONTROL_REFERENCE" in
-  mano-wrist-ring) echo '姿态：旧版16点腕口配准；相机窗口显示腕口原生坐标轴。' ;;
+  mano-wrist-ring) echo '姿态：原始HaMeR＋纯视角几何修正＋16点腕口配准；五点仅用于掌面深度。' ;;
   mano-five-point-palm) echo '姿态：腕点与四指根五点掌骨法，作为对照。' ;;
   *) echo '此观察入口只支持 mano-wrist-ring 或 mano-five-point-palm。' >&2; exit 2 ;;
 esac
@@ -66,7 +68,9 @@ else
     echo '双观察窗为5 Hz。先松开并移开机械手，点击任一观察小窗后按T，恢复物体及倒水初始水量；录像继续。'
   fi
 fi
-echo '同时保存屏幕录像、原始RGB-D、手部逐帧数据与机械臂控制数据；保存路径将在启动时打印。'
+if [[ "${1:-}" != --no-recording ]]; then
+  echo '同时保存屏幕录像、原始RGB-D、手部逐帧数据与机械臂控制数据；保存路径将在启动时打印。'
+fi
 if [[ "$TELEOP_RECORD_IMU" == true ]]; then
   printf '%s\n' \
     '同时采集IMU。佩戴：左手背，+X朝中指指尖，+Y朝小指侧，+Z朝手背外；全程保持固定。' \
@@ -78,6 +82,6 @@ else
   printf '%s\n' \
     '本次不采集IMU，不需要开启或佩戴IMU，也不等待IMU接收。' \
     '相机就绪后按一次C，在2秒倒计时内把身体和张开的手放稳；提示标定完成后开始控制。' \
-    '按Q结束，等待录像和数据保存完成。'
+    '按Q结束；启用录制时等待数据保存完成。'
 fi
 exec bash "$script_directory/run_whole_wrist_teleop.sh" "$@"

@@ -1,11 +1,14 @@
-# 2026-09-21 整体腕姿与四场景保存版
+# 2026-10-06 视角修正与关节速度控制基线
 
-此版本对应 GitHub 标签 `teleop-whole-wrist-scenes-20260921`。
-在本机 `/home/dongtian/myhandarmtest1-whole-wrist-scenes-20260921` 完成本次保存后，
-默认只读取或运行，不在保存目录继续调试、更新依赖、切换开发分支或执行 git pull。
+本版基于 9 月 21 日提交 `77d6accedd5824492e32131f24dad27ee769a15b`，
+合入原始 HaMeR 权重的纯视角几何处理、16 点腕环和 Gazebo 直接关节速度接口。
+不加载 v1 或公开训练的修正模型；上层沿用 9 月 21 日映射、滤波与原约束求解器。
 
-后续开发仍使用 `/home/dongtian/myhandarmtest1-mediapipe-comparison-20260915` 的 `codex/` 分支。
-用户明确要求保存新版本时另建目录和标签，保留此版本及9月17日保存版。
+保存到 `/home/dongtian/myhandarmtest1-view-velocity-baseline-20261006` 后，
+该保存目录只读取或运行，不继续修改代码、参数、依赖或切换开发分支。
+后续开发在 `/home/dongtian/myhandarmtest1-mediapipe-comparison-20260915` 的 codex/ 分支或其开发工作树进行。
+9 月 17 日、9 月 21 日和 9 月 28 日保存版本均保留。
 
-四个场景入口共用 HaMeR 16点腕口、整体腕姿映射和当前控制器，仅场景不同。
-不得通过切换场景顺带切换手部模型、坐标定义或控制参数。
+`run.sh` 为本版统一入口；四个场景必须共用同一感知和控制配置。
+本版速度执行器是 Gazebo 近似，不能据此声称实体 ABB 的接口、动态性能或安全已验证。
+论文引用本版时绑定 Git 标签与实际实验，不将旧版实验结果当作本组合的完整任务结果。

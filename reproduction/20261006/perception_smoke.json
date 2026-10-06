@@ -1,0 +1,145 @@
+{
+  "scope": "Offline ring16 integration on existing public images. No camera, ROS controller, robot connection or private recording opened. Not a measured live camera-to-arm latency or new accuracy result.",
+  "control_identity": "MANO_WRIST_RING_16, using the unchanged September 21 wrist-ring estimator and neutral definition; five joints determine the palm-skin depth sampling region only.",
+  "historical_result": "live_pure_correction_check.json remains the earlier five-point integration check; it does not validate ring16.",
+  "crop_max_difference": 0.0,
+  "inverse_pixel_roundtrip_max_error_px": 2.510247190912196e-05,
+  "rows": [
+    {
+      "public_frame": 0,
+      "right": true,
+      "frozen_shape": false,
+      "difference_from_frozen_geometry_vertices_m": 0.0,
+      "ring_orientation_restoration_error_deg": 0.0,
+      "ring_origin_restoration_error_m": 0.0,
+      "wrist_loop_vertex_count": 16,
+      "packet_control_reference": "MANO_WRIST_RING_16",
+      "model_calls": 1,
+      "infer_including_crop_ms": 28.034531977027655,
+      "depth_point_m": [
+        -0.06046506683349609,
+        0.03773083694458008,
+        0.603
+      ]
+    },
+    {
+      "public_frame": 35,
+      "right": true,
+      "frozen_shape": false,
+      "difference_from_frozen_geometry_vertices_m": 0.0,
+      "ring_orientation_restoration_error_deg": 0.0,
+      "ring_origin_restoration_error_m": 0.0,
+      "wrist_loop_vertex_count": 16,
+      "packet_control_reference": "MANO_WRIST_RING_16",
+      "model_calls": 1,
+      "infer_including_crop_ms": 27.29133516550064,
+      "depth_point_m": [
+        -0.04019911855061849,
+        0.04669807912190755,
+        0.611
+      ]
+    },
+    {
+      "public_frame": 0,
+      "right": false,
+      "frozen_shape": false,
+      "difference_from_frozen_geometry_vertices_m": 0.0,
+      "ring_orientation_restoration_error_deg": 0.0,
+      "ring_origin_restoration_error_m": 0.0,
+      "wrist_loop_vertex_count": 16,
+      "packet_control_reference": "MANO_WRIST_RING_16",
+      "model_calls": 1,
+      "infer_including_crop_ms": 28.589348774403334,
+      "depth_point_m": [
+        -0.0586483154296875,
+        0.0344696923828125,
+        0.594
+      ]
+    },
+    {
+      "public_frame": 35,
+      "right": false,
+      "frozen_shape": false,
+      "difference_from_frozen_geometry_vertices_m": 0.0,
+      "ring_orientation_restoration_error_deg": 0.0,
+      "ring_origin_restoration_error_m": 0.0,
+      "wrist_loop_vertex_count": 16,
+      "packet_control_reference": "MANO_WRIST_RING_16",
+      "model_calls": 1,
+      "infer_including_crop_ms": 27.441183105111122,
+      "depth_point_m": [
+        -0.027027198486328122,
+        0.04514402709960938,
+        0.612
+      ]
+    },
+    {
+      "public_frame": 0,
+      "right": true,
+      "frozen_shape": true,
+      "difference_from_frozen_geometry_vertices_m": 0.0,
+      "ring_orientation_restoration_error_deg": 0.0,
+      "ring_origin_restoration_error_m": 0.0,
+      "wrist_loop_vertex_count": 16,
+      "packet_control_reference": "MANO_WRIST_RING_16",
+      "model_calls": 1,
+      "infer_including_crop_ms": 23.051755037158728,
+      "depth_point_m": [
+        -0.06145063603719075,
+        0.037876290130615234,
+        0.605
+      ]
+    },
+    {
+      "public_frame": 35,
+      "right": true,
+      "frozen_shape": true,
+      "difference_from_frozen_geometry_vertices_m": 0.0,
+      "ring_orientation_restoration_error_deg": 0.0,
+      "ring_origin_restoration_error_m": 0.0,
+      "wrist_loop_vertex_count": 16,
+      "packet_control_reference": "MANO_WRIST_RING_16",
+      "model_calls": 1,
+      "infer_including_crop_ms": 22.084407042711973,
+      "depth_point_m": [
+        -0.040758537597656255,
+        0.046712687988281244,
+        0.612
+      ]
+    },
+    {
+      "public_frame": 0,
+      "right": false,
+      "frozen_shape": true,
+      "difference_from_frozen_geometry_vertices_m": 0.0,
+      "ring_orientation_restoration_error_deg": 0.0,
+      "ring_origin_restoration_error_m": 0.0,
+      "wrist_loop_vertex_count": 16,
+      "packet_control_reference": "MANO_WRIST_RING_16",
+      "model_calls": 1,
+      "infer_including_crop_ms": 22.136386018246412,
+      "depth_point_m": [
+        -0.0582432275390625,
+        0.034396789855957025,
+        0.594
+      ]
+    },
+    {
+      "public_frame": 35,
+      "right": false,
+      "frozen_shape": true,
+      "difference_from_frozen_geometry_vertices_m": 0.0,
+      "ring_orientation_restoration_error_deg": 0.0,
+      "ring_origin_restoration_error_m": 0.0,
+      "wrist_loop_vertex_count": 16,
+      "packet_control_reference": "MANO_WRIST_RING_16",
+      "model_calls": 1,
+      "infer_including_crop_ms": 22.567319683730602,
+      "depth_point_m": [
+        -0.026354492797851563,
+        0.045117630615234376,
+        0.612
+      ]
+    }
+  ]
+}

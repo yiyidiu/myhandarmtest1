@@ -17,6 +17,13 @@ source /opt/ros/noetic/setup.bash
 source devel/setup.bash
 set -u
 
+arm_control_mode="${TELEOP_ARM_CONTROL_MODE:-position}"
+case "$arm_control_mode" in
+  position) execution_node=/egm_position_reference_adapter ;;
+  velocity) execution_node=/direct_joint_velocity_adapter ;;
+  *) echo "TELEOP_ARM_CONTROL_MODE must be position or velocity" >&2; exit 2 ;;
+esac
+
 motion_controller="${TELEOP_MOTION_CONTROLLER:-constrained}"
 case "$motion_controller" in
   constrained) constrained_velocity_projection=true; joint_velocity_solver=qp ;;
@@ -73,6 +80,12 @@ checkpoint="$asset_root/hamer_ckpts/checkpoints/hamer.ckpt"
 empty_motion_scene="${TELEOP_EMPTY_SCENE:-false}"
 case "$empty_motion_scene" in true|false) ;; *) echo "TELEOP_EMPTY_SCENE must be true or false" >&2; exit 2 ;; esac
 ground_object_world="${TELEOP_GRASP_WORLD:-$workspace/src/handarm_sim_demo/worlds/handarm_ground_grasp.world}"
+geometry_arguments=()
+case "${TELEOP_PURE_VIEW_CORRECTION:-false}" in
+  true) geometry_arguments=(--pure-view-correction) ;;
+  false) ;;
+  *) echo 'TELEOP_PURE_VIEW_CORRECTION must be true or false.' >&2; exit 2 ;;
+esac
 diagnostic_arguments=()
 if [[ "${TELEOP_WRIST_DIAGNOSTICS:-false}" == true ]]; then
   diagnostic_arguments=(--show-wrist-axes --experiment DEV_HAMER_6DOF_OBSERVATION
@@ -130,6 +143,9 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo "正在启动 Gazebo 和 ROS 控制链……"
+if [[ "$arm_control_mode" == velocity ]]; then
+  echo "机械臂底层：250 Hz 关节速度指令；速度闭环执行，不运行外部关节位置积分器。"
+fi
 if [[ "$joint_velocity_solver" == servo ]]; then
   echo "本次使用 MoveIt Servo 求解，保留当前反馈、手指保护和 250 Hz 参考链。"
 elif [[ "$constrained_velocity_projection" == true ]]; then
@@ -145,6 +161,7 @@ fi
 setsid "${simulation_affinity_arguments[@]}" roslaunch handarm_moveit_demo \
   live_human_ground_gazebo_egm_teleop.launch \
   gazebo_gui:=true with_ground_object:=true enable_logger:=false \
+  arm_control_mode:="$arm_control_mode" \
   empty_motion_scene:="$empty_motion_scene" \
   ground_object_world:="$ground_object_world" \
   use_simulated_environment_for_control:=false \
@@ -168,7 +185,8 @@ while (( SECONDS < ros_ready_deadline )); do
   if timeout 1 rosnode info /gazebo >/dev/null 2>&1 \
       && timeout 1 rosnode info /hamer_input_adapter >/dev/null 2>&1 \
       && timeout 1 rosnode info /three_finger_retargeting >/dev/null 2>&1 \
-      && timeout 1 rosnode info /moveit_servo_output_adapter >/dev/null 2>&1; then
+      && timeout 1 rosnode info /moveit_servo_output_adapter >/dev/null 2>&1 \
+      && timeout 1 rosnode info "$execution_node" >/dev/null 2>&1; then
     ros_ready=true
     break
   fi
@@ -216,6 +234,7 @@ else
 "${hamer_command[@]}" perception_hamer/scripts/run_d455_hamer_crop.py \
   --auto-roi-mediapipe \
   --fixed-left-hand \
+  "${geometry_arguments[@]}" \
   --mediapipe-min-detection-confidence 0.50 \
   --mesh-renderer teleoperation-core \
   --no-mesh-overlay \

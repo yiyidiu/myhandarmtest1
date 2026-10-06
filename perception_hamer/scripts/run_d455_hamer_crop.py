@@ -661,7 +661,8 @@ def _draw_user_palm_axes(image, result, control, panel_offsets=(0,)):
     rotation = np.asarray(control["rotation"], dtype=float)
     wrist = np.asarray(result.pred_keypoints_3d_source_camera_axes[0], dtype=float)
     source_points = np.vstack((wrist, wrist[None, :] + .055 * rotation.T))
-    canonical = source_points.copy()
+    restore = np.asarray(result.quality.get("camera_from_virtual_rotation", np.eye(3)))
+    canonical = source_points @ restore
     if not result.is_right:
         canonical[:, 0] *= -1
     pixels, _ = project_hamer_vertices_to_original(
@@ -1552,6 +1553,8 @@ def _parse_args() -> argparse.Namespace:
         default=DEFAULT_REALSENSE_SITE_PACKAGES,
     )
     parser.add_argument("--precision", choices=("fp16", "fp32"), default="fp16")
+    parser.add_argument("--pure-view-correction", action="store_true",
+                        help="frozen calibrated perspective crop and full camera-axis restoration; no learned correction")
     parser.add_argument("--teleop-udp-host", default="",
                         help="optional handarm_hamer_pose_v1 destination; empty disables UDP")
     parser.add_argument("--teleop-udp-port", type=int, default=5010)
@@ -1598,6 +1601,12 @@ def _apply_thread_cpu_affinity(cpu_affinity: str) -> None:
 
 def main() -> int:
     args = _parse_args()
+    if args.pure_view_correction:
+        if (not args.fixed_left_hand or args.control_reference != "mano-wrist-ring"
+                or args.wrist_depth_mode != "palm-skin" or not args.show_wrist_axes):
+            raise SystemExit("pure view correction live mode requires fixed left hand, 16-point wrist ring, palm-skin depth and wrist-axis display; use run_pure_view_correction_teleop.sh")
+        if args.imu_calibrated_pose or args.precise_orientation or args.positive_view_bias_gain != 0.0:
+            raise SystemExit("pure view correction cannot be combined with learned or legacy orientation corrections")
     if args.wrist_depth_mode == "joint0-surface" and args.control_reference != "mano-five-point-palm":
         raise SystemExit("--wrist-depth-mode joint0-surface requires --control-reference mano-five-point-palm")
     if args.imu_calibrated_pose and args.positive_view_bias_gain != 0.0:
@@ -1691,10 +1700,13 @@ def main() -> int:
         data_root=args.data_root,
         device="cuda:0",
         precision=args.precision,
+        perspective_correction=args.pure_view_correction,
         freeze_betas=False,
         source_frame="camera_color_optical_frame",
         timestamp_clock_domain="d455_device_global_time_ms",
     )
+    if args.pure_view_correction:
+        print("模式：纯视角矫正；原始 HaMeR 权重；每帧只运行一次模型。", flush=True)
     asset_status = runner.asset_status()
     if not all(asset_status[key] for key in (
         "checkpoint_exists", "model_config_exists", "mano_right_exists",
@@ -1867,7 +1879,8 @@ def main() -> int:
         seed_frame = capture.wait_for_stable_frames(consecutive=8)
         if not args.no_display:
             display = LiveDisplay(
-                "D455 HaMeR/MANO - teleoperation_ubuntu_core renderer",
+                ("PURE VIEW CORRECTION - WRIST RING 16 - HaMeR 2026-09-21" if args.pure_view_correction
+                 else "D455 HaMeR/MANO - teleoperation_ubuntu_core renderer"),
                 args.display_helper_python,
                 SCRIPT_DIR / "display_frame_stream.py",
                 backend=args.display_backend,
@@ -2274,11 +2287,14 @@ def main() -> int:
                 try:
                     inference_call_started_monotonic = time.monotonic()
                     try:
+                        geometry_arguments = ({"camera_intrinsics": packet.frame.color_intrinsics}
+                                              if args.pure_view_correction else {})
                         candidate_result = runner.infer(
                             packet.frame.rgb,
                             packet.roi.bbox,
                             is_right,
                             timestamp_s,
+                            **geometry_arguments,
                         )
                     finally:
                         inference_call_completed_monotonic = time.monotonic()

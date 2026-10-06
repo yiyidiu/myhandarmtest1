@@ -1,0 +1,113 @@
+{
+  "scope": "Gazebo execution integration with synthetic left-hand ring16-contract input. Not live human accuracy or an ABB hardware test.",
+  "controllers": [
+    {
+      "name": "abbarm_velocity_controller",
+      "type": "velocity_controllers/JointGroupVelocityController",
+      "state": "running"
+    },
+    {
+      "name": "joint_state_controller",
+      "type": "joint_state_controller/JointStateController",
+      "state": "running"
+    }
+  ],
+  "direct_velocity_execution": true,
+  "hand_reference": "mano-wrist-ring",
+  "mapping": "whole_wrist_pose",
+  "motions": [
+    {
+      "input": "translation",
+      "camera_axis": "x",
+      "input_amount": 0.01,
+      "actual_translation_m": [
+        -4.519420018106457e-05,
+        -0.019826440844764297,
+        -4.052806612531157e-07
+      ],
+      "actual_rotation_rad": [
+        -1.550173413959167e-05,
+        5.799663052243561e-06,
+        -1.1665673160428884e-05
+      ]
+    },
+    {
+      "input": "translation",
+      "camera_axis": "y",
+      "input_amount": 0.01,
+      "actual_translation_m": [
+        -0.015707287708368933,
+        1.86731447834582e-05,
+        -2.8080128826990514e-05
+      ],
+      "actual_rotation_rad": [
+        -4.511699996175934e-05,
+        9.498422357257249e-07,
+        -2.8820072113636448e-05
+      ]
+    },
+    {
+      "input": "translation",
+      "camera_axis": "z",
+      "input_amount": 0.01,
+      "actual_translation_m": [
+        -3.92651781813691e-05,
+        1.5483917864699448e-07,
+        0.011932992606934367
+      ],
+      "actual_rotation_rad": [
+        -2.1098061074885922e-07,
+        2.0795477536238763e-05,
+        1.5636809121887232e-05
+      ]
+    },
+    {
+      "input": "rotation",
+      "camera_axis": "x",
+      "input_amount": 0.10471975511965978,
+      "actual_translation_m": [
+        4.827896671111276e-06,
+        1.1844718405826043e-06,
+        1.6572481649101967e-05
+      ],
+      "actual_rotation_rad": [
+        -0.020168724647114358,
+        -0.015733287231085764,
+        -0.1332237823765845
+      ]
+    },
+    {
+      "input": "rotation",
+      "camera_axis": "y",
+      "input_amount": 0.10471975511965978,
+      "actual_translation_m": [
+        -3.741452143324331e-06,
+        2.898020235565053e-08,
+        -8.481229130274937e-06
+      ],
+      "actual_rotation_rad": [
+        0.007193921647608733,
+        -0.13417878767165117,
+        0.01575297503394191
+      ]
+    },
+    {
+      "input": "rotation",
+      "camera_axis": "z",
+      "input_amount": 0.10471975511965978,
+      "actual_translation_m": [
+        0.00010668131904567613,
+        0.00010740438455910875,
+        0.00015645757886284528
+      ],
+      "actual_rotation_rad": [
+        -0.13374147386559682,
+        -0.003991667193743027,
+        0.02023627669066014
+      ]
+    }
+  ],
+  "input_loss_zero_command_max_rad_s": 0.0,
+  "input_loss_measured_joint_speed_max_rad_s": 3.5866001918820854e-05,
+  "position_reference_subscribers_present": false
+}

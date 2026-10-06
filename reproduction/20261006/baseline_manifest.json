@@ -1,0 +1,25 @@
+{
+  "version": "teleop-view-velocity-baseline-20261006",
+  "date": "2026-10-06",
+  "timezone": "Asia/Shanghai",
+  "base_commit": "77d6accedd5824492e32131f24dad27ee769a15b",
+  "perception_source": {
+    "branch": "codex/public-wrist-restart-20260929",
+    "head": "d2c93583861c6703ffb0a09f2682f319fd0dd9d6",
+    "includes_later_working_tree_ring16_fixes": true
+  },
+  "velocity_source": {
+    "branch": "codex/continuous-6d-coordination-20261002",
+    "includes_working_tree_direct_velocity_adapter_and_plant": true,
+    "upper_coordination_prototypes_imported": false
+  },
+  "source_note": "The release tree is the definitive integrated source; the component branch heads alone did not contain their later uncommitted work.",
+  "checkpoint_manifest": "reproduction/20260921/runtime_reference.json",
+  "learned_view_correction": false,
+  "orientation_reference": "MANO_WRIST_RING_16",
+  "arm_interface": "hardware_interface/VelocityJointInterface",
+  "controller": "velocity_controllers/JointGroupVelocityController",
+  "publisher_hz": 250,
+  "simulation_only": true,
+  "upper_mapping_and_qp": "September 21 baseline with measured-rate/braking adaptation for direct velocity execution"
+}

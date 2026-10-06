@@ -58,6 +58,7 @@ class LiveTeleopTerminalMonitor:
                          queue_size=300, tcp_nodelay=True)
         for key, topic in (
                 ("egm", "/egm_position_reference/diagnostics"),
+                ("direct_velocity", "/direct_velocity/diagnostics"),
                 ("geometry", "/shared_teleop/geometric_filter_diagnostics"),
                 ("motor", "/handarm_sim_demo/physical_hand_diagnostics"),
                 ("finger", "/shared_teleop/finger_diagnostics"),

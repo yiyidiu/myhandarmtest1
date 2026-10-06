@@ -66,6 +66,7 @@ catkin_install_python(PROGRAMS
   scripts/servo_pose_step_test.py
   scripts/servo_velocity_to_position_bridge.py
   scripts/egm_position_reference_adapter.py
+  scripts/direct_joint_velocity_adapter.py
   scripts/egm_position_profile_validator.py
   scripts/servo_dynamic_target_test.py
   scripts/servo_pose_tracking_node.py

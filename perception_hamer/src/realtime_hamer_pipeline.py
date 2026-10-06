@@ -100,15 +100,20 @@ def normalized_crop_points_to_original(
         value.ndim != 2
         or value.shape[1] != 2
         or not np.all(np.isfinite(value))
-        or affine.shape != (2, 3)
+        or affine.shape not in ((2, 3), (3, 3))
         or not np.all(np.isfinite(affine))
         or image_size <= 0
     ):
         raise ValueError("invalid normalized points, affine, or image size")
-    inverse = cv2.invertAffineTransform(affine)
     crop_pixels = (value + 0.5) * float(image_size)
     homogeneous = np.column_stack((crop_pixels, np.ones(len(crop_pixels))))
-    original = (inverse @ homogeneous.T).T
+    if affine.shape == (2, 3):
+        original = (cv2.invertAffineTransform(affine) @ homogeneous.T).T
+    else:
+        mapped = np.linalg.solve(affine, homogeneous.T).T
+        if np.any(np.abs(mapped[:, 2]) < 1e-10):
+            raise ValueError("crop inverse projects a point to infinity")
+        original = mapped[:, :2]/mapped[:, 2:]
     if not np.all(np.isfinite(original)):
         raise ValueError("point projection produced NaN/Inf")
     return original.astype(np.float32)

@@ -2,6 +2,7 @@
 <launch>
   <!-- Independent Gazebo plant for EGM-style position-reference emulation. -->
   <arg name="gazebo_gui" default="true" />
+  <arg name="arm_control_mode" default="position" />
   <arg name="paused" default="false" />
   <arg name="world_name" default="worlds/empty.world" />
   <arg name="world_pose" default="-x 0 -y 0 -z 0 -R 0 -P 0 -Y 0" />
@@ -20,7 +21,7 @@
   <!-- Use PositionJointInterface plus finite-effort P/D gains. Unlike the
        preserved velocity plant, gravity remains enabled in this URDF. -->
   <param name="robot_description"
-         command="$(find handarm_sim_demo)/scripts/render_teleop_hand_urdf.py --input $(find abb120_moveit_config1)/config/gazebo_handarm.urdf --profile $(arg hand_stability_profile)" />
+         command="$(find handarm_sim_demo)/scripts/render_teleop_hand_urdf.py --input $(find abb120_moveit_config1)/config/gazebo_handarm.urdf --profile $(arg hand_stability_profile) --arm-control $(arg arm_control_mode)" />
   <rosparam file="$(find abb120_moveit_config1)/config/gazebo_controllers.yaml" />
   <!-- Use the published 250 Hz reference velocity, not differences of
        stepped position samples, in the 1 kHz physical arm PID. -->
@@ -34,10 +35,16 @@
             command="load"
             file="$(find handarm_sim_demo)/config/gazebo_hand_only_pid.yaml"
             ns="gazebo_ros_control/pid_gains" />
-  <include file="$(find abb120_moveit_config1)/launch/ros_controllers_egm_position.launch">
+  <include if="$(eval arg('arm_control_mode') == 'position')" file="$(find abb120_moveit_config1)/launch/ros_controllers_egm_position.launch">
     <arg name="spawn_hand_controller"
          value="$(eval arg('hand_stability_profile') != 'physical_grasp')" />
   </include>
+  <group if="$(eval arg('arm_control_mode') == 'velocity')">
+    <rosparam file="$(find abb120_moveit_config1)/config/ros_controllers_velocity.yaml" />
+    <rosparam param="/gazebo_ros_control/direct_velocity_gains">[40.0, 75.0, 44.0, 10.4, 11.1, 3.0]</rosparam>
+    <node name="controller_spawner" pkg="controller_manager" type="spawner"
+          args="abbarm_velocity_controller" required="true" output="screen" />
+  </group>
   <!-- Preserve the standard hand FollowJointTrajectory API while one
        self-locking drive/passive-coupling plugin owns all eight Gazebo hand joints. -->
   <node if="$(eval arg('hand_stability_profile') == 'physical_grasp')"

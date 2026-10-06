@@ -133,6 +133,7 @@ public:
     private_nh_.param("inverse_damping", inverse_damping_, 0.0);
     private_nh_.param("independent_palm_rotation_axes", independent_palm_rotation_axes_, false);
     private_nh_.param("allow_partial_spatial_rotation", allow_partial_spatial_rotation_, false);
+    private_nh_.param("direct_velocity_execution", direct_velocity_execution_, false);
     private_nh_.param<std::string>(
         "raw_velocity_topic", raw_velocity_topic_,
         "/full_robot_self_collision_guard/raw_arm_velocity");
@@ -358,8 +359,14 @@ public:
           &FullRobotSelfCollisionGuard::requestedHandCommandCallback, this,
           ros::TransportHints().tcpNoDelay());
     }
-    const auto arm_reference_topic = private_nh_.param<std::string>(
-        "arm_position_reference_topic", "");
+    const auto arm_reference_topic = direct_velocity_execution_ ? std::string() :
+        private_nh_.param<std::string>("arm_position_reference_topic", "");
+    if (direct_velocity_execution_)
+    {
+      const std::vector<double> acceleration{8.0, 8.0, 8.0, 12.0, 12.0, 16.0};
+      for (std::size_t i = 0; i < arm_joint_names_.size(); ++i)
+        reference_acceleration_[arm_joint_names_[i]] = acceleration.at(i);
+    }
     if (!arm_reference_topic.empty())
     {
       if (constrained_velocity_projection_)
@@ -472,6 +479,13 @@ private:
     else
       for (int i = 0; i < 2; ++i)
         if (messages[i]) applyJointState(messages[i], received[i]);
+    if (direct_velocity_execution_)
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (latest_state_ && latest_state_->hasVelocities())
+        for (const auto& name : arm_joint_names_)
+          latest_reference_velocity_[name] = latest_state_->getVariableVelocity(name);
+    }
   }
 
   struct Clearance
@@ -1726,6 +1740,7 @@ private:
            << ",\"constrained_velocity_projection\":" << (constrained_velocity_projection_ ? "true" : "false")
            << ",\"independent_palm_rotation_axes\":" << (independent_palm_rotation_axes_ ? "true" : "false")
            << ",\"allow_partial_spatial_rotation\":" << (allow_partial_spatial_rotation_ ? "true" : "false")
+           << ",\"direct_velocity_execution\":" << (direct_velocity_execution_ ? "true" : "false")
            << ",\"side_limit_reference_ready\":" << (have_robot_zero_ ? "true" : "false")
            << ",\"maximum_side_angle_deg\":" << maximum_side_angle_ * 180.0/M_PI
            << ",\"position_accommodation_m\":" << position_accommodation_m_
@@ -3300,6 +3315,7 @@ private:
   bool have_robot_zero_{ false };
   bool independent_palm_rotation_axes_{ false };
   bool allow_partial_spatial_rotation_{ false };
+  bool direct_velocity_execution_{ false };
   double maximum_side_angle_{ M_PI/2.0 };
   ros::WallTime latest_state_wall_time_;
   ros::Time latest_state_ros_time_;

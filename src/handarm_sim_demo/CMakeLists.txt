@@ -50,7 +50,7 @@ add_library(handarm_stable_hand_spring_plugin
 target_link_libraries(handarm_stable_hand_spring_plugin
   ${catkin_LIBRARIES} ${GAZEBO_LIBRARIES})
 
-add_library(handarm_bounded_position_hw_sim src/bounded_position_hw_sim.cpp)
+add_library(handarm_bounded_position_hw_sim src/bounded_position_hw_sim.cpp src/direct_velocity_hw_sim.cpp)
 target_link_libraries(handarm_bounded_position_hw_sim
   ${catkin_LIBRARIES} ${GAZEBO_LIBRARIES})
 
