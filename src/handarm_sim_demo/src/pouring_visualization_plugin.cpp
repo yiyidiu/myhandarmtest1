@@ -37,6 +37,11 @@ class PouringVisualizationPlugin : public WorldPlugin
   static constexpr double kCupFloor = -0.056;
   static constexpr double kCupRim = 0.060;
   static constexpr double kStreamRadius = 0.0025;
+  // The visual stream radius is not the bottle's hydraulic outlet radius.
+  // Keep the trajectory speed independent of the changing volume flow rate.
+  static constexpr double kNominalStreamSpeed = 0.35;
+  static constexpr double kMinimumDrainHead = 0.002;
+  static constexpr double kPourTiltCosThreshold = 0.72;
 
 public:
   ~PouringVisualizationPlugin() override
@@ -134,6 +139,50 @@ private:
     return p + v*t + Vec(0, 0, -0.5*kG*t*t);
   }
 
+  // Aim a ballistic stream through the center of the cup opening. With a
+  // stationary bottle and cup this produces a stationary arc; only the visible
+  // endpoint moves upward as the cup fills. Never infer exit speed from flow
+  // rate divided by the rendered cylinder area: that makes the arc drift as
+  // the bottle empties because the rendered radius is not a hydraulic outlet.
+  static Vec StableStreamVelocity(const Vec &origin, const Vec &axis,
+                                  const Pose &cup)
+  {
+    const Vec cup_axis = cup.Rot().RotateVector(Vec::UnitZ);
+    const Vec target = cup.Pos() + cup_axis*kCupRim;
+    const double drop = target.Z() - origin.Z();
+    const double vertical_speed = axis.Z() * kNominalStreamSpeed;
+    if (drop >= -1e-4)
+      return axis * kNominalStreamSpeed;
+
+    const double discriminant =
+        vertical_speed*vertical_speed - 2.0*kG*drop;
+    if (discriminant <= 0.0)
+      return axis * kNominalStreamSpeed;
+
+    const double flight_time =
+        (vertical_speed + std::sqrt(discriminant))/kG;
+    if (flight_time <= 1e-4)
+      return axis * kNominalStreamSpeed;
+
+    const double dx = target.X() - origin.X();
+    const double dy = target.Y() - origin.Y();
+    const double horizontal_distance = std::hypot(dx, dy);
+    const Vec axis_horizontal(axis.X(), axis.Y(), 0.0);
+    const Vec target_horizontal(dx, dy, 0.0);
+    // If the cup is too far away or lies behind the bottle's pour direction,
+    // keep the ordinary bottle-axis trajectory rather than visibly bending
+    // water toward an unrelated target.
+    if (horizontal_distance > 0.35 ||
+        (horizontal_distance > 1e-4 && axis_horizontal.Length() > 1e-4 &&
+         axis_horizontal.Normalized().Dot(target_horizontal.Normalized()) < 0.25))
+      return axis * kNominalStreamSpeed;
+
+    const Vec velocity(dx/flight_time, dy/flight_time, vertical_speed);
+    if (!std::isfinite(velocity.Length()) || velocity.Length() > 2.0)
+      return axis * kNominalStreamSpeed;
+    return velocity;
+  }
+
   // First downward crossing of a plane, including tilted cup rims.
   static double Crossing(const Vec &p, const Vec &v,
                          const Vec &plane, const Vec &normal)
@@ -211,16 +260,21 @@ private:
         ? down_rim.Normalized()*kMouthRadius : Vec::Zero);
     const double head = bottle_water_ > 1e-9
         ? WaterSurface(bp, bottle_water_) - lip.Z() : 0.0;
-    // Illustration parameter, not a calibrated bottle-flow model.
-    double rate = head > 0.0 ? std::min(40e-6,
-        0.55*kPi*0.003*0.003*std::sqrt(2*kG*head)) : 0.0;
+    // Illustration parameter, not a calibrated bottle-flow model. Once the
+    // bottle is tipped, retain a small trickle head so the simplified reservoir
+    // drains completely instead of stopping with invisible residual water.
+    const bool tipped_for_drain = ba.Z() < kPourTiltCosThreshold;
+    const double effective_head = std::max(head, kMinimumDrainHead);
+    double rate = bottle_water_ > 1e-9 && (head > 0.0 || tipped_for_drain)
+        ? std::min(40e-6, 0.55*kPi*0.003*0.003*
+            std::sqrt(2*kG*effective_head)) : 0.0;
     rate = std::min(rate, dt > 0.0 ? bottle_water_/dt : 0.0);
     bool receiving = false;
     Vec velocity = Vec::Zero;
     double duration = 0.0;
     if (rate > 1e-9)
     {
-      velocity = ba*std::max(0.15, rate/(kPi*kStreamRadius*kStreamRadius));
+      velocity = StableStreamVelocity(lip, ba, cp);
       duration = Crossing(lip, velocity, Vec::Zero, Vec::UnitZ);
       if (duration <= 0.0) duration = 0.1;
       const Vec rim_center = cp.Pos() + ca*kCupRim;
