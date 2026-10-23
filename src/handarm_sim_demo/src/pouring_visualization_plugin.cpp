@@ -172,7 +172,7 @@ private:
     // If the cup is too far away or lies behind the bottle's pour direction,
     // keep the ordinary bottle-axis trajectory rather than visibly bending
     // water toward an unrelated target.
-    if (horizontal_distance > 0.18 ||
+    if (horizontal_distance > 0.35 ||
         (horizontal_distance > 1e-4 && axis_horizontal.Length() > 1e-4 &&
          axis_horizontal.Normalized().Dot(target_horizontal.Normalized()) < 0.25))
       return axis * kNominalStreamSpeed;
