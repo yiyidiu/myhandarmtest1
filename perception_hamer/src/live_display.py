@@ -8,6 +8,7 @@ working local OpenCV GUI the same API uses ``cv2.imshow`` directly.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import struct
 import subprocess
@@ -74,6 +75,8 @@ class LiveDisplay:
             helper_command = [
                 helper_python, "-u", str(helper), "--title", self.title
             ]
+            if os.environ.get("FR3_CAMERA_READY_FILE"):
+                helper_command += ["--window-width", "650", "--window-height", "460"]
             if str(cpu_affinity).strip():
                 helper_command = [
                     "taskset", "-c", str(cpu_affinity).strip()

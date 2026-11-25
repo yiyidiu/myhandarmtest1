@@ -1,0 +1,44 @@
+<launch>
+  <arg name="world_name" default="$(find fr3_allegro_sim)/worlds/bench.world"/>
+  <arg name="gui" default="true"/>
+  <arg name="demo" default="true"/>
+  <arg name="finger_mode" default="false"/>
+  <param name="/fr3_allegro/fingers_active" value="$(arg finger_mode)"/>
+  <param name="/fr3_allegro/ready" value="false"/>
+  <param name="/fr3_allegro/homing_error" type="str" value=""/>
+  <!-- Palm +X (grasp side) points down and palm +Z (toward the middle finger) points forward. -->
+  <arg name="ready_degrees" default="71.59635238898 -68.52012805951 -40.5106112251 -132.13663721028 -111.50367217003 136 -68.67723976093"/>
+  <arg name="ready_j1" value="$(eval radians(float(arg('ready_degrees').split()[0])))"/>
+  <arg name="ready_j2" value="$(eval radians(float(arg('ready_degrees').split()[1])))"/>
+  <arg name="ready_j3" value="$(eval radians(float(arg('ready_degrees').split()[2])))"/>
+  <arg name="ready_j4" value="$(eval radians(float(arg('ready_degrees').split()[3])))"/>
+  <arg name="ready_j5" value="$(eval radians(float(arg('ready_degrees').split()[4])))"/>
+  <arg name="ready_j6" value="$(eval radians(float(arg('ready_degrees').split()[5])))"/>
+  <arg name="ready_j7" value="$(eval radians(float(arg('ready_degrees').split()[6])))"/>
+  <param name="/robot_description" textfile="$(find fr3_allegro_sim)/urdf/fr3_allegro_left.urdf"/>
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="$(arg world_name)"/>
+    <arg name="gui" value="$(arg gui)"/>
+    <arg name="gui_required" value="$(arg gui)"/>
+    <arg name="server_required" value="true"/>
+    <arg name="paused" value="true"/>
+  </include>
+  <node pkg="gazebo_ros" type="spawn_model" name="spawn_fr3_allegro" output="screen"
+        args="-urdf -model fr3_allegro -param /robot_description -unpause
+              -J fr3_joint1 $(arg ready_j1) -J fr3_joint2 $(arg ready_j2) -J fr3_joint3 $(arg ready_j3)
+              -J fr3_joint4 $(arg ready_j4) -J fr3_joint5 $(arg ready_j5) -J fr3_joint6 $(arg ready_j6)
+              -J fr3_joint7 $(arg ready_j7)
+              -J algr_lh_th_cmc 0.53"/>
+  <group ns="fr3_allegro">
+    <rosparam param="ready_arm" subst_value="true">[$(arg ready_j1), $(arg ready_j2), $(arg ready_j3), $(arg ready_j4), $(arg ready_j5), $(arg ready_j6), $(arg ready_j7)]</rosparam>
+    <rosparam file="$(find fr3_allegro_sim)/config/controllers.yaml"/>
+    <node name="state_publisher" pkg="robot_state_publisher" type="robot_state_publisher">
+      <param name="publish_frequency" value="60"/>
+    </node>
+    <node name="controllers" pkg="controller_manager" type="spawner"
+          args="joint_state_controller arm_controller hand_controller" output="screen"/>
+    <node name="motion_demo" pkg="fr3_allegro_sim" type="motion_demo.py" output="screen">
+      <param name="demonstrate" value="$(arg demo)"/>
+    </node>
+  </group>
+</launch>

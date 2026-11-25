@@ -3,12 +3,8 @@
 set -Eeuo pipefail
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export TELEOP_HAND_BACKEND=hamer
-export TELEOP_CONTROL_REFERENCE="${TELEOP_CONTROL_REFERENCE:-mano-five-point-palm}"
-if [[ "$TELEOP_CONTROL_REFERENCE" == mano-wrist-ring ]]; then
-  export TELEOP_WRIST_DEPTH_MODE="${TELEOP_WRIST_DEPTH_MODE:-palm-skin}"
-else
-  export TELEOP_WRIST_DEPTH_MODE="${TELEOP_WRIST_DEPTH_MODE:-joint0-surface}"
-fi
+export TELEOP_CONTROL_REFERENCE=mano-wrist-ring
+export TELEOP_WRIST_DEPTH_MODE=wrist-center-offset
 export TELEOP_MAPPING_PROFILE=whole_wrist_pose
 export TELEOP_IMU_CALIBRATED_POSE=false
 export TELEOP_PRECISE_ORIENTATION=false

@@ -107,7 +107,9 @@ value={"status":"PREPARING_RECORDERS","created_host_wall_ns":time.time_ns(),"cre
  "wrist_axes_diagnostics":os.environ.get("TELEOP_WRIST_DIAGNOSTICS","false")=="true",
  "live_rgb_preview":os.environ.get("TELEOP_LIVE_RGB_PREVIEW","false").lower()=="true",
  "single_camera_preview":os.environ.get("TELEOP_SINGLE_CAMERA_PREVIEW","false").lower()=="true",
- "wrist_depth_mode":os.environ.get("TELEOP_WRIST_DEPTH_MODE","visible-surface"),
+ "wrist_pose_baseline":"teleop-wrist-qb0-20261120",
+ "wrist_orientation_measurement":"camera_from_neutral_rotation @ neutral_wrist_basis",
+ "wrist_depth_mode":os.environ.get("TELEOP_WRIST_DEPTH_MODE","wrist-center-offset"),
  "forearm_fusion_requested":os.environ.get("TELEOP_FOREARM_FUSION","false").lower()=="true",
  "forearm_control_fusion_enabled":False,
  "positive_view_bias_gain":float(os.environ.get("TELEOP_POSITIVE_VIEW_BIAS_GAIN","0")),
@@ -297,6 +299,8 @@ setsid "${recording_affinity_arguments[@]}" rosbag record --buffsize=64 -O "$ses
   /egm_position_reference/diagnostics \
   /egm_position_reference/command_state \
   /egm_position_reference/collision_checked_joint_velocity \
+  /abbarm_velocity_controller/command /direct_velocity/diagnostics \
+  /direct_velocity/execution_state /direct_velocity/plant_state \
   /full_robot_self_collision_guard/command_safe \
   /full_robot_self_collision_guard/requested_hand_command \
   /full_robot_self_collision_guard/hand_diagnostic \

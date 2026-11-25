@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Robust MANO wrist-opening reference adapted from teleoperation core V9.
+"""Neutral MANO wrist-opening axes and live wrist measurements.
 
 The control origin is the centre of MANO's open wrist boundary (16 vertices
-for the licensed HaMeR MANO topology).  Orientation is the robust similarity
-fit of that ring against a neutral, side-specific template.  Finger joints
-are deliberately not used to define the control axes.
+for the licensed HaMeR MANO topology). The baseline transports the neutral
+axes with HaMeR's root rotation. A geometric ring fit is available for
+comparison.
 
 This module contains geometry only: it does not hold a pose through missing
 observations and it does not send robot commands.
@@ -22,6 +22,7 @@ import numpy as np
 from .palm_frame import (
     PalmFrameError,
     align_quaternion_sign,
+    mirror_canonical_rotation_to_source,
     project_to_so3,
     require_so3,
     rotation_matrix_to_quaternion_xyzw,
@@ -30,6 +31,8 @@ from .palm_frame import (
 
 EXPECTED_MANO_VERTICES = 778
 EXPECTED_WRIST_RING_VERTICES = 16
+HAMER_ROOT_WRIST = "HAMER_GLOBAL_ORIENT_TIMES_NEUTRAL_WRIST_RING_16"
+WRIST_BASELINE_ID = "teleop-wrist-qb0-20261120"
 WRIST = 0
 INDEX_MCP = 5
 MIDDLE_MCP = 9
@@ -259,6 +262,7 @@ class ManoWristFrameResult:
     is_right: bool
     failure_reason: str
     quality: Dict[str, Any]
+    uses_hamer_root: bool = False
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -276,9 +280,12 @@ class ManoWristFrameResult:
             "reference_kind": "MANO_WRIST_RING_16",
             "definition": (
                 "origin=mean(16 MANO wrist-opening vertices); "
-                "orientation=robust similarity Kabsch(neutral ring,current ring)"
+                + ("orientation=Q_camera_from_neutral @ B0_wrist_ring"
+                   if self.uses_hamer_root else
+                   "orientation=robust similarity Kabsch(neutral ring,current ring)")
             ),
-            "global_orient_used": False,
+            "global_orient_used": self.uses_hamer_root,
+            **({"orientation_source": HAMER_ROOT_WRIST} if self.uses_hamer_root else {}),
             "finger_joints_used_for_live_axes": False,
         }
 
@@ -334,6 +341,41 @@ def build_mano_wrist_definition(
         center=center,
         diameter=float(geometry["diameter"]),
     )
+
+
+def estimate_hamer_root_wrist_frame(result: Any, definition: ManoWristDefinition,
+                                   previous_quaternion_xyzw=None) -> ManoWristFrameResult:
+    """R_t = Q_t B0 in physical camera axes; B0 has identity MANO root pose."""
+    try:
+        if not isinstance(result.is_right, (bool, np.bool_)) or result.is_right != definition.is_right:
+            raise ValueError("live hand side differs from neutral template")
+        root = mirror_canonical_rotation_to_source(result.global_orient, definition.is_right)
+        if result.quality.get("perspective_correction", False):
+            view = require_so3(result.quality["camera_from_virtual_rotation"], "camera_from_virtual")
+            root = view @ root
+        rotation = require_so3(root @ definition.frame)
+        quat = align_quaternion_sign(rotation_matrix_to_quaternion_xyzw(rotation),
+                                     previous_quaternion_xyzw)
+        vertices = np.asarray(result.pred_vertices_source_camera_axes, dtype=np.float64)
+        if vertices.shape != (EXPECTED_MANO_VERTICES, 3):
+            raise ValueError("expected 778 source-camera vertices")
+        ring = vertices[definition.wrist_loop]
+        if not np.all(np.isfinite(ring)):
+            raise ValueError("nonfinite wrist vertices")
+        quality = {
+            "orientation_definition": HAMER_ROOT_WRIST,
+            "neutral_wrist_basis": definition.frame.tolist(),
+            "camera_from_neutral_rotation": root.tolist(),
+            "wrist_loop_vertex_indices": definition.wrist_loop.tolist(),
+            "wrist_loop_vertex_count": len(ring),
+            "origin_units": "mano_model_coordinates_not_d455_metric",
+            "origin_definition": "mean_of_16_mano_wrist_opening_vertices",
+        }
+        return ManoWristFrameResult(True, rotation, quat, ring.mean(axis=0),
+                                   definition.is_right, "", quality, uses_hamer_root=True)
+    except (KeyError, TypeError, ValueError, np.linalg.LinAlgError, PalmFrameError) as exc:
+        return ManoWristFrameResult(False, None, None, None, definition.is_right,
+                                   "hamer_root_wrist_invalid:{}".format(exc), {}, uses_hamer_root=True)
 
 
 def estimate_mano_wrist_frame(
@@ -402,9 +444,12 @@ def estimate_mano_wrist_frame(
 
 __all__ = [
     "EXPECTED_WRIST_RING_VERTICES",
+    "WRIST_BASELINE_ID",
+    "HAMER_ROOT_WRIST",
     "ManoWristDefinition",
     "ManoWristFrameResult",
     "build_mano_wrist_definition",
+    "estimate_hamer_root_wrist_frame",
     "estimate_mano_wrist_frame",
     "find_boundary_edges",
     "ordered_largest_boundary_loop",

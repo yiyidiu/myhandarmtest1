@@ -4,6 +4,7 @@ from pathlib import Path
 import math
 import sys
 import unittest
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -13,6 +14,7 @@ sys.path.insert(0, str(ROOT))
 
 from perception_hamer.src.mano_wrist_reference import (  # noqa: E402
     build_mano_wrist_definition,
+    estimate_hamer_root_wrist_frame,
     estimate_mano_wrist_frame,
     find_boundary_edges,
     ordered_largest_boundary_loop,
@@ -65,6 +67,33 @@ def _synthetic_mano_geometry():
 
 
 class ManoWristReferenceTest(unittest.TestCase):
+    def test_root_transports_side_specific_basis_in_camera_axes(self):
+        vertices, joints, faces = _synthetic_mano_geometry()
+        root = _rotation_xyz(28, -18, 65)
+        view = _rotation_xyz(-14, 31, 3)
+        for right in (False, True):
+            mirror = np.diag([1 if right else -1, 1, 1])
+            definition = build_mano_wrist_definition(vertices @ mirror, joints @ mirror, faces, right)
+            # Deform and translate the live boundary independently of the root.
+            live = definition.vertices @ _rotation_xyz(31, -22, 14).T + [.4, .2, -.6]
+            live[definition.wrist_loop[0]] += [.02, .01, -.01]
+            pred = SimpleNamespace(global_orient=root, is_right=right,
+                                   quality={"perspective_correction": True, "camera_from_virtual_rotation": view},
+                                   pred_vertices_source_camera_axes=live)
+            result = estimate_hamer_root_wrist_frame(pred, definition)
+            self.assertTrue(result.valid, result.failure_reason)
+            np.testing.assert_allclose(result.rotation, view @ mirror @ root @ mirror @ definition.frame)
+            np.testing.assert_allclose(result.origin, live[definition.wrist_loop].mean(axis=0))
+            pred.quality = {}
+            pred.global_orient = np.eye(3)
+            neutral = estimate_hamer_root_wrist_frame(pred, definition)
+            np.testing.assert_allclose(neutral.rotation, definition.frame)
+            pred.global_orient = np.full((3, 3), np.nan)
+            self.assertFalse(estimate_hamer_root_wrist_frame(pred, definition).valid)
+            pred.global_orient = np.eye(3)
+            pred.quality = {"perspective_correction": True}
+            self.assertFalse(estimate_hamer_root_wrist_frame(pred, definition).valid)
+
     def test_topology_discovers_exact_16_vertex_wrist_opening(self):
         vertices, joints, faces = _synthetic_mano_geometry()
         loop = ordered_largest_boundary_loop(find_boundary_edges(faces))

@@ -303,6 +303,71 @@ def prepare_hamer_crop(
     )
 
 
+
+def prepare_hamer_perspective_crop(
+    rgb, bbox, is_right, intrinsics, image_size=256,
+    bbox_shape=(192.0, 256.0), rescale_factor=2.0,
+    image_mean=(0.485, 0.456, 0.406), image_std=(0.229, 0.224, 0.225),
+):
+    """The frozen public PCL crop, with its inverse pixel map and 3D basis.
+
+    No fitted coefficients, temporal state, or second image-model pass.
+    The homography includes left-hand reflection, while the proper 3D
+    rotation is applied after undoing the canonical MANO x reflection.
+    """
+    validate_rgb_image(rgb)
+    if not isinstance(is_right, (bool, np.bool_)):
+        raise TypeError("is_right must be bool")
+    box = np.asarray(bbox, dtype=np.float64)
+    visible, quality = validate_bbox(box, rgb.shape)
+    if isinstance(intrinsics, Mapping):
+        k = np.array([[intrinsics["fx"], 0., intrinsics["ppx"]],
+                      [0., intrinsics["fy"], intrinsics["ppy"]], [0., 0., 1.]], dtype=float)
+        if (int(intrinsics.get("width", rgb.shape[1])) != rgb.shape[1]
+                or int(intrinsics.get("height", rgb.shape[0])) != rgb.shape[0]):
+            raise ValueError("perspective calibration resolution differs from RGB")
+    else:
+        k = np.asarray(intrinsics, dtype=np.float64)
+    if (k.shape != (3, 3) or not np.all(np.isfinite(k))
+            or k[0, 0] <= 0 or k[1, 1] <= 0
+            or not np.allclose(k[2], [0., 0., 1.])):
+        raise ValueError("perspective correction requires valid camera intrinsics")
+    size = int(image_size); aspect = np.asarray(bbox_shape, dtype=float)
+    if size <= 0 or aspect.shape != (2,) or np.any(aspect <= 0) or rescale_factor <= 0:
+        raise ValueError("invalid perspective crop size/aspect/scale")
+    ray = np.linalg.solve(k, np.r_[(box[:2]+box[2:])/2, 1.])
+    ray /= np.linalg.norm(ray)
+    right = np.cross([0., 1., 0.], ray); right /= np.linalg.norm(right)
+    down = np.cross(ray, right)
+    camera_from_virtual = np.stack([right, down, ray], axis=1)
+    warp = k @ camera_from_virtual.T @ np.linalg.inv(k)
+    corners = np.array([[box[0],box[1]], [box[2],box[1]],
+                        [box[2],box[3]], [box[0],box[3]]])
+    homogeneous = np.c_[corners, np.ones(4)] @ warp.T
+    if np.any(homogeneous[:, 2] <= 0):
+        raise ValueError("perspective crop crosses the virtual camera plane")
+    corners = homogeneous[:, :2]/homogeneous[:, 2:]
+    extent = np.ptp(corners, axis=0); center = (corners.min(0)+corners.max(0))/2
+    side = float(rescale_factor)*max(extent[0]*aspect[1]/aspect[0], extent[1])
+    scale = size/side; half = size/2
+    affine = np.array([[scale if is_right else -scale, 0., half-scale*center[0] if is_right else half+scale*center[0]],
+                       [0., scale, half-scale*center[1]], [0., 0., 1.]])
+    homography = affine @ warp
+    work = rgb; downsample = side/size/2
+    if downsample > 1.1:
+        work = cv2.GaussianBlur(work, (0, 0), (downsample-1)/2)
+    patch = cv2.warpPerspective(work, homography, (size, size), flags=cv2.INTER_LINEAR,
+                                borderMode=cv2.BORDER_CONSTANT)
+    mean = np.asarray(image_mean, dtype=float)*255
+    std = np.asarray(image_std, dtype=float)*255
+    crop = np.ascontiguousarray(((patch.astype(np.float32)-mean)/std).transpose(2, 0, 1), dtype=np.float32)
+    quality.update(crop_bbox_size_px=side, crop_padding_expected=float(side > min(rgb.shape[:2])),
+                   bbox_coordinate_convention="continuous_xyxy_half_open",
+                   visible_bbox_xyxy=visible.astype(float).tolist(),
+                   input_reflected_to_mano_right=bool(not is_right))
+    return crop, homography, quality, camera_from_virtual
+
+
 def validate_rotation_matrices(
     matrices: np.ndarray, expected_shape: Tuple[int, ...], name: str
 ) -> np.ndarray:
@@ -358,6 +423,7 @@ class HamerCropInference:
         minimum_visible_fraction: float = 0.60,
         source_frame: str = "unspecified_rgb_camera_frame",
         timestamp_clock_domain: str = "caller_rgb_capture_clock",
+        perspective_correction: bool = False,
     ) -> None:
         self.checkpoint_path = Path(checkpoint_path).expanduser().resolve()
         self.data_root = (
@@ -369,6 +435,7 @@ class HamerCropInference:
             raise ValueError("precision must be 'fp32' or 'fp16'")
         self.device_name = str(device)
         self.precision = precision
+        self.perspective_correction = bool(perspective_correction)
         self.rescale_factor = _finite_scalar(rescale_factor, "rescale_factor")
         self.freeze_betas = bool(freeze_betas)
         self.source_frame = str(source_frame).strip()
@@ -715,7 +782,8 @@ class HamerCropInference:
         return value.detach().float().cpu().numpy()[0].copy()
 
     def infer(
-        self, rgb: np.ndarray, bbox: Sequence[float], is_right: bool, timestamp: float
+        self, rgb: np.ndarray, bbox: Sequence[float], is_right: bool, timestamp: float,
+        *, camera_intrinsics: Optional[Mapping[str, Any]] = None,
     ) -> HamerInferenceResult:
         """Run one hand crop and return MANO outputs without rendering."""
 
@@ -725,16 +793,21 @@ class HamerCropInference:
         if not self.loaded:
             self.load()
         cfg = self._cfg
-        crop, affine, quality = prepare_hamer_crop(
-            rgb,
-            bbox,
-            bool(is_right),
+        crop_options = dict(
             image_size=int(cfg.MODEL.IMAGE_SIZE),
             bbox_shape=tuple(cfg.MODEL.get("BBOX_SHAPE", [192, 256])),
             rescale_factor=self.rescale_factor,
             image_mean=tuple(cfg.MODEL.IMAGE_MEAN),
             image_std=tuple(cfg.MODEL.IMAGE_STD),
         )
+        camera_from_virtual = np.eye(3)
+        if self.perspective_correction:
+            if camera_intrinsics is None:
+                raise HamerInferenceError("pure view correction requires current RGB camera intrinsics")
+            crop, affine, quality, camera_from_virtual = prepare_hamer_perspective_crop(
+                rgb, bbox, bool(is_right), camera_intrinsics, **crop_options)
+        else:
+            crop, affine, quality = prepare_hamer_crop(rgb, bbox, bool(is_right), **crop_options)
         requested_bbox = np.asarray(bbox, dtype=np.float32).copy()
         visible_bbox, _ = validate_bbox(requested_bbox, rgb.shape)
         if quality["bbox_visible_fraction"] < self.minimum_visible_fraction:
@@ -818,8 +891,14 @@ class HamerCropInference:
             )
         vertices_source = restore_source_camera_point_axes(vertices_native, is_right)
         keypoints_source = restore_source_camera_point_axes(keypoints_native, is_right)
+        if self.perspective_correction:
+            vertices_source = (vertices_source @ camera_from_virtual.T).astype(np.float32)
+            keypoints_source = (keypoints_source @ camera_from_virtual.T).astype(np.float32)
         quality.update(
             {
+                "perspective_correction": self.perspective_correction,
+                "camera_from_virtual_rotation": camera_from_virtual.tolist(),
+                "original_to_crop_kind": "homography" if self.perspective_correction else "affine",
                 "valid": True,
                 "precision": self.precision,
                 "device": str(self._device),
@@ -831,7 +910,7 @@ class HamerCropInference:
                 "focal_length_is_d455_intrinsics": False,
                 "point_geometry_units": "mano_model_coordinates_not_d455_translation",
                 "point_geometry_origin": "native_mano_output_not_root_normalized",
-                "point_geometry_frame": "source_camera_axes_after_left_x_unreflection",
+                "point_geometry_frame": "source_camera_axes_after_view_restore" if self.perspective_correction else "source_camera_axes_after_left_x_unreflection",
                 "rotation_convention": "mano_right_canonical_native_prior",
                 "rotation_is_d455_palm_frame": False,
                 "timestamp_semantics": "caller_supplied_rgb_capture_timestamp",

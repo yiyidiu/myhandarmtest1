@@ -3,8 +3,8 @@
 
 Raw RGB bytes are read from stdin. Image landmarks seed the local RGB-D
 search and preserve fingertip trajectories for temporal-motion analysis.
-MediaPipe z/world landmarks are deliberately never exported and cannot
-become the MANO wrist orientation.
+FR3 finger mode also reports four dimensionless, palm-local shape measurements
+per digit. MediaPipe world coordinates stay inside the detector.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from perception_hamer.src.hand_detection_gate import hand_landmark_visibility
+from perception_hamer.src.finger_observation import finger_shape_signature, normalized_thumb_tip_gaps
 
 def _read_exact(size: int):
     chunks = []
@@ -35,7 +36,7 @@ def _read_exact(size: int):
 def _detect(
     detector, rgb: np.ndarray, width: int, height: int, margin: float,
     minimum_bbox_area_fraction: float, edge_margin_px: float,
-    fixed_left_hand: bool = False,
+    fixed_left_hand: bool = False, finger_shapes: bool = False,
 ) -> dict:
     result = detector.process(rgb)
     if not result.multi_hand_landmarks:
@@ -94,6 +95,16 @@ def _detect(
         # for the wrist/palm anchors, whose depth supports the control pose.
         visibility = hand_landmark_visibility(xy, width, height, edge_margin_px)
         candidate.update(visibility)
+        if finger_shapes:
+            world = result.multi_hand_world_landmarks or []
+            if index < len(world):
+                world_points = [[p.x, p.y, p.z] for p in world[index].landmark]
+                signature = finger_shape_signature(world_points)
+                gaps = normalized_thumb_tip_gaps(world_points)
+                if gaps is not None:
+                    candidate["independent_tip_gaps"] = gaps.tolist()
+                if signature is not None:
+                    candidate["finger_shape_signature"] = signature.tolist()
         if not visibility["palm_inside_image"]:
             candidate.update(valid=False)
             rejected.append(candidate)
@@ -154,6 +165,8 @@ def main() -> int:
                         help="request fixed-left selection; never relabel other detected hands")
     parser.add_argument("--stream", action="store_true",
                         help="read fixed-size RGB frames until stdin closes")
+    parser.add_argument("--finger-shapes", action="store_true",
+                        help="include dimensionless per-digit flexion and opposition evidence")
     args = parser.parse_args()
     expected = args.width * args.height * 3
     with mp.solutions.hands.Hands(
@@ -181,7 +194,7 @@ def main() -> int:
             result = _detect(
                 detector, rgb, args.width, args.height, args.margin,
                 args.min_bbox_area_fraction, args.edge_margin_px,
-                fixed_left_hand=args.fixed_left_hand,
+                fixed_left_hand=args.fixed_left_hand, finger_shapes=args.finger_shapes,
             )
             result["detection_mode"] = "video_tracking" if args.stream else "static_detection"
             print(json.dumps(result, separators=(",", ":")), flush=True)

@@ -1,0 +1,2 @@
+# D455 USB access for the logged-in desktop operator.
+SUBSYSTEM=="usb", ATTR{idVendor}=="8086", ATTR{idProduct}=="0b5c", GROUP="plugdev", MODE="0660", TAG+="uaccess"

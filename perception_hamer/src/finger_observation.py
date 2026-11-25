@@ -30,6 +30,74 @@ FINGER_CHAINS = (
 )
 
 
+def finger_shape_signature(points):
+    """Intrinsic finger distances, in index/middle/ring/thumb/little order; no camera pose."""
+    xyz = np.asarray(points, dtype=float)
+    if xyz.shape != (21, 3) or not np.isfinite(xyz).all():
+        return None
+    chains = xyz[1:].reshape(5, 4, 3)[[1, 2, 3, 0, 4]]
+    palm_scale = np.linalg.norm(xyz[[5, 9, 13, 17]]-xyz[0], axis=1).mean()
+    length = np.linalg.norm(np.diff(chains, axis=1), axis=2).sum(axis=1)
+    if palm_scale < 1e-6 or length.min() < 1e-6:
+        return None
+    palm = np.repeat(xyz[[5, 9, 13, 17]].mean(axis=0)[None], 5, axis=0)
+    palm[3] = xyz[[13, 17]].mean(axis=0)
+    return np.column_stack((
+        np.linalg.norm(chains[:,3]-chains[:,0], axis=1)/length,
+        np.linalg.norm(chains[:,3]-xyz[0], axis=1)/palm_scale,
+        np.linalg.norm(chains[:,3]-palm, axis=1)/palm_scale,
+        np.linalg.norm(chains[:,2]-palm, axis=1)/palm_scale))
+
+
+def normalized_thumb_tip_gaps(points):
+    """Distances to index, middle and ring tips in units of metacarpal width."""
+    points = np.asarray(points, dtype=float)
+    if points.shape != (21, 3) or not np.isfinite(points).all():
+        return None
+    width = np.linalg.norm(points[5] - points[17])
+    if width < 1e-6:
+        return None
+    return np.linalg.norm(points[[8, 12, 16]] - points[4], axis=1) / width
+
+
+def visible_calibration_palm(hand, raw_rotation):
+    """Check that MCPs are separated in both the RGB image and the measured palm view."""
+    xy = np.asarray(hand.get("image_landmarks_px"), dtype=float)
+    xyz = np.asarray(hand.get("points"), dtype=float)
+    r = np.asarray(raw_rotation, dtype=float)
+    if xy.shape != (21, 2) or xyz.shape != (21, 3) or r.size != 9 or not np.isfinite(xy).all():
+        return False
+    axis, side = xy[9]-xy[0], xy[17]-xy[5]
+    n = np.cross(xyz[13]-xyz[5], xyz[9]-xyz[0])
+    aspect = abs(axis[0]*side[1]-axis[1]*side[0])/max(axis@axis, 1.)
+    incidence = abs((r.reshape(3,3) @ n)[2])/max(np.linalg.norm(n), 1e-8)
+    return aspect > .36 and incidence > .65
+
+
+def finger_surface_depths(pixels, raw_depth, depth_scale, wrist_z):
+    """Read the D455 surface near independent RGB joints. Missing or mixed-depth patches stay unknown."""
+    xy = np.asarray(pixels, dtype=float)
+    if xy.shape != (21,2) or not np.isfinite(xy).all():
+        return None
+    return sample_surface_depths(xy, raw_depth, depth_scale, wrist_z)
+
+
+def sample_surface_depths(xy, raw_depth, depth_scale, wrist_z):
+    h,w = raw_depth.shape
+    depths = []
+    for u,v in np.rint(xy).astype(int):
+        value = None
+        if 2 <= u < w-2 and 2 <= v < h-2:
+            patch = raw_depth[v-2:v+3,u-2:u+3]*depth_scale
+            near = patch[(patch > .1) & (np.abs(patch-wrist_z) < .17)]
+            if len(near) >= 13:
+                low,median,high = np.percentile(near,[20,50,80])
+                if high-low < .016:
+                    value = float(median)
+        depths.append(value)
+    return depths
+
+
 @dataclass(frozen=True)
 class FingerObservation:
     """One robot-independent five-digit flexion observation."""

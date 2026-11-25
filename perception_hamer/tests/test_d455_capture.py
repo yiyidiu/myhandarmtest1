@@ -8,6 +8,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import Mock
 
 import numpy as np
 
@@ -90,6 +91,74 @@ def make_frame() -> D455Frame:
         firmware_version="firmware",
         usb_type_descriptor="2.1",
     )
+
+
+class AlignmentRefreshTest(unittest.TestCase):
+    def setUp(self):
+        reference = make_frame()
+        self.capture = D455Capture()
+        self.capture._profile = object()
+        self.capture._pipeline = Mock()
+        self.capture._rs = Mock()
+        self.old = self.capture._align = Mock()
+        self.new = self.capture._rs.align.return_value
+        self.capture._depth_scale = reference.depth_scale_m_per_unit
+        self.capture._session_metadata = {
+            "raw_depth_intrinsics": reference.raw_depth_intrinsics,
+            "depth_to_color_extrinsics": reference.depth_to_color_extrinsics,
+        }
+        self.capture._metadata = {
+            "device_serial": "serial", "firmware_version": "firmware", "usb_type_descriptor": "2.1",
+        }
+
+        def frame(data, number, timestamp, intrinsics=None):
+            item = Mock()
+            item.profile.as_video_stream_profile.return_value.intrinsics = intrinsics or _Intrinsics()
+            item.get_data.return_value = data
+            item.get_frame_number.return_value = number
+            item.get_timestamp.return_value = timestamp
+            item.get_frame_timestamp_domain.return_value = "global_time"
+            return item
+
+        raw = self.raw = self.capture._pipeline.wait_for_frames.return_value
+        raw.get_color_frame.return_value = frame(reference.rgb, 12, 101.01)
+        raw.get_depth_frame.return_value = frame(reference.raw_depth_raw, 10, 101.0)
+        self.stale = _Intrinsics()
+        self.stale.fx += 0.52606201171875
+        self.stale.fy += 0.525482177734375
+        for block, depth_frame in (
+            (self.old, frame(reference.raw_depth_raw, 10, 101.0, self.stale)),
+            (self.new, frame(reference.aligned_depth_raw, 10, 101.0)),
+        ):
+            output = block.process.return_value
+            output.get_color_frame.return_value = raw.get_color_frame.return_value
+            output.get_depth_frame.return_value = depth_frame
+        self.expected_depth = reference.aligned_depth_raw
+
+    def test_refresh_reprojects_same_frameset_and_keeps_new_block(self):
+        result = self.capture.wait_for_frame()
+        self.capture._pipeline.wait_for_frames.assert_called_once_with(self.capture.timeout_ms)
+        self.old.process.assert_called_once_with(self.raw)
+        self.new.process.assert_called_once_with(self.raw)
+        np.testing.assert_array_equal(result.aligned_depth_raw, self.expected_depth)
+        self.assertEqual(set(result.aligned_to_color_intrinsics_differences.values()), {0.0})
+        self.capture.wait_for_frame()
+        self.capture._rs.align.assert_called_once_with(self.capture._rs.stream.color)
+        self.assertEqual(self.new.process.call_count, 2)
+
+    def test_persistent_bad_calibration_is_rejected_after_one_retry(self):
+        self.new.process.return_value = self.old.process.return_value
+        with self.assertRaisesRegex(D455CaptureError, "intrinsics after realignment"):
+            self.capture.wait_for_frame()
+        self.capture._pipeline.wait_for_frames.assert_called_once()
+        self.new.process.assert_called_once_with(self.raw)
+
+    def test_persistent_distortion_mismatch_is_rejected(self):
+        self.stale.fx, self.stale.fy = _Intrinsics.fx, _Intrinsics.fy
+        self.stale.coeffs = [0.1, 0.0, 0.0, 0.0, 0.0]
+        self.new.process.return_value = self.old.process.return_value
+        with self.assertRaisesRegex(D455CaptureError, "distortion metadata"):
+            self.capture.wait_for_frame()
 
 
 class D455FrameContractTest(unittest.TestCase):

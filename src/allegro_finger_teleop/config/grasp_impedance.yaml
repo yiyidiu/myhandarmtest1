@@ -1,0 +1,18 @@
+# Simulated Allegro joint impedance. P in Nm/rad, D in Nm s/rad.
+# Explicitly clear integral terms inherited from the general hand controller.
+algr_lh_if_axl: &base {p: 3.0, d: 0.035, i: 0.0, i_clamp_min: 0.0, i_clamp_max: 0.0}
+algr_lh_if_mcp: &proximal {p: 3.2, d: 0.035, i: 0.0, i_clamp_min: 0.0, i_clamp_max: 0.0}
+algr_lh_if_pip: &middle {p: 1.8, d: 0.018, i: 0.0, i_clamp_min: 0.0, i_clamp_max: 0.0}
+algr_lh_if_dip: &distal {p: 1.0, d: 0.009, i: 0.0, i_clamp_min: 0.0, i_clamp_max: 0.0}
+algr_lh_mf_axl: *base
+algr_lh_mf_mcp: *proximal
+algr_lh_mf_pip: *middle
+algr_lh_mf_dip: *distal
+algr_lh_rf_axl: *base
+algr_lh_rf_mcp: *proximal
+algr_lh_rf_pip: *middle
+algr_lh_rf_dip: *distal
+algr_lh_th_cmc: *base
+algr_lh_th_axl: *proximal
+algr_lh_th_mcp: *middle
+algr_lh_th_ipl: *distal

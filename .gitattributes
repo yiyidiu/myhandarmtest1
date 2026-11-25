@@ -6,3 +6,9 @@
 *.png binary
 *.jpg binary
 *.jpeg binary
+
+reproduction/fr3/source-revision.txt export-subst
+reproduction/fr3/**/*.obj binary
+reproduction/fr3/**/*.lib binary
+reproduction/fr3/**/*.mtl binary
+*.gpg binary

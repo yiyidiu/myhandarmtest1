@@ -10,6 +10,8 @@ requested RGB/aligned-depth/JSONL/overlay-video development recording.
 from __future__ import annotations
 
 import argparse
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import json
 import os
@@ -45,6 +47,7 @@ DEFAULT_REALSENSE_SITE_PACKAGES = os.environ.get(
 
 from perception_hamer.src.d455_capture import D455Capture
 from perception_hamer.src.active_hand_selector import AutomaticActiveHandSelector
+from perception_hamer.src.confirmed_wrist_so3_filter import ConfirmedWristSO3Filter
 from perception_hamer.src.causal_wrist_so3_filter import (
     CausalWristSO3Filter,
     CausalWristSO3FilterConfig,
@@ -72,7 +75,8 @@ from perception_hamer.src.hamer_palm_frame import (
 from perception_hamer.src.live_display import LiveDisplay, write_all
 from perception_hamer.src.mano_wrist_reference import (
     build_mano_wrist_definition,
-    estimate_mano_wrist_frame,
+    estimate_hamer_root_wrist_frame, estimate_mano_wrist_frame,
+    HAMER_ROOT_WRIST,
 )
 from perception_hamer.src.palm_frame import rotation_matrix_to_quaternion_xyzw
 from perception_hamer.src.realtime_hamer_pipeline import (
@@ -358,7 +362,7 @@ def _capture_worker(
             frame = capture.wait_for_frame()
             presence = None
             if async_detector is not None:
-                async_detector.submit(frame.rgb)
+                async_detector.submit(frame.rgb, frame.color_frame_number)
                 presence = async_detector.presence_snapshot()
             fresh_seed = pending.pop()
             if presence is not None and not presence["valid"]:
@@ -469,6 +473,7 @@ class MediaPipeDetectionSidecar:
         minimum_confidence: float,
         cpu_affinity: str = "",
         fixed_left_hand: bool = False,
+        finger_shapes: bool = False,
     ) -> None:
         helper = SCRIPT_DIR / "mediapipe_detect_roi_once.py"
         self.width = int(width)
@@ -481,6 +486,8 @@ class MediaPipeDetectionSidecar:
         ]
         if fixed_left_hand:
             command.append("--fixed-left-hand")
+        if finger_shapes:
+            command.append("--finger-shapes")
         if str(cpu_affinity).strip():
             command = ["taskset", "-c", str(cpu_affinity).strip()] + command
         self._process = subprocess.Popen(
@@ -540,6 +547,8 @@ class AsyncMediaPipeDetection:
         self._sidecar = sidecar
         self._condition = threading.Condition()
         self._frame = None
+        self._frame_number = None
+        self._frame_results = deque(maxlen=12)
         self._input_version = 0
         self._consumed_version = 0
         self._result_version = 0
@@ -565,7 +574,7 @@ class AsyncMediaPipeDetection:
         )
         self._thread.start()
 
-    def submit(self, rgb: np.ndarray) -> int:
+    def submit(self, rgb: np.ndarray, frame_number=None) -> int:
         frame = np.asarray(rgb)
         if frame.ndim != 3 or frame.shape[2] != 3 or frame.dtype != np.uint8:
             raise ValueError("MediaPipe input must be uint8 RGB")
@@ -573,9 +582,15 @@ class AsyncMediaPipeDetection:
             # RealSense-backed arrays must not be read after their next SDK
             # frame replaces the underlying buffer.
             self._frame = np.ascontiguousarray(frame).copy()
+            self._frame_number = frame_number
             self._input_version += 1
             self._condition.notify_all()
             return self._input_version
+
+    def detection_for_frame(self, frame_number):
+        with self._condition:
+            return next((result for number, result in reversed(self._frame_results)
+                         if number == frame_number), None)
 
     def latest_after(self, previous_version: int) -> tuple:
         with self._condition:
@@ -611,6 +626,7 @@ class AsyncMediaPipeDetection:
                 if self._stopping:
                     return
                 frame = self._frame
+                frame_number = self._frame_number
                 version = self._input_version
                 self._consumed_version = version
             try:
@@ -625,6 +641,8 @@ class AsyncMediaPipeDetection:
             result_monotonic = time.monotonic()
             with self._condition:
                 result = self._active_hand_selector.select(result, result_monotonic)
+                if frame_number is not None:
+                    self._frame_results.append((frame_number, result))
                 self._result = result
                 self._result_version = version
                 self._result_monotonic = result_monotonic
@@ -661,7 +679,8 @@ def _draw_user_palm_axes(image, result, control, panel_offsets=(0,)):
     rotation = np.asarray(control["rotation"], dtype=float)
     wrist = np.asarray(result.pred_keypoints_3d_source_camera_axes[0], dtype=float)
     source_points = np.vstack((wrist, wrist[None, :] + .055 * rotation.T))
-    canonical = source_points.copy()
+    restore = np.asarray(result.quality.get("camera_from_virtual_rotation", np.eye(3)))
+    canonical = source_points @ restore
     if not result.is_right:
         canonical[:, 0] *= -1
     pixels, _ = project_hamer_vertices_to_original(
@@ -1089,6 +1108,20 @@ def make_overlay(
     return canvas
 
 
+def _request_camera_zero(gate, pose_display):
+    gate.request_confirmation(pose_display.snapshot().sequence)
+    pose_display.clear_zero("operator_reference_requested")
+    print("C 已收到。请让掌面或手背朝向镜头，自然张开并静止两秒。", flush=True)
+
+
+def _draw_calibration_notice(image, text):
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.68
+    (width, height), baseline = cv2.getTextSize(text, font, scale, 2)
+    cv2.rectangle(image, (5, 5), (21 + width, 17 + height + baseline), (20, 20, 20), -1)
+    cv2.putText(image, text, (13, 12 + height), font, scale, (40, 230, 255), 2, cv2.LINE_AA)
+
+
 def _display_worker(
     display: LiveDisplay,
     preview_slot: LatestFrameSlot,
@@ -1231,12 +1264,6 @@ def _display_worker(
             and hand_presence_valid
             and roi_matches_detected_hand
         )
-        if pose_matches_visible_hand:
-            teleop_control_gate.observe_identity(
-                int(overlay_presence_generation),
-                int(active_hand_generation),
-                bool(result.is_right),
-            )
         # Display freshness is not a control measurement.  The main inference
         # loop independently validates MediaPipe presence, ROI alignment,
         # identity and orientation before every UDP packet.  Invalidating the
@@ -1247,36 +1274,28 @@ def _display_worker(
             # C is the only live-teleoperation enable/re-zero action. Lock
             # first so an invalid visible pose cannot leave an older robot
             # reference active.
-            teleop_control_gate.request_confirmation(pose_display.snapshot().sequence)
-            pose_display.clear_zero("operator_reference_requested")
-            print(
-                "C标定：先等待2秒，请把身体和张开的手放稳；倒计时结束后取新的稳定姿态。",
-                flush=True,
-            )
+            _request_camera_zero(teleop_control_gate, pose_display)
         pose_delta = pose_display.snapshot(
             "display_pose_not_current:" + str(failure_reason or "invalid")
             if not pose_matches_visible_hand
             else ""
         )
+        control_enabled = teleop_control_gate.enabled
         draw_reference_hand_box(
-            canvas, pose_display.reference_hand_bbox(),
+            canvas, pose_display.reference_hand_bbox() if control_enabled else None,
             packet.frame.rgb.shape[1], packet.frame.rgb.shape[0],
         )
         # Append, rather than overlay, so the existing exact-frame RGB/MANO
         # rendering remains pixel-for-pixel visible.
-        canvas = draw_hand_pose_panel(canvas, pose_delta, control_reference=control_reference)
+        canvas = draw_hand_pose_panel(canvas, pose_delta, control_reference=control_reference,
+                                      control_enabled=control_enabled)
         c_countdown = teleop_control_gate.confirmation_countdown_s()
         if c_countdown is not None:
-            cv2.putText(
-                canvas, (
-                    "C: SETTLE {:.1f}s - hold open hand".format(c_countdown)
-                    if c_countdown > 0.0 else
-                    "C: CAPTURING ZERO - keep hand steady"
-                ),
-                (canvas.shape[1] - 398, canvas.shape[0] - 35),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.44, (60, 210, 255),
-                1, cv2.LINE_AA,
-            )
+            _draw_calibration_notice(canvas, (
+                "C RECEIVED - hold open hand {:.1f}s".format(c_countdown)
+                if c_countdown > 0.0 else "C RECEIVED - checking wrist and open hand"))
+        elif teleop_control_gate.lock_reason == "C_REFERENCE_NOT_STABLE_RETRY":
+            _draw_calibration_notice(canvas, "ZERO NOT SET - show open hand, then press C")
         displayed += 1
         display_hz = displayed/max(1.0e-9, time.monotonic()-started)
         cv2.putText(
@@ -1391,18 +1410,20 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--orientation-filter-large-angle-mode",
-        choices=("follow", "reject"),
+        choices=("follow", "reject", "confirm"),
         default="reject",
         help=(
             "reject fails closed on discontinuous MANO orientation jumps "
-            "(default); follow is a diagnostic-only passthrough"
+            "(default); confirm recovers consistent fresh poses at a bounded rate; follow passes jumps through"
         ),
     )
     parser.add_argument(
         "--wrist-depth-mode",
-        choices=("visible-surface", "proximal-surface", "joint0-surface", "palm-skin"),
-        default=os.environ.get("TELEOP_WRIST_DEPTH_MODE", "visible-surface"),
+        choices=("wrist-center-offset", "visible-surface", "proximal-surface", "joint0-surface", "palm-skin"),
+        default=os.environ.get("TELEOP_WRIST_DEPTH_MODE", "wrist-center-offset"),
         help=(
+            "wrist-center-offset estimates ring-centre Z using same-pixel measured "
+            "depth minus the surface-to-centre Z difference in D455 axes; "
             "palm-skin uses direct measured palm skin depth for either reference, "
             "without model offsets or temporal depth filling; "
             "joint0-surface estimates joint 0 from local real depth plus a "
@@ -1417,8 +1438,9 @@ def _parse_args() -> argparse.Namespace:
         choices=("mano-wrist-ring", "mano-joint-palm", "mano-five-point-palm"),
         default="mano-wrist-ring",
         help=(
-            "mano-wrist-ring uses the archive's robust 16-vertex wrist-opening "
-            "centre/frame (default); mano-joint-palm keeps the former joint-0 "
+            "mano-wrist-ring aligns the 16-vertex wrist ring in palm-skin mode "
+            "and uses HaMeR root rotation times the neutral wrist basis in "
+            "wrist-center-offset mode. mano-joint-palm uses the former joint-0 "
             "and MCP-axis baseline; mano-five-point-palm uses left-hand "
             "X=palm-out, Y=index-to-little, Z=wrist-to-mean-MCPs"
         ),
@@ -1552,9 +1574,14 @@ def _parse_args() -> argparse.Namespace:
         default=DEFAULT_REALSENSE_SITE_PACKAGES,
     )
     parser.add_argument("--precision", choices=("fp16", "fp32"), default="fp16")
+    parser.add_argument("--pure-view-correction", action="store_true",
+                        help="frozen calibrated perspective crop and full camera-axis restoration; no learned correction")
     parser.add_argument("--teleop-udp-host", default="",
                         help="optional handarm_hamer_pose_v1 destination; empty disables UDP")
     parser.add_argument("--teleop-udp-port", type=int, default=5010)
+    parser.add_argument("--palm-hull-depth", action="store_true", help="Recover sparse centre depth from measured pixels inside the same palm.")
+    parser.add_argument("--finger-landmarks", action="store_true",
+                        help="transmit same-frame wrist-local OpenPose landmarks and bind C to one hand")
     parser.add_argument(
         "--teleop-maximum-pipeline-latency-s",
         type=float,
@@ -1596,8 +1623,64 @@ def _apply_thread_cpu_affinity(cpu_affinity: str) -> None:
         raise RuntimeError("cannot set capture thread affinity: " + result.stdout)
 
 
+def _prepare_live_model(runner, args, ring_orientation_source):
+    """Prepare the model and wrist geometry before using a hand ROI for inference."""
+    runner.load()
+    warmup_s = runner.warmup()
+    print(
+        "HaMeR/MANO warm-up complete in {:.1f} ms".format(1000.0 * warmup_s),
+        flush=True,
+    )
+    mano_topology = runner.mano_faces()
+    wrist_definitions = {}
+    if (args.finger_landmarks or args.control_reference == "mano-wrist-ring" or
+            (args.control_reference == "mano-five-point-palm" and
+             args.wrist_depth_mode not in ("joint0-surface", "palm-skin"))):
+        for physical_is_right in (False, True):
+            neutral_vertices, neutral_joints = runner.neutral_mano_geometry(
+                physical_is_right
+            )
+            wrist_definitions[physical_is_right] = build_mano_wrist_definition(
+                neutral_vertices,
+                neutral_joints,
+                mano_topology,
+                physical_is_right,
+            )
+    if args.control_reference in ("mano-wrist-ring", "mano-five-point-palm"):
+        print(
+            ("control reference: MANO FIVE-POINT PALM, wrist joint 0 origin; "
+             "X=palm-out, Y=index-to-little, Z=wrist-to-MCP-mean; "
+             + ("joint-0 local RGB-D + model surface offset; no wrist ring"
+              if args.wrist_depth_mode == "joint0-surface" else
+              "direct measured palm skin depth; no internal model offset"
+              if args.wrist_depth_mode == "palm-skin" else
+              "wrist loop used only for shared depth positioning")
+             if args.control_reference == "mano-five-point-palm" else
+             "control reference: MANO 16-vertex wrist ring, " + ring_orientation_source),
+            flush=True,
+        )
+    else:
+        print(
+            "control reference: legacy MANO joint 0 + MCP palm axes",
+            flush=True,
+        )
+    return warmup_s, mano_topology, wrist_definitions
+
+
 def main() -> int:
     args = _parse_args()
+    ring_orientation_source = (
+        HAMER_ROOT_WRIST if args.wrist_depth_mode == "wrist-center-offset"
+        else "HAMER_MANO_WRIST_RING_16_IRLS_KABSCH"
+    )
+    if args.wrist_depth_mode == "wrist-center-offset" and args.control_reference != "mano-wrist-ring":
+        raise SystemExit("wrist-center-offset requires --control-reference mano-wrist-ring")
+    if args.pure_view_correction:
+        if (not args.fixed_left_hand or args.control_reference != "mano-wrist-ring"
+                or args.wrist_depth_mode != "wrist-center-offset" or not args.show_wrist_axes):
+            raise SystemExit("pure view correction live mode requires fixed left hand, wrist-center-offset and wrist-axis display; use run.sh")
+        if args.imu_calibrated_pose or args.precise_orientation or args.positive_view_bias_gain != 0.0:
+            raise SystemExit("pure view correction cannot be combined with learned or legacy orientation corrections")
     if args.wrist_depth_mode == "joint0-surface" and args.control_reference != "mano-five-point-palm":
         raise SystemExit("--wrist-depth-mode joint0-surface requires --control-reference mano-five-point-palm")
     if args.imu_calibrated_pose and args.positive_view_bias_gain != 0.0:
@@ -1666,6 +1749,10 @@ def main() -> int:
             "live teleoperation requires the camera window because C is the "
             "only control-enable/reference action"
         )
+    ready_file = os.environ.get("FR3_CAMERA_READY_FILE")
+    robot_ready_path = Path(ready_file) if ready_file else None
+    if robot_ready_path is not None and (not args.auto_roi_mediapipe or args.no_display):
+        raise SystemExit("FR3 live startup requires the interactive camera preflight")
     try:
         process_singleton = ProcessSingleton()
     except RuntimeError as exc:
@@ -1691,10 +1778,13 @@ def main() -> int:
         data_root=args.data_root,
         device="cuda:0",
         precision=args.precision,
+        perspective_correction=args.pure_view_correction,
         freeze_betas=False,
         source_frame="camera_color_optical_frame",
         timestamp_clock_domain="d455_device_global_time_ms",
     )
+    if args.pure_view_correction:
+        print("模式：纯视角矫正；原始 HaMeR 权重；每帧只运行一次模型。", flush=True)
     asset_status = runner.asset_status()
     if not all(asset_status[key] for key in (
         "checkpoint_exists", "model_config_exists", "mano_right_exists",
@@ -1731,6 +1821,7 @@ def main() -> int:
     teleop_control_gate = TeleopControlGate(
         retain_reference_until_operator_action=True,
         confirmation_delay_s=2.0,
+        require_hand_landmarks=args.finger_landmarks,
     )
     view_bias_correction = CameraViewBiasCorrection(args.positive_view_bias_gain)
     imu_calibrated_pose = ImuCalibratedPalmCorrector(
@@ -1755,7 +1846,9 @@ def main() -> int:
         ProximalWristDepthFilter()
         if args.wrist_depth_mode == "proximal-surface" else None
     )
-    orientation_filter = CausalWristSO3Filter(
+    confirm_large_turns = args.orientation_filter_large_angle_mode == "confirm"
+    filter_type = ConfirmedWristSO3Filter if confirm_large_turns else CausalWristSO3Filter
+    orientation_filter = filter_type(
         CausalWristSO3FilterConfig(
             time_constant_s=.40 if args.precise_orientation else args.orientation_filter_time_constant_s,
             motion_consistency_window_s=.40 if args.precise_orientation else 0.0,
@@ -1765,17 +1858,14 @@ def main() -> int:
             motion_gain_full_deg=args.orientation_filter_motion_full_deg,
             innovation_soft_deg=args.orientation_filter_soft_deg,
             innovation_hard_deg=args.orientation_filter_hard_deg,
-            large_angle_mode=args.orientation_filter_large_angle_mode,
+            large_angle_mode=("reject" if confirm_large_turns else args.orientation_filter_large_angle_mode),
         )
     )
     print(
         "MANO wrist SO(3) large-angle mode: {}{}".format(
             args.orientation_filter_large_angle_mode.upper(),
-            (
-                " (valid large rotations are not rejected or softened)"
-                if args.orientation_filter_large_angle_mode == "follow"
-                else " (former hard rejection restored)"
-            ),
+            {"follow": " (pass through)", "reject": " (hard rejection)",
+             "confirm": " (recover after consistent fresh measurements)"}[args.orientation_filter_large_angle_mode],
         ),
         flush=True,
     )
@@ -1811,50 +1901,12 @@ def main() -> int:
     last_roi_reacquire_at = -float("inf")
     last_preflight_reason = "starting"
     warmup_s = 0.0
+    model_worker = None
+    model_startup = None
     try:
-        # Load before ROI initialization: KLT must not sit idle while a 2.6 GiB
-        # checkpoint is loaded and then compare a stale seed against a new frame.
-        runner.load()
-        warmup_s = runner.warmup()
-        print(
-            "HaMeR/MANO warm-up complete in {:.1f} ms".format(1000.0 * warmup_s),
-            flush=True,
-        )
-        mano_topology = runner.mano_faces()
-        wrist_definitions = {}
-        if (args.control_reference == "mano-wrist-ring" or
-                (args.control_reference == "mano-five-point-palm" and
-                 args.wrist_depth_mode not in ("joint0-surface", "palm-skin"))):
-            for physical_is_right in (False, True):
-                neutral_vertices, neutral_joints = runner.neutral_mano_geometry(
-                    physical_is_right
-                )
-                wrist_definitions[physical_is_right] = build_mano_wrist_definition(
-                    neutral_vertices,
-                    neutral_joints,
-                    mano_topology,
-                    physical_is_right,
-                )
-        if args.control_reference in ("mano-wrist-ring", "mano-five-point-palm"):
-            print(
-                ("control reference: MANO FIVE-POINT PALM, wrist joint 0 origin; "
-                 "X=palm-out, Y=index-to-little, Z=wrist-to-MCP-mean; "
-                 + ("joint-0 local RGB-D + model surface offset; no wrist ring"
-                  if args.wrist_depth_mode == "joint0-surface" else
-                  "direct measured palm skin depth; no internal model offset"
-                  if args.wrist_depth_mode == "palm-skin" else
-                  "wrist loop used only for shared depth positioning")
-                 if args.control_reference == "mano-five-point-palm" else
-                 "control reference: MANO wrist-opening ring "
-                 "(16 vertices, robust Kabsch; joint 0 is diagnostic only)"),
-                flush=True,
-            )
-        else:
-            print(
-                "control reference: legacy MANO joint 0 + MCP palm axes",
-                flush=True,
-            )
-        mano_faces = None if args.no_mesh_overlay else mano_topology
+        if robot_ready_path is None:
+            warmup_s, mano_topology, wrist_definitions = _prepare_live_model(
+                runner, args, ring_orientation_source)
         # Native RealSense/SQLite workers inherit the calling thread's CPU
         # set. Keep them off the inference cores, then restore only this
         # thread; do not repin all the newly created SDK workers afterward.
@@ -1867,12 +1919,18 @@ def main() -> int:
         seed_frame = capture.wait_for_stable_frames(consecutive=8)
         if not args.no_display:
             display = LiveDisplay(
-                "D455 HaMeR/MANO - teleoperation_ubuntu_core renderer",
+                ("HaMeR Q_t B0 - D455 wrist centre" if args.pure_view_correction
+                 else "D455 HaMeR/MANO - teleoperation_ubuntu_core renderer"),
                 args.display_helper_python,
                 SCRIPT_DIR / "display_frame_stream.py",
                 backend=args.display_backend,
                 cpu_affinity=args.sidecar_cpu_affinity,
             )
+        if robot_ready_path is not None:
+            # The same D455 and window are used throughout. Only the model
+            # worker touches HaMeR until its result is collected below.
+            model_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hamer-startup")
+            model_startup = model_worker.submit(_prepare_live_model, runner, args, ring_orientation_source)
         seed_validation: Dict[str, Any]
         if args.auto_roi_mediapipe:
             detector_sidecar = MediaPipeDetectionSidecar(
@@ -1880,6 +1938,7 @@ def main() -> int:
                 args.mediapipe_min_detection_confidence,
                 cpu_affinity=args.sidecar_cpu_affinity,
                 fixed_left_hand=args.fixed_left_hand,
+                finger_shapes=args.finger_landmarks,
             )
             async_detector = AsyncMediaPipeDetection(
                 detector_sidecar,
@@ -1894,16 +1953,24 @@ def main() -> int:
                 minimum_iou=0.40,
             )
             wait_for_hand_s = float(args.wait_for_hand_s)
-            deadline = None if wait_for_hand_s <= 0.0 else time.monotonic() + wait_for_hand_s
+            deadline = None
             attempts = 0
             detection_results = 0
             last_detection_version = 0
             stable_detection = None
             preflight_started_at = time.monotonic()
             last_wait_log_at = -float("inf")
+            early_c_notice_until = -float("inf")
             last_preflight_reason = "waiting_for_first_detection"
             while True:
                 attempts += 1
+                if model_startup is not None and model_startup.done():
+                    warmup_s, mano_topology, wrist_definitions = model_startup.result()
+                    model_startup = None
+                robot_ready = robot_ready_path is None or robot_ready_path.is_file()
+                startup_ready = robot_ready and model_startup is None
+                if startup_ready and deadline is None and wait_for_hand_s > 0.0:
+                    deadline = time.monotonic() + wait_for_hand_s
                 async_detector.submit(seed_frame.rgb)
                 (
                     last_detection_version, detection, _detection_monotonic,
@@ -1922,7 +1989,7 @@ def main() -> int:
                             detection.get("reason", "not_valid")
                         )
                         stable_detection = None
-                    if confirmed_detection is not None:
+                    if confirmed_detection is not None and startup_ready:
                         stable_detection = confirmed_detection
                         last_preflight_reason = "stable active hand - auto starting"
                 if display is not None:
@@ -1968,19 +2035,33 @@ def main() -> int:
                             (18, 136), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
                             (80, 255, 80), 2, cv2.LINE_AA,
                         )
-                    cv2.putText(
-                        preview, "PREFLIGHT ONLY - HaMeR / MANO IS OFF",
-                        (18, 164), cv2.FONT_HERSHEY_SIMPLEX, 0.58,
-                        (0, 0, 255), 2, cv2.LINE_AA,
-                    )
+                    if robot_ready_path is not None:
+                        status = "FR3: {}   HaMeR: {}".format(
+                            "ready" if robot_ready else "moving to start pose",
+                            "loading" if model_startup is not None else "ready")
+                        cv2.putText(preview, status, (18, 164), cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.55, (0, 255, 255), 2, cv2.LINE_AA)
+                        if time.monotonic() < early_c_notice_until:
+                            _draw_calibration_notice(preview, "C received early - press C when wrist tracking is ready")
+                    else:
+                        cv2.putText(preview, "PREFLIGHT ONLY - HaMeR / MANO IS OFF", (18, 164),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 0, 255), 2, cv2.LINE_AA)
                     if not display.show(preview) or display.stop_requested:
                         return 0
+                    if attempts == 1 and robot_ready_path is not None:
+                        print("D455 首帧已送入实时预览。机械臂和模型就绪后可标定。", flush=True)
                 confirmed_by_user = bool(
                     args.auto_confirm_hand or not args.require_hand_confirmation
                 )
                 if display is not None and display.pop_confirm_request():
                     confirmed_by_user = True
-                if confirmed_by_user and stable_detection is not None:
+                    if robot_ready_path is not None and teleop_socket is not None:
+                        if startup_ready and stable_detection is not None:
+                            _request_camera_zero(teleop_control_gate, pose_display)
+                        else:
+                            early_c_notice_until = time.monotonic() + 2.0
+                            print("C 已收到。正在等待臂手、模型或左手检测就绪；看到 C = SET ZERO 后再按一次。", flush=True)
+                if startup_ready and confirmed_by_user and stable_detection is not None:
                     seed_validation = dict(stable_detection)
                     seed_validation["attempts"] = attempts
                     seed_validation["detection_results"] = detection_results
@@ -2027,6 +2108,8 @@ def main() -> int:
                 "hand_presence_validated": True,
                 "source": "human_mouse_selection",
             }
+        # Wrist depth uses the MANO surface even when the preview hides the mesh.
+        mano_faces = None if args.no_mesh_overlay else mano_topology
         tracker = KLTTrackerROIProvider(
             initial_bbox=bbox,
             is_right=is_right,
@@ -2274,11 +2357,14 @@ def main() -> int:
                 try:
                     inference_call_started_monotonic = time.monotonic()
                     try:
+                        geometry_arguments = ({"camera_intrinsics": packet.frame.color_intrinsics}
+                                              if args.pure_view_correction else {})
                         candidate_result = runner.infer(
                             packet.frame.rgb,
                             packet.roi.bbox,
                             is_right,
                             timestamp_s,
+                            **geometry_arguments,
                         )
                     finally:
                         inference_call_completed_monotonic = time.monotonic()
@@ -2373,11 +2459,13 @@ def main() -> int:
                         else:
                             previous_joint_quaternion = None
                         if args.control_reference == "mano-wrist-ring":
-                            raw_control = estimate_mano_wrist_frame(
-                                result.pred_vertices_source_camera_axes,
-                                wrist_definitions[bool(result.is_right)],
-                                previous_control_quaternion,
-                            ).as_dict()
+                            definition = wrist_definitions[bool(result.is_right)]
+                            if args.wrist_depth_mode == "wrist-center-offset":
+                                raw_control = estimate_hamer_root_wrist_frame(
+                                    result, definition, previous_control_quaternion).as_dict()
+                            else:
+                                raw_control = estimate_mano_wrist_frame(
+                                    result.pred_vertices_source_camera_axes, definition, previous_control_quaternion).as_dict()
                         elif args.control_reference == "mano-five-point-palm":
                             raw_control = build_hamer_five_point_palm_frame(
                                 result.pred_keypoints_3d_source_camera_axes,
@@ -2395,6 +2483,9 @@ def main() -> int:
                                 "reference_kind": "MANO_JOINT_0_PALM_FRAME_LEGACY",
                             }
                         estimates["control_wrist_frame_raw"] = dict(raw_control)
+                        if args.finger_landmarks and args.wrist_depth_mode != "wrist-center-offset":
+                            estimates["finger_wrist_frame_raw"] = estimate_hamer_root_wrist_frame(
+                                result, wrist_definitions[bool(result.is_right)]).as_dict()
                         crop_quality_score = bbox_crop_quality(
                             packet.roi.bbox,
                             previous_quality_bbox,
@@ -2463,8 +2554,7 @@ def main() -> int:
                                     filtered_control.quaternion_xyzw.tolist()
                                 )
                                 control["orientation_source"] = (
-                                    "HAMER_MANO_WRIST_RING_16_IRLS_KABSCH_"
-                                    "QUALITY_ADAPTIVE_CAUSAL_SO3"
+                                    ring_orientation_source + "_QUALITY_ADAPTIVE_CAUSAL_SO3"
                                     if args.control_reference == "mano-wrist-ring"
                                     else
                                     "HAMER_MANO_JOINT_PALM_FRAME_"
@@ -2670,6 +2760,17 @@ def main() -> int:
                                 depth_palm_pixels = anchors
                         except (KeyError, TypeError, ValueError):
                             pass
+                    if args.finger_landmarks and async_detector is not None:
+                        witness = async_detector.detection_for_frame(packet.frame.color_frame_number)
+                        matched = (witness and witness.get("valid")
+                                   and witness.get("is_right") == bool(result.is_right)
+                                   and witness.get("active_hand_generation") == active_hand_generation)
+                        palm_visible = matched and witness.get("palm_inside_image", witness.get("fingers_inside_image"))
+                        estimates["wrist_image_landmarks_px"] = witness.get("hand_landmarks_pixels") if palm_visible else None
+                        matched = matched and witness.get("fingers_inside_image")
+                        estimates["finger_image_landmarks_px"] = witness.get("hand_landmarks_pixels") if matched else None
+                        estimates["finger_shape_signature"] = witness.get("finger_shape_signature") if matched else None
+                        estimates["independent_tip_gaps"] = witness.get("independent_tip_gaps") if matched else None
                     depth_now_monotonic = time.monotonic()
                     reference_depth_age_s = (
                         None
@@ -2701,6 +2802,8 @@ def main() -> int:
                         palm_anchor_pixels=depth_palm_pixels,
                         depth_filter=wrist_depth_filter,
                         wrist_depth_mode=args.wrist_depth_mode,
+                        include_hand_landmarks=args.finger_landmarks,
+                        allow_palm_hull_depth=args.palm_hull_depth,
                         mano_faces=mano_topology,
                     )
                     diagnostics = pose_packet_payload.get(
@@ -2950,6 +3053,8 @@ def main() -> int:
                     ),
                 )
             udp_payload["timing"] = dict(timing_payload)
+            if args.finger_landmarks:
+                udp_payload["capture_monotonic_s"] = capture_monotonic_s
             udp_payload = invalidate_stale_teleop_observation(
                 udp_payload, args.teleop_maximum_pipeline_latency_s
             )
@@ -3014,7 +3119,8 @@ def main() -> int:
                     ), flush=True,
                 )
             elif confirmation_was_pending and not teleop_control_gate.confirmation_pending:
-                print("C request expired: pose was not stable; hold the open hand steady and press C again.",
+                detail = udp_payload.get("invalid_reason") or "需同时看清稳定的腕部和张开的手形"
+                print("C 标定未完成（{}）。请将张开的手和手腕放在视野内，稳住后再按 C。".format(detail),
                       flush=True)
             record: Dict[str, Any] = {
                 "inference_ms": None if result is None else 1000.0 * result.inference_time_s,
@@ -3271,7 +3377,7 @@ def main() -> int:
             "obj_export_enabled": False,
             "hand_pose_6d_display_enabled": not args.no_display,
             "hand_pose_6d_reference": (
-                "C_ZERO_MANO_WRIST_RING_16_REALSENSE_METRIC_SO3"
+                ring_orientation_source if args.control_reference == "mano-wrist-ring" else args.control_reference
             ),
             "forearm_fusion_enabled": False,
             "imu_calibrated_pose_enabled": bool(args.imu_calibrated_pose),
@@ -3496,8 +3602,13 @@ def main() -> int:
             async_detector.close()
         if detector_sidecar is not None:
             detector_sidecar.close()
+        if model_worker is not None:
+            model_worker.shutdown(wait=True)
         process_singleton.close()
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        raise SystemExit(0)

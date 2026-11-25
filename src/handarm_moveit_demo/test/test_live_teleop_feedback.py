@@ -32,6 +32,7 @@ class OperatorFeedbackTest(unittest.TestCase):
         m.robot_safety_status = "SAFE"
         m.hand_safety_status = "HAND_PATH_ALLOWED"
         m.finger_closure = None
+        m.last_gesture = ("", 0.0)
         m.grip_latched = False
         m.release_phase = None
         m.trace = lambda *args: None
@@ -40,6 +41,15 @@ class OperatorFeedbackTest(unittest.TestCase):
         with patch("live_teleop_terminal_monitor.time.monotonic", return_value=now):
             self.monitor.write_feedback()
         return json.loads(Path(self.monitor.feedback_file).read_text())
+
+    def test_unresolved_finger_hint_expires_without_fresh_hand_input(self):
+        from std_msgs.msg import String
+        with patch("live_teleop_terminal_monitor.time.monotonic", return_value=100.0):
+            self.monitor.gesture_callback(String("pinch_unresolved"))
+        state = self.feedback()
+        self.assertTrue(state["pinch_unresolved"])
+        self.assertEqual(state["level"], "normal")
+        self.assertFalse(self.feedback(100.6)["pinch_unresolved"])
 
     def test_pure_rotation_stall_does_not_need_a_position_error(self):
         self.monitor.latest_diagnostic["rotation_error_rad"] = [math.radians(19), 0, 0]

@@ -5,6 +5,7 @@ import math
 import sys
 import threading
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -181,6 +182,20 @@ class RelativeWristPoseDisplayTest(unittest.TestCase):
 
 
 class HandPosePanelTest(unittest.TestCase):
+    def test_panel_distinguishes_invisible_hand_from_disarmed_controller(self):
+        source = np.zeros((480, 640, 3), dtype=np.uint8)
+        display = RelativeWristPoseDisplay()
+        display.update_from_packet(_packet(1, [0.1, 0.2, 0.5], np.eye(3)), 1)
+        self.assertTrue(display.calibrate_from_latest())
+        for delta, armed, expected in [
+            (display.snapshot(), False, "GAZEBO CONTROL: LOCKED"),
+            (display.invalidate("no_real_hand", 2), False, "CONTROL: LOCKED - PRESS C"),
+            (display.snapshot(), True, "CONTROL: PAUSED (C-ZERO PRESERVED)"),
+        ]:
+            with patch("perception_hamer.src.hand_pose_overlay.cv2.putText") as paint:
+                draw_hand_pose_panel(source, delta, control_enabled=armed)
+            self.assertIn(expected, [call.args[1] for call in paint.call_args_list])
+
     def test_panel_is_appended_without_covering_existing_mano_pixels(self):
         source = np.full((480, 1280, 3), 77, dtype=np.uint8)
         display = RelativeWristPoseDisplay()

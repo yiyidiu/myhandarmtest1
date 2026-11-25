@@ -22,6 +22,18 @@ class SelfDetourContinuityTest(unittest.TestCase):
         p, r = self.goal if goal is None else goal
         return self.helper.target(p, r, current, np.eye(3), {}, True, "same-C", valid)
 
+    def test_joint_limit_near_a_constant_assembly_gap_does_not_start_self_detour(self):
+        self.helper.active = None
+        angle = .5
+        r = np.array([[1,0,0],[0,np.cos(angle),-np.sin(angle)],[0,np.sin(angle),np.cos(angle)]])
+        feedback = dict(input_valid=True, self_distance_m=.0065, requested_velocity=[0,0,.1,1,0,0],
+                        approved_velocity=[0.]*6, self_constraint_active=False)
+        self.helper.target(self.goal[0],r,np.zeros(3),np.eye(3),feedback,True,"same-C",True)
+        self.assertIsNone(self.helper.blocked_since)
+        feedback["self_constraint_active"] = True
+        self.helper.target(self.goal[0],r,np.zeros(3),np.eye(3),feedback,True,"same-C",True)
+        self.assertIsNotNone(self.helper.blocked_since)
+
     def test_four_waypoints_finish_only_at_the_operator_target(self):
         for index in range(3):
             next_pose = self.update(self.points[index][0])

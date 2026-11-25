@@ -1,0 +1,58 @@
+# FR3 geometry and controller interfaces. Wrist gains and filters come from shared_teleop_core.launch.
+# These global parameters are read by the C++ collision / kinematic guard.
+servo_server:
+  lower_singularity_threshold: 40.0
+  hard_stop_singularity_threshold: 80.0
+  joint_limit_margin: 0.0
+robot_description_kinematics:
+  fr3_arm:
+    kinematics_solver: trac_ik_kinematics_plugin/TRAC_IKKinematicsPlugin
+    kinematics_solver_timeout: 0.02
+    solve_type: Speed
+shared_teleop:
+  assistance:
+    move_group: fr3_arm
+  control:
+    articulation_hold_topic: /fr3_allegro/stationary_wrist_sample
+    constrained_velocity_projection: true
+    joint_velocity_solver: qp
+    position_accommodation_m: 0.0
+    target_ik_group: fr3_arm
+    arm_joints: [fr3_joint1, fr3_joint2, fr3_joint3, fr3_joint4, fr3_joint5, fr3_joint6, fr3_joint7]
+  workspace:
+    minimum_base_m: [-1.4, -1.4, -1.1]
+    maximum_base_m: [1.4, 1.4, 1.8]
+hamer_input_adapter:
+  articulation_hold_topic: /fr3_allegro/stationary_wrist_sample
+  packet_topic: /fr3_allegro/camera_packet
+full_robot_self_collision_guard:
+  arm_group: fr3_arm
+  joint_state_topic: /fr3_allegro/joint_states
+  arm_joint_names: [fr3_joint1, fr3_joint2, fr3_joint3, fr3_joint4, fr3_joint5, fr3_joint6, fr3_joint7]
+  simulated_arm_stop_deflection_rad: 0.0001
+  redundant_joint_centering_rad_s: 0.75
+  joint_motion_weights: [0.85, 0.75, 0.55, 0.30, 0.60, 0.12, 0.22]
+  required_joint_names: [fr3_joint1, fr3_joint2, fr3_joint3, fr3_joint4, fr3_joint5, fr3_joint6, fr3_joint7, algr_lh_if_axl,
+    algr_lh_if_mcp, algr_lh_if_pip, algr_lh_if_dip, algr_lh_mf_axl, algr_lh_mf_mcp, algr_lh_mf_pip, algr_lh_mf_dip,
+    algr_lh_rf_axl, algr_lh_rf_mcp, algr_lh_rf_pip, algr_lh_rf_dip, algr_lh_th_cmc, algr_lh_th_axl, algr_lh_th_mcp,
+    algr_lh_th_ipl]
+  reserve_hardware_stopping_distance: true
+  verify_self_detour_constraint: true
+  use_abb_visual_palm: false
+  grasp_contact_links: [algr_lh_th_ds, algr_lh_if_ds, algr_lh_mf_ds, algr_lh_rf_ds, algr_lh_if_md, algr_lh_mf_md, algr_lh_rf_md,
+    algr_lh_th_px, algr_lh_if_px, algr_lh_mf_px, algr_lh_rf_px]
+  hand_reference_joint_names: [algr_lh_if_axl, algr_lh_if_mcp, algr_lh_if_pip, algr_lh_if_dip, algr_lh_mf_axl, algr_lh_mf_mcp,
+    algr_lh_mf_pip, algr_lh_mf_dip, algr_lh_rf_axl, algr_lh_rf_mcp, algr_lh_rf_pip, algr_lh_rf_dip, algr_lh_th_cmc,
+    algr_lh_th_axl, algr_lh_th_mcp, algr_lh_th_ipl]
+  initial_hand_reference: [-0.1, 0.07, 0.06, 0.06, 0.0, 0.07, 0.06, 0.06, 0.1, 0.07, 0.06, 0.06, 0.53, 0.12, 0.13,
+    0.09]
+  hand_command_topic: /fr3_allegro/hand_controller/command
+egm_position_reference_adapter:
+  arm_joints: [fr3_joint1, fr3_joint2, fr3_joint3, fr3_joint4, fr3_joint5, fr3_joint6, fr3_joint7]
+  initial_reference_param: /fr3_allegro/ready_arm
+  lower_limits: [-2.9007, -1.8361, -2.9007, -3.077, -2.8763, 0.4398, -3.0508]
+  upper_limits: [2.9007, 1.8361, 2.9007, -0.1169, 2.8763, 4.6216, 3.0508]
+  maximum_velocity: [2.0, 1.0, 1.5, 1.25, 3.0, 1.5, 3.0]
+  maximum_acceleration: [7.0, 7.0, 7.0, 8.0, 10.0, 12.0, 14.0]
+  maximum_following_error_rad: [0.02, 0.02, 0.02, 0.03, 0.03, 0.04, 0.04]
+  joint_limit_margin_rad: 0.0

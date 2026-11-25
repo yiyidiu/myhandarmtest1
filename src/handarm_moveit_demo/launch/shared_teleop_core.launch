@@ -1,5 +1,9 @@
 <?xml version="1.0"?>
 <launch>
+  <arg name="external_hand" default="false"/>
+  <arg name="hand_reference_kind" default="$(optenv TELEOP_CONTROL_REFERENCE mano-five-point-palm)"/>
+  <arg name="udp_port" default="5010"/>
+  <arg name="required_wrist_baseline" default="teleop-wrist-qb0-20261120"/>
   <arg name="enable_robot" default="false" />
   <arg name="simulation" default="true" />
   <arg name="robot_authorization" default="" />
@@ -38,6 +42,8 @@
   <node if="$(eval arg('input_source') == 'udp')"
         pkg="handarm_moveit_demo" type="hamer_input_adapter.py"
         name="hamer_input_adapter" output="screen">
+    <param name="port" value="$(arg udp_port)"/>
+    <param name="required_wrist_baseline" type="str" value="$(arg required_wrist_baseline)" />
     <!-- Match shared_teleop.yaml safety.input_timeout_s. The adapter uses
          wall-monotonic time and repeatedly publishes fail-closed status for
          the full duration of a UDP gap. -->
@@ -64,7 +70,7 @@
     <param name="simulation" value="$(arg simulation)" />
     <param name="geometric_recovery_filter" value="$(arg geometric_recovery_filter)" />
     <param name="mapping_profile" value="$(arg mapping_profile)" />
-    <param name="hand_reference_kind" value="$(optenv TELEOP_CONTROL_REFERENCE mano-five-point-palm)" />
+    <param name="hand_reference_kind" value="$(arg hand_reference_kind)" />
     <param if="$(eval arg('mapping_profile') == 'whole_wrist_pose')"
            name="self_detour_enabled" type="bool" value="$(optenv TELEOP_SELF_DETOUR true)" />
     <param name="reverse_palm_turn" type="bool"
@@ -126,7 +132,7 @@
     <param if="$(arg stable_position_reference_profile)"
            name="maximum_angular_acceleration_radps2" value="10.0" />
   </node>
-  <node if="$(arg simulation)" pkg="handarm_moveit_demo"
+  <node if="$(eval arg('simulation') and not arg('external_hand'))" pkg="handarm_moveit_demo"
         type="three_finger_retargeting_node.py"
         name="three_finger_retargeting" output="screen" required="true">
     <param name="hand_config"

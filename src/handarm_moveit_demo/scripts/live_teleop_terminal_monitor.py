@@ -36,6 +36,7 @@ class LiveTeleopTerminalMonitor:
         self.hand_input_reason = ""
         self.geometry = {}
         self.finger_closure = None
+        self.last_gesture = ("", 0.0)
         self.grip_latched = False
         self.release_phase = None
         self.hand_safety_status = ""
@@ -58,6 +59,7 @@ class LiveTeleopTerminalMonitor:
                          queue_size=300, tcp_nodelay=True)
         for key, topic in (
                 ("egm", "/egm_position_reference/diagnostics"),
+                ("direct_velocity", "/direct_velocity/diagnostics"),
                 ("geometry", "/shared_teleop/geometric_filter_diagnostics"),
                 ("motor", "/handarm_sim_demo/physical_hand_diagnostics"),
                 ("finger", "/shared_teleop/finger_diagnostics"),
@@ -71,6 +73,9 @@ class LiveTeleopTerminalMonitor:
                          self.geometry_callback, queue_size=1)
         rospy.Subscriber("/shared_teleop/finger_diagnostics", String,
                          self.finger_callback, queue_size=1)
+        gesture_topic = rospy.get_param("~gesture_topic", "")
+        if gesture_topic:
+            rospy.Subscriber(gesture_topic, String, self.gesture_callback, queue_size=1)
         rospy.Subscriber("/full_robot_self_collision_guard/hand_diagnostic", String,
                          lambda m: setattr(self, 'hand_safety_status', m.data), queue_size=1)
         rospy.Subscriber("/full_robot_self_collision_guard/diagnostic", String,
@@ -97,6 +102,9 @@ class LiveTeleopTerminalMonitor:
             queue_size=1,
         )
         self.timer = rospy.Timer(rospy.Duration(0.05), self.tick)
+
+    def gesture_callback(self, message):
+        self.last_gesture = (message.data, time.monotonic())
 
     def trace(self, key, value):
         if not self.trace_started or self.trace_path is None or self.trace_closed:
@@ -314,6 +322,8 @@ class LiveTeleopTerminalMonitor:
                      release_phase=self.release_phase,
                      hand_safety_status=self.hand_safety_status,
                      robot_safety_status=self.robot_safety_status)
+        gesture, stamp = self.last_gesture
+        value["pinch_unresolved"] = gesture == "pinch_unresolved" and now - stamp < .5
         value["self_detour_status"] = d.get("self_detour_status", "DIRECT")
         path = Path(self.feedback_file)
         temporary = path.with_suffix(".tmp")

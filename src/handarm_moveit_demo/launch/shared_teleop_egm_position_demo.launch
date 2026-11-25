@@ -2,6 +2,7 @@
 <launch>
   <!-- Independent Gazebo-only EGM position-reference experiment. -->
   <arg name="gazebo_gui" default="false" />
+  <arg name="arm_control_mode" default="position" />
   <arg name="input_source" default="synthetic" />
   <arg name="input_csv" default="" />
   <arg name="hamer_session" default="" />
@@ -35,6 +36,7 @@
 
   <include file="$(find abb120_moveit_config1)/launch/gazebo_egm_position.launch">
     <arg name="gazebo_gui" value="$(arg gazebo_gui)" />
+    <arg name="arm_control_mode" value="$(arg arm_control_mode)" />
     <arg name="paused" value="false" />
     <arg name="world_name" value="$(arg world_name)" />
     <arg name="initial_joint_positions" value="$(arg safe_initial_joint_positions)" />
@@ -87,7 +89,8 @@
     <param name="enable_swept_command_gate" value="true" />
     <param name="prediction_horizon_s" value="0.08" />
     <param name="maximum_prediction_samples" value="128" />
-    <param name="arm_position_reference_topic" value="/egm_position_reference/command_state" />
+    <param name="direct_velocity_execution" value="$(eval arg('arm_control_mode') == 'velocity')" />
+    <param name="arm_position_reference_topic" value="$(eval '' if arg('arm_control_mode') == 'velocity' else '/egm_position_reference/command_state')" />
     <param name="measured_joint_limit_tolerance_rad" value="0.02" />
     <param name="recover_simulated_hand_limit_transients" value="true" />
     <param name="hand_command_topic" value="/controller_gazebo_hand/command" />
@@ -102,7 +105,7 @@
 
   <!-- The 250 Hz publisher must not share the collision solver's reserved
        physical core. By default it inherits the general ROS CPU pool. -->
-  <node if="$(arg legacy_moveit_servo_reference)"
+  <node if="$(eval arg('legacy_moveit_servo_reference') and arg('arm_control_mode') == 'position')"
         pkg="handarm_moveit_demo" type="egm_position_reference_adapter.py"
         name="egm_position_reference_adapter" output="screen" required="true"
         launch-prefix="$(optenv TELEOP_REFERENCE_LAUNCH_PREFIX)">
@@ -142,7 +145,7 @@
               param="maximum_following_error_rad">[0.02, 0.02, 0.02, 0.03, 0.03, 0.04]</rosparam>
   </node>
 
-  <node unless="$(arg legacy_moveit_servo_reference)"
+  <node if="$(eval not arg('legacy_moveit_servo_reference') and arg('arm_control_mode') == 'position')"
         pkg="handarm_moveit_demo" type="egm_cartesian_reference_adapter.py"
         name="egm_cartesian_reference_adapter" output="screen" required="true">
     <param name="rate_hz" value="250.0" />
@@ -184,6 +187,10 @@
          joint slightly, but can never integrate several radians ahead. -->
     <rosparam param="maximum_following_error_rad">[0.08, 0.08, 0.08, 0.12, 0.12, 0.16]</rosparam>
   </node>
+
+  <node if="$(eval arg('arm_control_mode') == 'velocity')"
+        pkg="handarm_moveit_demo" type="direct_joint_velocity_adapter.py"
+        name="direct_joint_velocity_adapter" required="true" output="screen" />
 
   <include file="$(find handarm_moveit_demo)/launch/shared_teleop_core.launch">
     <arg name="enable_robot" value="false" />

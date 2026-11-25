@@ -22,7 +22,9 @@ from .shared_teleop_core import matrix_to_quaternion_xyzw, quaternion_xyzw_to_ma
 
 
 class SelfDetour:
-    def __init__(self, enabled, joint_limits):
+    def __init__(self, enabled, joint_limits, arm_group="abbarm", arm_joints=None):
+        self.arm_group = arm_group
+        self.arm_joints = arm_joints or ["joint_%d" % i for i in range(1, 7)]
         self.enabled = enabled
         self.joint_limits = joint_limits
         self.lock = threading.Lock()
@@ -115,6 +117,7 @@ class SelfDetour:
         requested = np.asarray(feedback.get("requested_velocity", [0.]*6))
         approved = np.asarray(feedback.get("approved_velocity", [0.]*6))
         blocked = (feedback_fresh and feedback.get("input_valid", False) and
+                   feedback.get("self_constraint_active") is not False and
                    0 <= feedback.get("self_distance_m", float("inf")) < .012 and
                    np.linalg.norm(requested[3:]) > .25 and
                    np.linalg.norm(approved[3:]) < .08 and
@@ -175,7 +178,7 @@ class SelfDetour:
             points = [(clear_p, start_r), (clear_p, goal[1]), goal]
             request = GetCartesianPathRequest()
             request.header.frame_id = "base_link"
-            request.group_name = "abbarm"
+            request.group_name = self.arm_group
             request.link_name = "tool0"
             request.start_state = copy.deepcopy(scene.robot_state)
             request.max_step = .005
@@ -201,7 +204,7 @@ class SelfDetour:
                 # collision/jump check and live guard still own execution.
                 rospy.wait_for_service("/compute_ik", timeout=.20)
                 ik = GetPositionIKRequest()
-                ik.ik_request.group_name = "abbarm"
+                ik.ik_request.group_name = self.arm_group
                 ik.ik_request.ik_link_name = "tool0"
                 ik.ik_request.robot_state = copy.deepcopy(scene.robot_state)
                 ik.ik_request.pose_stamped.header.frame_id = "base_link"
@@ -215,7 +218,7 @@ class SelfDetour:
                                        scene.robot_state.joint_state.position))
                     final = dict(zip(solution.solution.joint_state.name,
                                      solution.solution.joint_state.position))
-                    names = ["joint_%d" % i for i in range(1, 7)]
+                    names = self.arm_joints
                     delta = np.array([final[n]-initial[n] for n in names])
                     if np.max(np.abs(delta)) <= math.pi:
                         proposed = []

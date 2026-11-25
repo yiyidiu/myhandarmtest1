@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>allegro_finger_teleop</name>
+  <version>0.2.0</version>
+  <description>HaMeR wrist and finger retargeting for the simulated FR3 and left Allegro.</description>
+  <maintainer email="local@example.invalid">Local simulation workspace</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>libfcl-dev</depend>
+  <depend>urdfdom</depend>
+  <exec_depend>fr3_allegro_sim</exec_depend>
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>python3-rospkg</exec_depend>
+  <exec_depend>control_msgs</exec_depend>
+  <exec_depend>dynamic_reconfigure</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>gazebo_plugins</exec_depend>
+  <exec_depend>gazebo_msgs</exec_depend>
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>trajectory_msgs</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
+  <exec_depend>python3-lxml</exec_depend>
+</package>

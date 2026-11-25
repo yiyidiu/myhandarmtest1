@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.6)
+project(allegro_finger_teleop)
+find_package(catkin REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(CLEARANCE REQUIRED IMPORTED_TARGET fcl urdfdom)
+catkin_package()
+add_library(fr3_arm_clearance SHARED src/arm_clearance.cpp)
+target_compile_features(fr3_arm_clearance PRIVATE cxx_std_14)
+target_link_libraries(fr3_arm_clearance PRIVATE PkgConfig::CLEARANCE)
+install(TARGETS fr3_arm_clearance LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION})
+install(PROGRAMS scripts/fingers_node.py scripts/fingers_camera.sh scripts/allegro_v4_limits.py
+  scripts/fr3_semantic.py scripts/after_fr3_ready.py scripts/fr3_reference_output.py scripts/replay_camera.py
+  scripts/show_camera_at_startup.py DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+install(FILES scripts/retarget.py scripts/finger_stream.py scripts/hand_shape.py scripts/wrist_arm.py scripts/wrist_motion.py scripts/arm_reference.py scripts/object_impedance.py DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+install(DIRECTORY config data launch DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})

@@ -62,7 +62,9 @@ def append_robot_feedback(image: np.ndarray) -> np.ndarray:
         text += "（同步张开中）"
     elif state.get("grip_latched"):
         text += "（保持闭合）"
-    draw.text((12, 43), text, font=small, fill=(210, 210, 210))
+    if state.get("pinch_unresolved"):
+        text = "捏合手指待确认，稍转掌面再换指    " + text
+    draw.text((12, 43), text, font=small, fill=(255, 200, 85) if state.get("pinch_unresolved") else (210, 210, 210))
     return np.vstack((image, np.asarray(footer)[:, :, ::-1]))
 
 
@@ -550,6 +552,7 @@ class RelativeWristPoseDisplay:
 def draw_hand_pose_panel(
     image: np.ndarray, delta: WristPoseDelta, panel_width: int = 410,
     control_reference: str = "mano-wrist-ring",
+    control_enabled: Optional[bool] = None,
 ) -> np.ndarray:
     """Append an ASCII diagnostics panel without covering the MANO rendering."""
 
@@ -591,22 +594,23 @@ def draw_hand_pose_panel(
         21,
     )
     line("CAM: +X RIGHT  +Y DOWN  +Z AWAY", (190, 190, 190), 28)
+    active_zero = delta.calibrated and control_enabled is not False
     if not delta.valid:
         line("MEASUREMENT: INVALID", (60, 80, 255), 24)
         line("reason: " + delta.reason[:43], (150, 150, 150), 24)
         line("No stale XYZ or rotation is reused.", (150, 150, 150), 38)
         line(
             "CONTROL: PAUSED (C-ZERO PRESERVED)"
-            if delta.calibrated
-            else "CONTROL: LOCKED - C-ZERO NOT SET",
-            (90, 245, 150) if delta.calibrated else (60, 210, 255),
+            if active_zero
+            else "CONTROL: LOCKED - PRESS C",
+            (60, 210, 255),
             24,
         )
         line("Show a complete hand and wrist.", (60, 210, 255), 23)
         line(
-            "C = re-zero after pose becomes valid"
-            if delta.calibrated
-            else "C = set zero after pose becomes valid",
+            "Tracking resumes on a valid hand pose."
+            if active_zero
+            else "Open hand steady; press C to enable.",
             (200, 200, 200),
             23,
         )
@@ -639,7 +643,7 @@ def draw_hand_pose_panel(
         (90, 245, 150) if delta.forearm_applied else (80, 190, 255),
         24,
     )
-    if not delta.calibrated or delta.delta_m is None:
+    if not active_zero or delta.delta_m is None:
         line("GAZEBO CONTROL: LOCKED", (60, 80, 255), 25)
         line("RELATIVE POSE: ZERO NOT SET", (60, 210, 255), 25)
         line("Hold wrist + OPEN fingers steady; press C", (60, 210, 255), 38)

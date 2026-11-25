@@ -7,7 +7,6 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-catkin_python_setup()
 
 find_package(catkin REQUIRED COMPONENTS
   rospy
@@ -22,6 +21,8 @@ find_package(catkin REQUIRED COMPONENTS
   trajectory_msgs
   message_generation
 )
+
+catkin_python_setup()
 
 add_message_files(
   FILES
@@ -66,6 +67,7 @@ catkin_install_python(PROGRAMS
   scripts/servo_pose_step_test.py
   scripts/servo_velocity_to_position_bridge.py
   scripts/egm_position_reference_adapter.py
+  scripts/direct_joint_velocity_adapter.py
   scripts/egm_position_profile_validator.py
   scripts/servo_dynamic_target_test.py
   scripts/servo_pose_tracking_node.py

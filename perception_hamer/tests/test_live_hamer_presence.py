@@ -22,7 +22,8 @@ from perception_hamer.src.teleoperation_core_mano_renderer import (
 class LiveHamerPresenceTest(unittest.TestCase):
     def _confirm_with_delayed_pose(self, ready_at, stop_at):
         pose = RelativeWristPoseDisplay()
-        gate = TeleopControlGate(retain_reference_until_operator_action=True)
+        gate = TeleopControlGate(retain_reference_until_operator_action=True,
+                                confirmation_delay_s=2.0)
         overlay = LatestDisplayOverlay()
         overlay.update(SimpleNamespace(is_right=True), {}, 10., "", None,
                        None, None, 0)
@@ -36,13 +37,22 @@ class LiveHamerPresenceTest(unittest.TestCase):
 
             def get_after(self, previous, timeout_s):
                 self.count += 1
-                if self.count == ready_at:
-                    pose.update_from_packet({
+                if self.count >= ready_at:
+                    observation = {
                         "sequence": self.count, "stamp": 100.0,
                         "wrist_position_m": [0.0, 0.0, 0.6],
                         "palm_rotation_row_major": np.eye(3).ravel().tolist(),
                         "confidence": [0.9] * 6,
-                    }, 0)
+                        "valid": True, "presence_generation": 0, "active_hand_generation": 0,
+                        "hand_is_right": False, "finger_observation": {"valid": True, "flexion": [0.1]*5},
+                    }
+                    pose.update_from_packet(observation, 0)
+                else:
+                    observation = {"valid": False, "sequence": self.count}
+                # In live control the display requests C and inference confirms
+                # it on the same fresh packet that supplied the display pose.
+                gate.confirm_packet(observation, pose.calibrate_from_latest,
+                                    source_monotonic_s=self.count * 0.1)
                 return previous + 1, packet
 
         preview = Preview()
@@ -61,9 +71,8 @@ class LiveHamerPresenceTest(unittest.TestCase):
                 self.stop_requested = preview.count >= stop_at
                 return True
 
-        clock = iter(np.arange(0.0, 100.0, 0.02))
         with patch("perception_hamer.scripts.run_d455_hamer_crop.time.monotonic",
-                   side_effect=lambda: next(clock)), patch(
+                   side_effect=lambda: preview.count * 0.1), patch(
                        "perception_hamer.scripts.run_d455_hamer_crop.make_overlay",
                        return_value=np.zeros((480, 1280, 3), dtype=np.uint8)), patch(
                        "builtins.print"):
@@ -71,8 +80,11 @@ class LiveHamerPresenceTest(unittest.TestCase):
                             threading.Event(), "teleoperation-core", 1000.)
         return gate
 
-    def test_c_during_invalid_frame_accepts_next_fresh_pose(self):
-        self.assertTrue(self._confirm_with_delayed_pose(3, 5).enabled)
+    def test_c_during_invalid_frame_uses_four_fresh_observations_after_settling(self):
+        self.assertFalse(self._confirm_with_delayed_pose(3, 23).enabled)
+        gate = self._confirm_with_delayed_pose(3, 25)
+        self.assertTrue(gate.enabled)
+        self.assertEqual(gate.reference_pose["sequence"], 24)
 
     def test_expired_c_does_not_enable_on_a_later_pose(self):
         self.assertFalse(self._confirm_with_delayed_pose(100, 105).enabled)

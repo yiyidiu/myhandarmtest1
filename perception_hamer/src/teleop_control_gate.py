@@ -13,6 +13,7 @@ import time
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 import numpy as np
+from .finger_observation import visible_calibration_palm
 
 
 class TeleopControlGate:
@@ -22,8 +23,12 @@ class TeleopControlGate:
         self, retain_reference_until_operator_action: bool = False,
         startup_rotation_noise_deg: float = 0.0,
         confirmation_delay_s: float = 0.0,
+        require_hand_landmarks: bool = False,
+        resume_fixed_hand_after_loss: bool = False,
     ) -> None:
         self._lock = threading.RLock()
+        self._require_hand_landmarks = require_hand_landmarks
+        self._resume_fixed_hand = resume_fixed_hand_after_loss
         self._retain_reference_until_operator_action = bool(
             retain_reference_until_operator_action
         )
@@ -108,6 +113,7 @@ class TeleopControlGate:
             fingers = packet.get("finger_observation") or {}
             flexion = np.asarray(fingers.get("flexion", []), dtype=float)
             if (packet.get("valid") is not True or
+                    (self._require_hand_landmarks and not packet.get("hand_landmarks")) or
                     int(packet.get("sequence", -1)) <= after_sequence or
                     position.shape != (3,) or rotation.size != 9 or
                     confidence.shape != (6,) or not np.all(confidence > 0.0) or
@@ -130,6 +136,11 @@ class TeleopControlGate:
             if (np.max(np.linalg.norm(positions - np.median(positions, axis=0), axis=1)) > 0.006 or
                     np.max(np.linalg.norm(rotations - rotations[-1], axis=(1, 2))) > 0.074):
                 return None
+            hand = packet.get("hand_landmarks") or {}
+            visible_hand = bool(hand) and ("image_landmarks_px" not in hand or
+                        visible_calibration_palm(hand, packet.get("measured_wrist_rotation_row_major")))
+            if self._require_hand_landmarks and not visible_hand:
+                return None
             if not calibrate_display():
                 return None
             epoch = self.confirm(packet["presence_generation"],
@@ -140,6 +151,19 @@ class TeleopControlGate:
                 "palm_rotation_row_major": rotation.reshape(-1).tolist(),
             }
             surface = packet.get("palm_surface_observation") or {}
+            if visible_hand:
+                self._reference_pose["hand_landmarks"] = hand
+                for field in ("wrist_motion_support", "wrist_palm_rays"):
+                    if field in packet:
+                        self._reference_pose[field] = packet[field]
+                if "measured_wrist_rotation_row_major" in packet:
+                    self._reference_pose["measured_wrist_rotation_row_major"] = packet["measured_wrist_rotation_row_major"]
+                capture_seq = (packet.get("timing") or {}).get("capture_sequence")
+                if capture_seq is not None:
+                    self._reference_pose["capture_sequence"] = int(capture_seq)
+                capture_time = packet.get("capture_monotonic_s")
+                if capture_time is not None and np.isfinite(capture_time):
+                    self._reference_pose["capture_monotonic_s"] = float(capture_time)
             if surface.get("valid"):
                 # Auxiliary geometry belongs to the very same C frame.
                 # Its absence does not add a C requirement or a motion hold.
@@ -289,6 +313,15 @@ class TeleopControlGate:
             self._lock_reason = ""
             return self._reference_epoch
 
+    def _invalidates_bound_hand(self, observed) -> bool:
+        if self._retain_reference_until_operator_action:
+            return False
+        if self._resume_fixed_hand:
+            # Presence changes on every loss and return. The fixed-hand selector
+            # keeps the same active generation and physical side across that gap.
+            return observed is not None and observed[1:] != self._bound_identity[1:]
+        return observed != self._bound_identity
+
     def observe_identity(
         self,
         presence_generation: int,
@@ -301,13 +334,8 @@ class TeleopControlGate:
             presence_generation, active_hand_generation, hand_is_right
         )
         with self._lock:
-            if self._enabled and identity != self._bound_identity:
-                if not self._retain_reference_until_operator_action:
-                    self._enabled = False
-                    self._bound_identity = None
-                    self._lock_reason = (
-                        "HAND_IDENTITY_CHANGED_REQUIRES_NEW_C"
-                    )
+            if self._enabled and self._invalidates_bound_hand(identity):
+                self.disable("HAND_IDENTITY_CHANGED_REQUIRES_NEW_C")
             return self._enabled
 
     def invalidate(self, reason: str) -> None:
@@ -333,21 +361,18 @@ class TeleopControlGate:
                 output.get("hand_is_right"),
             )
         with self._lock:
-            if (
-                self._enabled
-                and not self._retain_reference_until_operator_action
-                and observed_identity != self._bound_identity
-            ):
-                self._enabled = False
-                self._bound_identity = None
-                self._lock_reason = "HAND_IDENTITY_CHANGED_REQUIRES_NEW_C"
-                output["valid"] = False
-                output["invalid_reason"] = self._lock_reason
+            if self._enabled and self._invalidates_bound_hand(observed_identity):
+                self.disable("HAND_IDENTITY_CHANGED_REQUIRES_NEW_C")
             enabled = self._enabled
             epoch = self._reference_epoch
             bound_identity = self._bound_identity
             lock_reason = self._lock_reason
             reference_pose = self._reference_pose
+        if self._resume_fixed_hand:
+            output["control_reference_policy"] = "fixed_hand"
+            if not identity_present and output.get("valid") is True:
+                output["valid"] = False
+                output["invalid_reason"] = "NO_CURRENT_FIXED_HAND"
         if (
             enabled
             and self._retain_reference_until_operator_action
@@ -374,6 +399,7 @@ class TeleopControlGate:
                 or "WAITING_FOR_OPERATOR_C_REFERENCE"
             )
         if output.get("valid") is not True:
+            output.pop("hand_landmarks", None)
             self._invalidate_dependent_observations(
                 output, str(output.get("invalid_reason", ""))
             )

@@ -56,3 +56,10 @@ __pycache__/
 
 # Accidental download residue seen in the original workspace
 /]+.deb[^'<> ]*
+
+/.build/
+
+# Personal transfer kit, licensed MANO, and portable-release setup state
+/fr3-owner/
+/MANO_RIGHT.pkl
+/fr3-owner.tar*

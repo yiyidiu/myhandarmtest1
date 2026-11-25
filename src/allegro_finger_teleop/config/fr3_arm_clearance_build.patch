@@ -1,0 +1,16 @@
+--- a/run.sh
++++ b/run.sh
+@@ -60,6 +60,12 @@
+ cmake --build "$build_dir" --target fr3_allegro_hw_sim --parallel 2 >/dev/null
+ source "$build_dir/devel/setup.bash" --extend
+ if [[ "$launch_package" == allegro_finger_teleop ]]; then
+-  export ROS_PACKAGE_PATH="$ALLEGRO_TELEOP_PROJECT/src/allegro_finger_teleop:$ROS_PACKAGE_PATH"
++  finger_package="$ALLEGRO_TELEOP_PROJECT/src/allegro_finger_teleop"
++  finger_build="$ALLEGRO_TELEOP_PROJECT/.build"
++  if [[ ! -f "$finger_build/CMakeCache.txt" ]]; then
++    cmake -S "$finger_package" -B "$finger_build" -DCMAKE_BUILD_TYPE=Release >/dev/null
++  fi
++  cmake --build "$finger_build" --target fr3_arm_clearance --parallel 2 >/dev/null
++  export ROS_PACKAGE_PATH="$finger_package:$ROS_PACKAGE_PATH"
+ fi
+ exec roslaunch -p 11431 "$launch_package" "$launch_file" "$@"

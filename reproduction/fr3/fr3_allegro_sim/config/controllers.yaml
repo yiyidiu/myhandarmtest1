@@ -1,0 +1,72 @@
+joint_state_controller:
+  type: joint_state_controller/JointStateController
+  publish_rate: 100
+
+arm_controller:
+  type: effort_controllers/JointTrajectoryController
+  joints: [fr3_joint1, fr3_joint2, fr3_joint3, fr3_joint4, fr3_joint5, fr3_joint6, fr3_joint7]
+  gains:
+    fr3_joint1: {p: 950, d: 32, i: 90, i_clamp: 15}
+    fr3_joint2: {p: 1050, d: 38, i: 160, i_clamp: 35}
+    fr3_joint3: {p: 850, d: 32, i: 110, i_clamp: 25}
+    fr3_joint4: {p: 850, d: 28, i: 135, i_clamp: 30}
+    fr3_joint5: {p: 260, d: 4.0, i: 32, i_clamp: 8}
+    fr3_joint6: {p: 270, d: 4.0, i: 40, i_clamp: 9}
+    fr3_joint7: {p: 85, d: 0.8, i: 12, i_clamp: 4}
+  constraints:
+    goal_time: 2.0
+    stopped_velocity_tolerance: 0.10
+    fr3_joint1: &arm_tolerance {goal: 0.055}
+    fr3_joint2: *arm_tolerance
+    fr3_joint3: *arm_tolerance
+    fr3_joint4: *arm_tolerance
+    fr3_joint5: *arm_tolerance
+    fr3_joint6: *arm_tolerance
+    fr3_joint7: *arm_tolerance
+  state_publish_rate: 50
+  allow_partial_joints_goal: true
+
+hand_controller:
+  type: effort_controllers/JointTrajectoryController
+  joints: [algr_lh_if_axl, algr_lh_if_mcp, algr_lh_if_pip, algr_lh_if_dip,
+           algr_lh_mf_axl, algr_lh_mf_mcp, algr_lh_mf_pip, algr_lh_mf_dip,
+           algr_lh_rf_axl, algr_lh_rf_mcp, algr_lh_rf_pip, algr_lh_rf_dip,
+           algr_lh_th_cmc, algr_lh_th_axl, algr_lh_th_mcp, algr_lh_th_ipl]
+  gains:
+    algr_lh_if_axl: &proximal {p: 1.8, d: 0.009, i: 0.50, i_clamp: 0.20}
+    algr_lh_if_mcp: *proximal
+    algr_lh_if_pip: &middle {p: 1.3, d: 0.004, i: 0.35, i_clamp: 0.16}
+    algr_lh_if_dip: &distal {p: 0.8, d: 0.0015, i: 0.20, i_clamp: 0.10}
+    algr_lh_mf_axl: *proximal
+    algr_lh_mf_mcp: *proximal
+    algr_lh_mf_pip: *middle
+    algr_lh_mf_dip: *distal
+    algr_lh_rf_axl: *proximal
+    algr_lh_rf_mcp: *proximal
+    algr_lh_rf_pip: *middle
+    algr_lh_rf_dip: *distal
+    algr_lh_th_cmc: *proximal
+    algr_lh_th_axl: *proximal
+    algr_lh_th_mcp: *middle
+    algr_lh_th_ipl: *distal
+  constraints:
+    goal_time: 2.0
+    stopped_velocity_tolerance: 0.10
+    algr_lh_if_axl: &hand_tolerance {goal: 0.07}
+    algr_lh_if_mcp: *hand_tolerance
+    algr_lh_if_pip: *hand_tolerance
+    algr_lh_if_dip: *hand_tolerance
+    algr_lh_mf_axl: *hand_tolerance
+    algr_lh_mf_mcp: *hand_tolerance
+    algr_lh_mf_pip: *hand_tolerance
+    algr_lh_mf_dip: *hand_tolerance
+    algr_lh_rf_axl: *hand_tolerance
+    algr_lh_rf_mcp: *hand_tolerance
+    algr_lh_rf_pip: *hand_tolerance
+    algr_lh_rf_dip: *hand_tolerance
+    algr_lh_th_cmc: *hand_tolerance
+    algr_lh_th_axl: *hand_tolerance
+    algr_lh_th_mcp: *hand_tolerance
+    algr_lh_th_ipl: *hand_tolerance
+  state_publish_rate: 50
+  allow_partial_joints_goal: true

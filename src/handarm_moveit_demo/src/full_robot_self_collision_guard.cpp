@@ -125,6 +125,9 @@ public:
     if (!model_)
       throw std::runtime_error("cannot load MoveIt robot model");
 
+    arm_group_ = private_nh_.param<std::string>("arm_group", "abbarm");
+    private_nh_.getParam("grasp_contact_links", grasp_contact_links_);
+    exact_abb_palm_ = private_nh_.param("use_abb_visual_palm", true);
     private_nh_.param<std::string>("joint_state_topic", joint_state_topic_, "/joint_states");
     private_nh_.param<std::string>("service_name", service_name_,
                                    "/full_robot_self_collision_guard/check_state_validity");
@@ -132,7 +135,10 @@ public:
     private_nh_.param("status_rate_hz", status_rate_hz_, 50.0);
     private_nh_.param("inverse_damping", inverse_damping_, 0.0);
     private_nh_.param("independent_palm_rotation_axes", independent_palm_rotation_axes_, false);
+    private_nh_.param("verify_self_detour_constraint", verify_self_detour_constraint_, false);
+    private_nh_.param("reserve_hardware_stopping_distance", reserve_hardware_stopping_distance_, false);
     private_nh_.param("allow_partial_spatial_rotation", allow_partial_spatial_rotation_, false);
+    private_nh_.param("direct_velocity_execution", direct_velocity_execution_, false);
     private_nh_.param<std::string>(
         "raw_velocity_topic", raw_velocity_topic_,
         "/full_robot_self_collision_guard/raw_arm_velocity");
@@ -164,6 +170,19 @@ public:
       required_joint_names_ = kDefaultRequiredJointNames;
     if (!private_nh_.getParam("arm_joint_names", arm_joint_names_))
       arm_joint_names_ = kDefaultArmJointNames;
+    private_nh_.param("simulated_arm_stop_deflection_rad", simulated_arm_stop_deflection_rad_, 0.);
+    if (!std::isfinite(simulated_arm_stop_deflection_rad_) || simulated_arm_stop_deflection_rad_ < 0. ||
+        simulated_arm_stop_deflection_rad_ > .001)
+      throw std::runtime_error("invalid simulated_arm_stop_deflection_rad");
+    private_nh_.param("redundant_joint_centering_rad_s", redundant_joint_centering_rad_s_, 0.);
+    if (!std::isfinite(redundant_joint_centering_rad_s_) || redundant_joint_centering_rad_s_ < 0.)
+      throw std::runtime_error("invalid redundant_joint_centering_rad_s");
+    if (private_nh_.hasParam("joint_motion_weights") &&
+        (!private_nh_.getParam("joint_motion_weights", joint_motion_weights_) ||
+         joint_motion_weights_.size() != arm_joint_names_.size() ||
+         !std::all_of(joint_motion_weights_.begin(), joint_motion_weights_.end(),
+                      [](double weight) { return std::isfinite(weight) && weight >= 0.0; })))
+      throw std::runtime_error("Expected a finite nonnegative joint_motion_weight per arm joint");
     if (!private_nh_.getParam(
             "hand_reference_joint_names", hand_reference_joint_names_))
       hand_reference_joint_names_ = kDefaultHandReferenceJointNames;
@@ -358,8 +377,14 @@ public:
           &FullRobotSelfCollisionGuard::requestedHandCommandCallback, this,
           ros::TransportHints().tcpNoDelay());
     }
-    const auto arm_reference_topic = private_nh_.param<std::string>(
-        "arm_position_reference_topic", "");
+    const auto arm_reference_topic = direct_velocity_execution_ ? std::string() :
+        private_nh_.param<std::string>("arm_position_reference_topic", "");
+    if (direct_velocity_execution_)
+    {
+      const std::vector<double> acceleration{8.0, 8.0, 8.0, 12.0, 12.0, 16.0};
+      for (std::size_t i = 0; i < arm_joint_names_.size(); ++i)
+        reference_acceleration_[arm_joint_names_[i]] = acceleration.at(i);
+    }
     if (!arm_reference_topic.empty())
     {
       if (constrained_velocity_projection_)
@@ -472,6 +497,13 @@ private:
     else
       for (int i = 0; i < 2; ++i)
         if (messages[i]) applyJointState(messages[i], received[i]);
+    if (direct_velocity_execution_)
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (latest_state_ && latest_state_->hasVelocities())
+        for (const auto& name : arm_joint_names_)
+          latest_reference_velocity_[name] = latest_state_->getVariableVelocity(name);
+    }
   }
 
   struct Clearance
@@ -480,7 +512,7 @@ private:
     double world;
   };
 
-  double armMargin(const moveit::core::RobotState& state) const
+  double armMargin(const moveit::core::RobotState& state, std::string* nearest = nullptr) const
   {
     double result = std::numeric_limits<double>::max();
     for (std::size_t i = 0; i < arm_joint_names_.size(); ++i)
@@ -489,15 +521,20 @@ private:
       const auto& bounds = model_->getVariableBounds(name);
       if (!bounds.position_bounded_) continue;
       const double q = state.getVariablePosition(name);
-      result = std::min(result, std::min(q - operating_lower_limits_[i], operating_upper_limits_[i] - q));
+      const double margin = std::min(q - operating_lower_limits_[i], operating_upper_limits_[i] - q);
+      if (margin < result)
+      {
+        result = margin;
+        if (nearest) *nearest = name;
+      }
     }
     return result;
   }
 
-  Clearance clearance(const moveit::core::RobotState& state) const
+  Clearance clearance(const moveit::core::RobotState& state, std::string* closest_pair = nullptr) const
   {
     collision_detection::DistanceRequest request;
-    request.group_name = "abbarm";
+    request.group_name = arm_group_;
     // Without signed distances FCL reports the same -1 sentinel for every
     // penetrating pose. That hides an increasing-clearance retreat from a
     // shallow contact and can leave Servo's zero collision scale latched.
@@ -508,6 +545,8 @@ private:
     collision_detection::DistanceResult self, world;
     scene_->getCollisionEnv()->distanceSelf(request, self, state);
     scene_->getCollisionEnv()->distanceRobot(request, world, state);
+    if (closest_pair)
+      *closest_pair = self.minimum_distance.link_names[0] + "," + self.minimum_distance.link_names[1];
     return { self.minimum_distance.distance, world.minimum_distance.distance };
   }
 
@@ -542,7 +581,7 @@ private:
   {
     state.updateCollisionBodyTransforms();
     collision_detection::CollisionRequest request;
-    request.group_name = "abbarm";
+    request.group_name = arm_group_;
     request.contacts = true;
     request.max_contacts = 200;
     request.max_contacts_per_pair = 20;
@@ -557,19 +596,20 @@ private:
                             const Eigen::Matrix<double, 6, 1>& requested,
                             std::vector<double>& velocity,
                             std::size_t& constraint_count,
-                            std::string& reason) const
+                            std::string& reason, int* self_constraint_active = nullptr) const
   {
+    std::vector<std::size_t> nearby_self_rows;
     // Differential IK with velocity-damper inequalities, as used in NEO and
     // constrained differential IK. Unlike the legacy clearance conjunction,
     // a still-distant object can be approached while escaping a close wrist.
     // This is a local velocity controller, not a global obstacle planner.
-    const auto* group = model_->getJointModelGroup("abbarm");
+    const auto* group = model_->getJointModelGroup(arm_group_);
     const int n = static_cast<int>(arm_joint_names_.size());
     std::vector<Eigen::RowVectorXd> rows;
     std::vector<double> lower;
     state.updateCollisionBodyTransforms();
     collision_detection::DistanceRequest request;
-    request.group_name = "abbarm";
+    request.group_name = arm_group_;
     request.enableGroup(model_);
     request.enable_nearest_points = true;
     request.enable_signed_distance = true;
@@ -751,6 +791,8 @@ private:
               selfClearanceMargin(contact.link_names[0], contact.link_names[1]) : 0.001;
           const double braking_margin = self ?
               std::max(0.0, closing_speed) * (0.5 * braking_time + 0.02) : 0.0;
+          if (self_constraint_active && self && contact.distance < .012)
+            nearby_self_rows.push_back(rows.size());
           rows.push_back(gradient);
           lower.push_back(-approach_rate * std::max(0.0,
               contact.distance - clearance_margin - tracking_margin - braking_margin));
@@ -926,6 +968,9 @@ private:
     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> hessian =
         weighted_jacobian.transpose() * weighted_jacobian;
     hessian.diagonal().array() += std::max(1e-6, inverse_damping_ * inverse_damping_);
+    // Robot-specific cost on joint rates in the redundant differential IK.
+    for (std::size_t i = 0; i < joint_motion_weights_.size(); ++i)
+      hessian(i,i) += joint_motion_weights_[i] * joint_motion_weights_[i];
     // Task normalization must include the weak-direction regularizer. The
     // position task was multiplied by 6.67 while these thresholds retained
     // their old scale: at the recorded nearly straight elbow the solver
@@ -943,6 +988,24 @@ private:
                           task_svd.matrixV().col(i).transpose();
     }
     Eigen::VectorXd gradient = -weighted_jacobian.transpose() * target;
+    if (redundant_joint_centering_rad_s_ > 0. && n > 6 && target.norm() > 1e-4)
+    {
+      // Bias only the redundant directions of a moving Cartesian task. Saturated
+      // wrists can otherwise leave the elbow straight throughout the next turn.
+      const auto null_basis = task_svd.matrixV().rightCols(n - 6);
+      const Eigen::MatrixXd projector = null_basis * null_basis.transpose();
+      Eigen::VectorXd preferred = Eigen::VectorXd::Zero(n);
+      for (int i = 0; i < n; ++i)
+      {
+        const auto& bound = model_->getVariableBounds(arm_joint_names_[i]);
+        if (!bound.position_bounded_) continue;
+        const double fraction = (2. * state.getVariablePosition(arm_joint_names_[i])
+            - bound.max_position_ - bound.min_position_) / (bound.max_position_ - bound.min_position_);
+        preferred[i] = -redundant_joint_centering_rad_s_ * std::pow(std::max(-1., std::min(1., fraction)), 5);
+      }
+      hessian += 0.7 * projector;
+      gradient -= 0.7 * std::min(1., target.norm()) * projector * preferred;
+    }
     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> matrix(rows.size(), n);
     for (std::size_t i = 0; i < rows.size(); ++i) matrix.row(i) = rows[i];
     std::vector<double> lb(n), ub(n), upper(rows.size(), qpOASES::INFTY);
@@ -967,7 +1030,7 @@ private:
       if (bound.position_bounded_)
       {
         double lower_reserve = 0.0, upper_reserve = 0.0;
-        if (operating_lower_limits_[i] > bound.min_position_ + 1e-9 ||
+        if (reserve_hardware_stopping_distance_ || operating_lower_limits_[i] > bound.min_position_ + 1e-9 ||
             operating_upper_limits_[i] < bound.max_position_ - 1e-9)
         {
           // Stop before the working boundary, accounting for reference
@@ -1162,6 +1225,15 @@ private:
     }
     Eigen::Map<Eigen::VectorXd> solved(velocity.data(), n);
     if (!solved.allFinite()) { reason = "NONFINITE_PROJECTED_VELOCITY"; return false; }
+    if (self_constraint_active)
+    {
+      // A permanent assembly gap is not evidence that self-clearance blocked
+      // the command. Check the dual of each nearby self-distance inequality.
+      std::vector<double> dual(n + lower.size());
+      if (problem.getDualSolution(dual.data()) == qpOASES::SUCCESSFUL_RETURN)
+        *self_constraint_active = std::any_of(nearby_self_rows.begin(), nearby_self_rows.end(),
+            [&](std::size_t row) { return std::abs(dual[n + row]) > 1e-7; }) ? 1 : 0;
+    }
     const Eigen::VectorXd twist = jacobian * solved;
     const double scale = std::max({1.0, twist.head(3).norm() / 0.30, twist.tail(3).norm() / 2.0});
     solved /= scale;  // Zero is feasible, so uniform reduction preserves all inequalities.
@@ -1174,8 +1246,9 @@ private:
     // Release is complete only after actual finger surfaces have separated,
     // not merely because the OPEN joint command has finished. Query these
     // pairs independently of the temporarily allowed grasp contacts.
-    const std::vector<std::string> fingers{
-        "f1link2", "f1link3", "f2link1", "f2link2", "f3link2", "f3link3"};
+    const auto fingers = grasp_contact_links_.empty() ?
+        std::vector<std::string>{"f1link2", "f1link3", "f2link1", "f2link2", "f3link2", "f3link3"} :
+        grasp_contact_links_;
     const std::set<std::string> targets{
         "target_object", "ground_object_left", "ground_object_right"};
     std::set<const moveit::core::LinkModel*> active;
@@ -1250,7 +1323,9 @@ private:
     std::size_t projection_constraint_count = 0;
     std::map<std::string, double> finger_object_clearance;
     Clearance current{ 0.0, 0.0 };
-    double condition = 0.0;
+    double condition = 0.0, nearest_margin = 0.0;
+    std::string nearest_joint, closest_self_pair;
+    int self_constraint_active = -1;
     bool singularity_limited = false;
     bool joint_limit_limited = false;
     bool reset_singularity_allowed = false;
@@ -1306,7 +1381,7 @@ private:
     else if (message->valid && requested.allFinite() && age >= -future_tolerance && age <= 0.15 &&
              message->header.frame_id == "base_link")
     {
-      current = clearance(state);
+      current = clearance(state, &closest_self_pair);
       if (constrained_velocity_projection_)
         finger_object_clearance = fingerObjectClearances(state);
       // This guard sees the full compliant hand. It must recognize its own
@@ -1316,7 +1391,7 @@ private:
       if (current.self < 0.0 || current.world < 0.0)
         proximity_recovery_active_ = true;
       Clearance selected_clearance = current;
-      const auto* group = model_->getJointModelGroup("abbarm");
+      const auto* group = model_->getJointModelGroup(arm_group_);
       Eigen::MatrixXd jacobian;
       state.getJacobian(group, model_->getLinkModel("tool0"),
                         Eigen::Vector3d::Zero(), jacobian);
@@ -1334,7 +1409,8 @@ private:
             (singular[i] > 1e-12 ? 1.0 / singular[i] : 0.0);
       const Eigen::MatrixXd inverse = svd.matrixV() * inverse_values.asDiagonal() * svd.matrixU().transpose();
       condition = singular[0] / std::max(1.0e-12, singular[singular.size() - 1]);
-      const double current_margin = armMargin(state);
+      const double current_margin = armMargin(state, &nearest_joint);
+      nearest_margin = current_margin;
       double selected_condition = condition, selected_margin = current_margin;
       joint_limit_limited = current_margin <= joint_limit_margin_ + 0.01;
       // Status 1 can persist after leaving a singularity. Use current
@@ -1457,7 +1533,8 @@ private:
         }
         else
           projected_command_safe = projectJointVelocity(state, jacobian, requested,
-              projected_joint_velocity, projection_constraint_count, reason);
+              projected_joint_velocity, projection_constraint_count, reason,
+              verify_self_detour_constraint_ ? &self_constraint_active : nullptr);
         projection_ms = (ros::WallTime::now() - projection_began).toSec() * 1000.0;
         if (projected_command_safe)
         {
@@ -1504,6 +1581,7 @@ private:
               projected_joint_velocity = slower;
               projected_command_safe = true;
               clearance_speed_reduced = true;
+              if (verify_self_detour_constraint_) self_constraint_active = 1;
               break;
             }
             if (reason.find("PREDICTED_SELF_CLEARANCE:") != 0) break;
@@ -1558,6 +1636,7 @@ private:
           {
             projected_joint_velocity = std::move(retreat_velocity);
             projection_constraint_count = retreat_constraints;
+            self_constraint_active = -1;
             projected_command_safe = true;
             translation_retreat = true;
           }
@@ -1569,7 +1648,10 @@ private:
           reason = clearance_speed_reduced ? "SELF_CLEARANCE_SPEED_REDUCED" :
               translation_retreat ? "TRANSLATION_ALLOWED_ROTATION_WOULD_PRESS_WORLD" :
               (selected - requested).norm() < 1e-5 ?
-              "FULL_COMMAND_ALLOWED" : "FEASIBLE_TRANSLATION_AND_ROTATION";
+              "FULL_COMMAND_ALLOWED" :
+              (selected.head<3>().norm() < 1e-4 && selected.tail<3>().norm() < 1e-3 &&
+               (requested.head<3>().norm() > .005 || requested.tail<3>().norm() > .025)) ?
+              "NO_FEASIBLE_CARTESIAN_PROGRESS" : "FEASIBLE_TRANSLATION_AND_ROTATION";
         }
       }
       else
@@ -1721,11 +1803,17 @@ private:
     const bool rotation_limited = output.valid &&
         (selected.tail<3>() - requested.tail<3>()).norm() > 1e-9;
     stream << "{\"reason\":\"" << reason << "\",\"self_distance_m\":" << current.self
+           << ",\"nearest_self_pair\":\"" << closest_self_pair << "\""
+           << ",\"self_constraint_active\":" << ((!projected_command_safe || self_constraint_active < 0) ?
+                 "null" : self_constraint_active ? "true" : "false")
+           << ",\"nearest_arm_joint\":\"" << nearest_joint << "\""
+           << ",\"nearest_operating_limit_rad\":" << (nearest_joint.empty() ? "null" : std::to_string(nearest_margin))
            << ",\"joint_velocity_solver\":\"" << (use_servo_solver_ ? "servo" : "qp") << "\""
            << ",\"processing_includes_solver\":" << (servo_solution ? "false" : "true")
            << ",\"constrained_velocity_projection\":" << (constrained_velocity_projection_ ? "true" : "false")
            << ",\"independent_palm_rotation_axes\":" << (independent_palm_rotation_axes_ ? "true" : "false")
            << ",\"allow_partial_spatial_rotation\":" << (allow_partial_spatial_rotation_ ? "true" : "false")
+           << ",\"direct_velocity_execution\":" << (direct_velocity_execution_ ? "true" : "false")
            << ",\"side_limit_reference_ready\":" << (have_robot_zero_ ? "true" : "false")
            << ",\"maximum_side_angle_deg\":" << maximum_side_angle_ * 180.0/M_PI
            << ",\"position_accommodation_m\":" << position_accommodation_m_
@@ -1835,6 +1923,15 @@ private:
         ++adjacent_count;
         continue;
       }
+      // The Allegro thumb base rotates inside its palm enclosure. Only this
+      // declared, model-specific link pair shares that permanent joint volume.
+      if (pair.reason_ == "JointHousing" && !exact_abb_palm_ &&
+          pair.link1_ == "algr_lh_palm" && pair.link2_ == "algr_lh_th_bs")
+        continue;
+      if (pair.reason_ == "GraspContact" &&
+          std::find(grasp_contact_links_.begin(), grasp_contact_links_.end(), pair.link1_) != grasp_contact_links_.end() &&
+          std::find(grasp_contact_links_.begin(), grasp_contact_links_.end(), pair.link2_) != grasp_contact_links_.end())
+        continue;
       if (pair.reason_ == "StructuralAdjacent")
       {
         // Servo uses one global proximity threshold, so a few normal assembly
@@ -1904,8 +2001,9 @@ private:
 
   void validateArmJoints()
   {
-    if (arm_joint_names_.size() != 6)
-      throw std::runtime_error("arm_joint_names must contain exactly six joints");
+    const auto* arm = model_->getJointModelGroup(arm_group_);
+    if (!arm || arm->getVariableNames() != arm_joint_names_)
+      throw std::runtime_error("arm_joint_names must match the ordered MoveIt arm group");
     std::set<std::string> unique;
     for (const std::string& name : arm_joint_names_)
     {
@@ -1953,7 +2051,7 @@ private:
   bool positionsSatisfyBounds(const moveit::core::RobotState& state,
                               double bounds_tolerance_rad,
                               std::string* error,
-                              const moveit::core::RobotState* accepted_hand_start = nullptr) const
+                              const moveit::core::RobotState* accepted_start = nullptr) const
   {
     bool valid = true;
     std::ostringstream details;
@@ -1964,20 +2062,27 @@ private:
               state.getVariablePositions() + joint->getFirstVariableIndex(),
               bounds_tolerance_rad))
         continue;
-      // A compliant measured finger may start outside its nominal stop.
-      // Arm motion is allowed to relieve that contact; the predicted finger
-      // must not create a new violation or deepen the existing one.
-      if (accepted_hand_start && joint->getVariableCount() == 1)
+      if (accepted_start && joint->getVariableCount() == 1)
       {
         const auto& name = joint->getVariableNames().front();
-        if (std::find(hand_reference_joint_names_.begin(), hand_reference_joint_names_.end(), name) !=
-            hand_reference_joint_names_.end())
+        const auto& bound = model_->getVariableBounds(name);
+        const double before = accepted_start->getVariablePosition(name);
+        const double after = state.getVariablePosition(name);
+        const bool hand = std::find(hand_reference_joint_names_.begin(), hand_reference_joint_names_.end(), name)
+                            != hand_reference_joint_names_.end();
+        if (hand && recover_simulated_hand_limit_transients_ &&
+            after >= std::min(bound.min_position_, before) - 1e-9 &&
+            after <= std::max(bound.max_position_, before) + 1e-9) continue;
+        // Gazebo can settle a few microradians beyond an arm stop. A
+        // stationary or returning joint must not veto every other digit.
+        // An in-range measurement can never acquire an out-of-range target.
+        if (simulated_arm_stop_deflection_rad_ > 0. &&
+            std::find(arm_joint_names_.begin(), arm_joint_names_.end(), name) != arm_joint_names_.end())
         {
-          const auto& bound = model_->getVariableBounds(name);
-          const double before = accepted_hand_start->getVariablePosition(name);
-          const double after = state.getVariablePosition(name);
-          if (after >= std::min(bound.min_position_, before) - 1e-9 &&
-              after <= std::max(bound.max_position_, before) + 1e-9) continue;
+          const double excess = std::max(bound.min_position_-before, before-bound.max_position_);
+          if (excess > 0. && excess <= simulated_arm_stop_deflection_rad_ &&
+              after >= std::min(bound.min_position_, before) - 1e-12 &&
+              after <= std::max(bound.max_position_, before) + 1e-12) continue;
         }
       }
       valid = false;
@@ -2125,8 +2230,9 @@ private:
 
   void configureExactPalmContacts()
   {
-    exact_palm_ = loadExactContactMesh("handbase_link");
     proxy_self_acm_.reset(new collision_detection::AllowedCollisionMatrix(*strict_acm_));
+    if (!exact_abb_palm_) return;  // This hand uses its URDF collision shapes directly.
+    exact_palm_ = loadExactContactMesh("handbase_link");
     for (const std::string name : {"f1link2", "f1link3", "f2link1", "f2link2", "f3link2", "f3link3"})
     {
       collision_detection::AllowedCollision::Type type;
@@ -2150,6 +2256,7 @@ private:
     scene_->checkSelfCollision(request, result, state, *proxy_self_acm_);
     proxy_collision_total_ms_ += (ros::WallTime::now() - proxy_began).toSec() * 1000.0;
     if (result.collision) return false;
+    if (!exact_abb_palm_) return true;
     // Arm-only changes cannot alter any palm/finger contact. Reuse only an
     // EXACT same eight-angle configuration; no rounding or angle tolerance.
     // Other arm/hand collision pairs were still checked above on every call.
@@ -2288,7 +2395,7 @@ private:
     // A robot already inside a margin may still escape without first having
     // to clear it in one step. This is not an exemption from binary checks.
     collision_detection::DistanceRequest margin_request;
-    margin_request.group_name = "abbarm";
+    margin_request.group_name = arm_group_;
     margin_request.enableGroup(model_);
     margin_request.acm = swept_margin_acm_.get();
     margin_request.type = collision_detection::DistanceRequestType::SINGLE;
@@ -2445,8 +2552,8 @@ private:
         candidate.update();
         std::string bounds_error;
         if (!positionsSatisfyBounds(candidate, 0.0, &bounds_error,
-            constrained_velocity_projection_ && recover_simulated_hand_limit_transients_ &&
-                ros::Time::isSimTime() ? &start : nullptr))
+            constrained_velocity_projection_ && ros::Time::isSimTime() &&
+                (recover_simulated_hand_limit_transients_ || simulated_arm_stop_deflection_rad_ > 0.) ? &start : nullptr))
         {
           std::ostringstream stream;
           stream << "PREDICTED_JOINT_LIMIT:" << bounds_error
@@ -3300,6 +3407,9 @@ private:
   bool have_robot_zero_{ false };
   bool independent_palm_rotation_axes_{ false };
   bool allow_partial_spatial_rotation_{ false };
+  bool reserve_hardware_stopping_distance_{ false };
+  bool verify_self_detour_constraint_{ false };
+  bool direct_velocity_execution_{ false };
   double maximum_side_angle_{ M_PI/2.0 };
   ros::WallTime latest_state_wall_time_;
   ros::Time latest_state_ros_time_;
@@ -3315,7 +3425,13 @@ private:
   std::string hand_motion_service_;
   std::string hand_command_topic_;
   std::vector<std::string> required_joint_names_;
+  std::string arm_group_;
+  bool exact_abb_palm_;
+  std::vector<std::string> grasp_contact_links_;
   std::vector<std::string> arm_joint_names_;
+  std::vector<double> joint_motion_weights_;
+  double redundant_joint_centering_rad_s_{ 0. };
+  double simulated_arm_stop_deflection_rad_{0.};
   std::vector<std::string> hand_reference_joint_names_;
   std::vector<double> initial_hand_reference_;
   double state_timeout_s_{ 0.25 };

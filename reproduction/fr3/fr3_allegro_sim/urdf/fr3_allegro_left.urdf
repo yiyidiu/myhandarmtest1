@@ -1,0 +1,1229 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<robot name="fr3_allegro_left">
+  <!-- Adapted from FRoGGeR f91157f96a235fc3b070d7f7ec9f52c3140c2cba, models/fr3_algr/fr3_algr_lh.sdf. -->
+  <!-- Arm position limits and the joint 6 reference frame follow the nominal Franka Research 3 specification. -->
+  <link name="world"/>
+  <link name="fr3_link0">
+    <inertial>
+      <origin xyz="-0.03762 0 0.061412" rpy="0 0 0"/>
+      <mass value="0.62977"/>
+      <inertia ixx="0.0019855" ixy="0" ixz="-0.0001985" iyy="0.0034589" iyz="0" izz="0.0036964"/>
+    </inertial>
+    <visual name="fr3_link0_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/fr3/link0.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="fr3_link0_collision_1">
+      <origin xyz="-0.043 0 0.05" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.23 0.15 0.1"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link0_collision_2">
+      <origin xyz="-0.01 0 0.12" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.14 0.12 0.04"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="fr3_link1">
+    <inertial>
+      <origin xyz="0 -0.016667 -0.05" rpy="0 0 0"/>
+      <mass value="4.9707"/>
+      <inertia ixx="0.040696" ixy="0" ixz="0" iyy="0.027895" iyz="0.0014881" izz="0.021218"/>
+    </inertial>
+    <visual name="fr3_link1_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/fr3/link1.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="fr3_link1_collision_1">
+      <origin xyz="0 -0.05 -0.05" rpy="0.52359877559 0 0"/>
+      <geometry>
+        <cylinder length="0.1" radius="0.06"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link1_collision_1_bottom">
+      <origin xyz="0 -0.0250000000004 -0.0933012701894" rpy="0.52359877559 0 0"/>
+      <geometry>
+        <sphere radius="0.06"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link1_collision_1_top">
+      <origin xyz="0 -0.0749999999996 -0.00669872981057" rpy="0.52359877559 0 0"/>
+      <geometry>
+        <sphere radius="0.06"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link1_collision_2">
+      <origin xyz="0 0 -0.15" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.12" radius="0.06"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link1_collision_3">
+      <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <cylinder length="0.16" radius="0.06"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link1_collision_3_bottom">
+      <origin xyz="0 0.08 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <sphere radius="0.06"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link1_collision_3_top">
+      <origin xyz="0 -0.08 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <sphere radius="0.06"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="fr3_link2">
+    <inertial>
+      <origin xyz="0 -0.12064 0.025641" rpy="0 0 0"/>
+      <mass value="0.64693"/>
+      <inertia ixx="0.0065165" ixy="0" ixz="0" iyy="0.0016969" iyz="-0.0015597" izz="0.0058885"/>
+    </inertial>
+    <visual name="fr3_link2_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/fr3/link2.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="fr3_link2_collision_1">
+      <origin xyz="0 -0.195 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <cylinder length="0.11" radius="0.06"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link2_collision_1_bottom">
+      <origin xyz="0 -0.14 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <sphere radius="0.06"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link2_collision_1_top">
+      <origin xyz="0 -0.25 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <sphere radius="0.06"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link2_collision_2">
+      <origin xyz="0 -0.05 0.05" rpy="-1.0471975512 0 0"/>
+      <geometry>
+        <cylinder length="0.12" radius="0.06"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link2_collision_2_bottom">
+      <origin xyz="0 -0.101961524227 0.0200000000002" rpy="-1.0471975512 0 0"/>
+      <geometry>
+        <sphere radius="0.06"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link2_collision_2_top">
+      <origin xyz="0 0.00196152422717 0.0799999999998" rpy="-1.0471975512 0 0"/>
+      <geometry>
+        <sphere radius="0.06"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="fr3_link3">
+    <inertial>
+      <origin xyz="0.072143 0.01 -0.0085714" rpy="0 0 0"/>
+      <mass value="3.2286"/>
+      <inertia ixx="0.012774" ixy="0.0010378" ixz="-0.00088951" iyy="0.0070746" iyz="0.00069184" izz="0.013515"/>
+    </inertial>
+    <visual name="fr3_link3_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/fr3/link3.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="fr3_link3_collision_1">
+      <origin xyz="0.04 0.035 -0.03" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="0.06"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link3_collision_2">
+      <origin xyz="0.085 0 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <cylinder length="0.12" radius="0.06"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link3_collision_2_bottom">
+      <origin xyz="0.085 0.06 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <sphere radius="0.06"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link3_collision_2_top">
+      <origin xyz="0.085 -0.06 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <sphere radius="0.06"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="fr3_link4">
+    <inertial>
+      <origin xyz="-0.08 0.11 0" rpy="0 0 0"/>
+      <mass value="3.5879"/>
+      <inertia ixx="0.013326" ixy="0" ixz="0" iyy="0.0058841" iyz="3.6439e-14" izz="0.013326"/>
+    </inertial>
+    <visual name="fr3_link4_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/fr3/link4.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="fr3_link4_collision_1">
+      <origin xyz="-0.08 0.11 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <cylinder length="0.1" radius="0.06"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link4_collision_1_bottom">
+      <origin xyz="-0.08 0.16 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <sphere radius="0.06"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link4_collision_1_top">
+      <origin xyz="-0.08 0.06 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <sphere radius="0.06"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="fr3_link5">
+    <inertial>
+      <origin xyz="0 0.054052 -0.031226" rpy="0 0 0"/>
+      <mass value="1.2259"/>
+      <inertia ixx="0.0073008" ixy="0" ixz="0" iyy="0.005003" iyz="0.00097758" izz="0.0035848"/>
+    </inertial>
+    <visual name="fr3_link5_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/fr3/link5.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="fr3_link5_collision_2">
+      <origin xyz="0 0.085 -0.1" rpy="-0.174533 0 0"/>
+      <geometry>
+        <box size="0.07 0.045 0.2"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link5_collision_3">
+      <origin xyz="0 0.04 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <cylinder length="0.11" radius="0.05"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link5_collision_3_bottom">
+      <origin xyz="0 0.095 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <sphere radius="0.05"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link5_collision_3_top">
+      <origin xyz="0 -0.015 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <sphere radius="0.05"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="fr3_link6">
+    <inertial>
+      <origin xyz="0.063231 -0.0021948 0.0078052" rpy="0 0 0"/>
+      <mass value="1.6666"/>
+      <inertia ixx="0.00454" ixy="0.00043226" ixz="0.00043226" iyy="0.0034907" iyz="-0.00015863" izz="0.0055593"/>
+    </inertial>
+    <visual name="fr3_link6_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/fr3/link6.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="fr3_link6_collision_1">
+      <origin xyz="0.03 0.01 0.02" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="0.06"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link6_collision_2">
+      <origin xyz="0.0845 -0.01 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <cylinder length="0.105" radius="0.051"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link6_collision_2_bottom">
+      <origin xyz="0.0845 0.0425 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <sphere radius="0.051"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link6_collision_2_top">
+      <origin xyz="0.0845 -0.0625 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <sphere radius="0.051"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="fr3_link7">
+    <inertial>
+      <origin xyz="0.012874 0.01264 0.08083" rpy="0 0 0"/>
+      <mass value="0.73552"/>
+      <inertia ixx="0.00066482" ixy="-0.00020314" ixz="-1.4906e-05" iyy="0.00066981" iyz="-1.5135e-05" izz="0.0010836"/>
+    </inertial>
+    <visual name="fr3_link7_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/fr3/link7.dae" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="fr3_link7_collision_1">
+      <origin xyz="0.0275 0.027 0.087" rpy="0 0 -0.78539816339"/>
+      <geometry>
+        <box size="0.07 0.1 0.02"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link7_collision_2">
+      <origin xyz="0 0 0.082" rpy="0 0 -0.78539816339"/>
+      <geometry>
+        <cylinder radius="0.045" length="0.05"/>
+      </geometry>
+    </collision>
+    <collision name="fr3_link7_collision_3">
+      <origin xyz="0.0275 0.027 0.072" rpy="0.3 0 -0.78539816339"/>
+      <geometry>
+        <box size="0.07 0.1 0.02"/>
+      </geometry>
+    </collision>
+    <visual name="wrist_spacer_visual">
+      <origin xyz="0 0 0.1134" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.024" length="0.014"/>
+      </geometry>
+      <material name="mount_alloy">
+        <color rgba="0.40 0.46 0.52 1"/>
+      </material>
+    </visual>
+    <collision name="wrist_spacer_collision">
+      <origin xyz="0 0 0.1134" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.024" length="0.014"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="algr_lh_palm">
+    <inertial>
+      <origin xyz="-0.0093 0 0.0475" rpy="0 0 0"/>
+      <mass value="0.4154"/>
+      <inertia ixx="0.00075444" ixy="-2.1338e-20" ixz="-2.2519e-20" iyy="0.00037004" iyz="-7.1945e-21" izz="0.00049964"/>
+    </inertial>
+    <visual name="algr_lh_palm_visual">
+      <origin xyz="0 0 0.095" rpy="-1.5708 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/base_link_left.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="algr_lh_palm_collision">
+      <origin xyz="-0.0093 0 0.0475" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0408 0.113 0.095"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="algr_lh_if_bs">
+    <inertial>
+      <origin xyz="0 0 0.0082" rpy="0 0 0"/>
+      <mass value="0.0119"/>
+      <inertia ixx="1.0167e-06" ixy="0" ixz="-1.2683e-23" iyy="6.4768e-07" iyz="0" izz="1.1309e-06"/>
+    </inertial>
+    <visual name="algr_lh_if_bs_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/link_0.0.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="algr_lh_if_bs_collision">
+      <origin xyz="0 0 0.0082" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0196 0.0275 0.0164"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="algr_lh_if_px">
+    <inertial>
+      <origin xyz="0 0 0.027" rpy="0 0 0"/>
+      <mass value="0.065"/>
+      <inertia ixx="1.9891e-05" ixy="0" ixz="1.5226e-21" iyy="1.7876e-05" iyz="0" izz="6.1772e-06"/>
+    </inertial>
+    <visual name="algr_lh_if_px_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/link_1.0.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="algr_lh_if_px_collision">
+      <origin xyz="0 0 0.027" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0196 0.0275 0.054"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="algr_lh_if_md">
+    <inertial>
+      <origin xyz="0 0 0.0192" rpy="0 0 0"/>
+      <mass value="0.0355"/>
+      <inertia ixx="6.5995e-06" ixy="0" ixz="3.5813e-22" iyy="5.4987e-06" iyz="0" izz="3.3737e-06"/>
+    </inertial>
+    <visual name="algr_lh_if_md_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/link_2.0.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="algr_lh_if_md_collision">
+      <origin xyz="0 0 0.0192" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0196 0.0275 0.0384"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="algr_lh_if_ds">
+    <inertial>
+      <origin xyz="0 0 0.011823" rpy="0 0 0"/>
+      <mass value="0.0264"/>
+      <inertia ixx="4.7816e-06" ixy="0" ixz="3.0165e-22" iyy="4.4476e-06" iyz="0" izz="2.0646e-06"/>
+    </inertial>
+    <visual name="algr_lh_if_ds_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/link_3.0.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <visual name="algr_lh_if_ds_tip_visual_1">
+      <origin xyz="0 0 0.0267" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/link_3.0_tip.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="algr_lh_if_ds_collision_1">
+      <origin xyz="0 0 0.00235" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0196 0.0275 0.0247"/>
+      </geometry>
+    </collision>
+    <collision name="algr_lh_if_ds_tip_collision_1_FROGGERCOL">
+      <origin xyz="0 0 0.0267" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="0.012"/>
+      </geometry>
+    </collision>
+    <collision name="algr_lh_if_ds_tip_collision_2_FROGGERCOL">
+      <origin xyz="0 0 0.01335" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.0267" radius="0.012"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="algr_lh_mf_bs">
+    <inertial>
+      <origin xyz="0 0 0.0082" rpy="0 0 0"/>
+      <mass value="0.0119"/>
+      <inertia ixx="1.0167e-06" ixy="-2.0483e-23" ixz="0" iyy="6.4768e-07" iyz="-2.6825e-23" izz="1.1309e-06"/>
+    </inertial>
+    <visual name="algr_lh_mf_bs_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/link_0.0.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="algr_lh_mf_bs_collision">
+      <origin xyz="0 0 0.0082" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0196 0.0275 0.0164"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="algr_lh_mf_px">
+    <inertial>
+      <origin xyz="0 0 0.027" rpy="0 0 0"/>
+      <mass value="0.065"/>
+      <inertia ixx="1.9891e-05" ixy="-1.1188e-22" ixz="0" iyy="1.7876e-05" iyz="6.4941e-22" izz="6.1772e-06"/>
+    </inertial>
+    <visual name="algr_lh_mf_px_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/link_1.0.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="algr_lh_mf_px_collision">
+      <origin xyz="0 0 0.027" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0196 0.0275 0.054"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="algr_lh_mf_md">
+    <inertial>
+      <origin xyz="0 0 0.0192" rpy="0 0 0"/>
+      <mass value="0.0355"/>
+      <inertia ixx="6.5995e-06" ixy="-6.1105e-23" ixz="0" iyy="5.4987e-06" iyz="1.1796e-22" izz="3.3737e-06"/>
+    </inertial>
+    <visual name="algr_lh_mf_md_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/link_2.0.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="algr_lh_mf_md_collision">
+      <origin xyz="0 0 0.0192" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0196 0.0275 0.0384"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="algr_lh_mf_ds">
+    <inertial>
+      <origin xyz="0 0 0.011823" rpy="0 0 0"/>
+      <mass value="0.0264"/>
+      <inertia ixx="4.7816e-06" ixy="-1.854e-23" ixz="0" iyy="4.4476e-06" iyz="1.3229e-22" izz="2.0646e-06"/>
+    </inertial>
+    <visual name="algr_lh_mf_ds_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/link_3.0.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <visual name="algr_lh_mf_ds_tip_visual_1">
+      <origin xyz="0 0 0.0267" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/link_3.0_tip.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="algr_lh_mf_ds_collision_1">
+      <origin xyz="0 0 0.00235" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0196 0.0275 0.0247"/>
+      </geometry>
+    </collision>
+    <collision name="algr_lh_mf_ds_tip_collision_1_FROGGERCOL">
+      <origin xyz="0 0 0.0267" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="0.012"/>
+      </geometry>
+    </collision>
+    <collision name="algr_lh_mf_ds_tip_collision_2_FROGGERCOL">
+      <origin xyz="0 0 0.01335" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.0267" radius="0.012"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="algr_lh_rf_bs">
+    <inertial>
+      <origin xyz="0 0 0.0082" rpy="0 0 0"/>
+      <mass value="0.0119"/>
+      <inertia ixx="1.0167e-06" ixy="0" ixz="1.2683e-23" iyy="6.4768e-07" iyz="0" izz="1.1309e-06"/>
+    </inertial>
+    <visual name="algr_lh_rf_bs_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/link_0.0.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="algr_lh_rf_bs_collision">
+      <origin xyz="0 0 0.0082" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0196 0.0275 0.0164"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="algr_lh_rf_px">
+    <inertial>
+      <origin xyz="0 0 0.027" rpy="0 0 0"/>
+      <mass value="0.065"/>
+      <inertia ixx="1.9891e-05" ixy="0" ixz="-1.5226e-21" iyy="1.7876e-05" iyz="0" izz="6.1772e-06"/>
+    </inertial>
+    <visual name="algr_lh_rf_px_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/link_1.0.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="algr_lh_rf_px_collision">
+      <origin xyz="0 0 0.027" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0196 0.0275 0.054"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="algr_lh_rf_md">
+    <inertial>
+      <origin xyz="0 0 0.0192" rpy="0 0 0"/>
+      <mass value="0.0355"/>
+      <inertia ixx="6.5995e-06" ixy="0" ixz="-3.5813e-22" iyy="5.4987e-06" iyz="0" izz="3.3737e-06"/>
+    </inertial>
+    <visual name="algr_lh_rf_md_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/link_2.0.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="algr_lh_rf_md_collision">
+      <origin xyz="0 0 0.0192" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0196 0.0275 0.0384"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="algr_lh_rf_ds">
+    <inertial>
+      <origin xyz="0 0 0.011823" rpy="0 0 0"/>
+      <mass value="0.0264"/>
+      <inertia ixx="4.7816e-06" ixy="0" ixz="-3.0165e-22" iyy="4.4476e-06" iyz="0" izz="2.0646e-06"/>
+    </inertial>
+    <visual name="algr_lh_rf_ds_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/link_3.0.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <visual name="algr_lh_rf_ds_tip_visual_1">
+      <origin xyz="0 0 0.0267" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/link_3.0_tip.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="algr_lh_rf_ds_collision_1">
+      <origin xyz="0 0 0.00235" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0196 0.0275 0.0247"/>
+      </geometry>
+    </collision>
+    <collision name="algr_lh_rf_ds_tip_collision_1_FROGGERCOL">
+      <origin xyz="0 0 0.0267" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="0.012"/>
+      </geometry>
+    </collision>
+    <collision name="algr_lh_rf_ds_tip_collision_2_FROGGERCOL">
+      <origin xyz="0 0 0.01335" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.0267" radius="0.012"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="algr_lh_th_mp">
+    <inertial>
+      <origin xyz="-0.0179 0.009 0.0145" rpy="0 0 0"/>
+      <mass value="0.0176"/>
+      <inertia ixx="4.7318e-06" ixy="0" ixz="0" iyy="4.9161e-06" iyz="0" izz="3.5752e-06"/>
+    </inertial>
+    <visual name="algr_lh_th_mp_visual">
+      <origin xyz="0 0 0" rpy="3.14159 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/link_12.0_left.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="algr_lh_th_mp_collision">
+      <origin xyz="-0.0179 0.009 0.0145" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0358 0.034 0.0455"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="algr_lh_th_bs">
+    <inertial>
+      <origin xyz="0 0 0.00885" rpy="0 0 0"/>
+      <mass value="0.0119"/>
+      <inertia ixx="1.0606e-06" ixy="0" ixz="0" iyy="6.9164e-07" iyz="0" izz="1.1309e-06"/>
+    </inertial>
+    <visual name="algr_lh_th_bs_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/link_13.0.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="algr_lh_th_bs_collision">
+      <origin xyz="0 0 0.00885" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0196 0.0275 0.0177"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="algr_lh_th_px">
+    <inertial>
+      <origin xyz="0 0 0.0257" rpy="0 0 0"/>
+      <mass value="0.038"/>
+      <inertia ixx="1.0761e-05" ixy="0" ixz="7.3185e-36" iyy="9.5827e-06" iyz="0" izz="3.6113e-06"/>
+    </inertial>
+    <visual name="algr_lh_th_px_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/link_14.0.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="algr_lh_th_px_collision">
+      <origin xyz="0 0 0.0257" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0196 0.0275 0.0514"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="algr_lh_th_ds">
+    <inertial>
+      <origin xyz="0 0 0.019365" rpy="0 0 0"/>
+      <mass value="0.0556"/>
+      <inertia ixx="1.6162e-05" ixy="0" ixz="0" iyy="1.5383e-05" iyz="0" izz="4.4611e-06"/>
+    </inertial>
+    <visual name="algr_lh_th_ds_visual">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/link_15.0.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <visual name="algr_lh_th_ds_tip_visual_1">
+      <origin xyz="0 0 0.0423" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr3_allegro_sim/meshes/allegro/link_15.0_tip.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="algr_lh_th_ds_collision_1">
+      <origin xyz="0 0 0.01015" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0196 0.0275 0.0403"/>
+      </geometry>
+    </collision>
+    <collision name="algr_lh_th_ds_tip_collision_1_FROGGERCOL">
+      <origin xyz="0 0 0.0423" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="0.012"/>
+      </geometry>
+    </collision>
+    <collision name="algr_lh_th_ds_tip_collision_2_FROGGERCOL">
+      <origin xyz="0 0 0.02115" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.0423" radius="0.012"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="arm_weld" type="fixed">
+    <parent link="world"/>
+    <child link="fr3_link0"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <joint name="fr3_joint1" type="revolute">
+    <parent link="fr3_link0"/>
+    <child link="fr3_link1"/>
+    <origin xyz="0 0 0.333" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.9007" upper="2.9007" effort="87.0" velocity="2.0"/>
+    <dynamics damping="0.0628" friction="0.2549"/>
+  </joint>
+  <gazebo reference="fr3_joint1">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="fr3_joint1_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="fr3_joint1">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="fr3_joint1_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="fr3_joint2" type="revolute">
+    <parent link="fr3_link1"/>
+    <child link="fr3_link2"/>
+    <origin xyz="0 0 0" rpy="-1.57079632679 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-1.8361" upper="1.8361" effort="87.0" velocity="1.0"/>
+    <dynamics damping="0.2088" friction="0.1413"/>
+  </joint>
+  <gazebo reference="fr3_joint2">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="fr3_joint2_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="fr3_joint2">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="fr3_joint2_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="fr3_joint3" type="revolute">
+    <parent link="fr3_link2"/>
+    <child link="fr3_link3"/>
+    <origin xyz="0 -0.316 0" rpy="1.57079632679 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.9007" upper="2.9007" effort="87.0" velocity="1.50"/>
+    <dynamics damping="0.0361" friction="0.1879"/>
+  </joint>
+  <gazebo reference="fr3_joint3">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="fr3_joint3_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="fr3_joint3">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="fr3_joint3_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="fr3_joint4" type="revolute">
+    <parent link="fr3_link3"/>
+    <child link="fr3_link4"/>
+    <origin xyz="0.0825 0 0" rpy="1.57079632679 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.0770" upper="-0.1169" effort="87.0" velocity="1.25"/>
+    <dynamics damping="0.2174" friction="0.3625"/>
+  </joint>
+  <gazebo reference="fr3_joint4">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="fr3_joint4_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="fr3_joint4">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="fr3_joint4_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="fr3_joint5" type="revolute">
+    <parent link="fr3_link4"/>
+    <child link="fr3_link5"/>
+    <origin xyz="-0.0825 0.384 0" rpy="-1.57079632679 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.8763" upper="2.8763" effort="12.0" velocity="3.0"/>
+    <dynamics damping="0.1021" friction="0.2728"/>
+  </joint>
+  <gazebo reference="fr3_joint5">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="fr3_joint5_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="fr3_joint5">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="fr3_joint5_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="fr3_joint6" type="revolute">
+    <parent link="fr3_link5"/>
+    <child link="fr3_link6"/>
+    <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0.4398" upper="4.6216" effort="12.0" velocity="1.50"/>
+    <dynamics damping="1.6128e-4" friction="0.1529"/>
+  </joint>
+  <gazebo reference="fr3_joint6">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="fr3_joint6_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="fr3_joint6">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="fr3_joint6_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="fr3_joint7" type="revolute">
+    <parent link="fr3_link6"/>
+    <child link="fr3_link7"/>
+    <origin xyz="0.088 0 0" rpy="1.57079632679 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.0508" upper="3.0508" effort="12.0" velocity="3.0"/>
+    <dynamics damping="0.0632" friction="0.2097"/>
+  </joint>
+  <gazebo reference="fr3_joint7">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="fr3_joint7_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="fr3_joint7">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="fr3_joint7_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="arm_hand_weld" type="fixed">
+    <parent link="fr3_link7"/>
+    <child link="algr_lh_palm"/>
+    <origin xyz="0 0 0.12" rpy="0 0 -0.785398163397"/>
+  </joint>
+  <!-- Center of the grasp-side (+X) face of the palm collision box. -->
+  <link name="palm_tcp"/>
+  <joint name="algr_lh_palm_tcp" type="fixed">
+    <parent link="algr_lh_palm"/>
+    <child link="palm_tcp"/>
+    <origin xyz="0.0111 0 0.0475" rpy="0 0 0"/>
+  </joint>
+  <joint name="algr_lh_if_axl" type="revolute">
+    <parent link="algr_lh_palm"/>
+    <child link="algr_lh_if_bs"/>
+    <origin xyz="0 -0.0435 0.093458" rpy="0.087267 0 0"/>
+    <axis xyz="0 3.07439976997e-07 1"/>
+    <limit lower="-0.569850000776" upper="0.569850000776" effort="0.7" velocity="4.0"/>
+    <dynamics damping="1.5e-2" friction="0"/>
+  </joint>
+  <gazebo reference="algr_lh_if_axl">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="algr_lh_if_axl_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="algr_lh_if_axl">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="algr_lh_if_axl_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="algr_lh_if_mcp" type="revolute">
+    <parent link="algr_lh_if_bs"/>
+    <child link="algr_lh_if_px"/>
+    <origin xyz="0 3.97115004103e-07 0.0164003745336" rpy="0 0 0"/>
+    <axis xyz="0 1 -3.07439976997e-07"/>
+    <limit lower="-0.295833308213" upper="1.709899068179" effort="0.7" velocity="4.0"/>
+    <dynamics damping="1.5e-2" friction="0"/>
+  </joint>
+  <gazebo reference="algr_lh_if_mcp">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="algr_lh_if_mcp_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="algr_lh_if_mcp">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="algr_lh_if_mcp_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="algr_lh_if_pip" type="revolute">
+    <parent link="algr_lh_if_px"/>
+    <child link="algr_lh_if_md"/>
+    <origin xyz="0 -6.03399182397e-07 0.0539995396706" rpy="0 0 0"/>
+    <axis xyz="0 1 -3.07439976997e-07"/>
+    <limit lower="-0.273842159638" upper="1.809033769692" effort="0.7" velocity="4.0"/>
+    <dynamics damping="1.5e-2" friction="0"/>
+  </joint>
+  <gazebo reference="algr_lh_if_pip">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="algr_lh_if_pip_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="algr_lh_if_pip">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="algr_lh_if_pip_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="algr_lh_if_dip" type="revolute">
+    <parent link="algr_lh_if_md"/>
+    <child link="algr_lh_if_ds"/>
+    <origin xyz="0 -1.87235196902e-07 0.0384001422519" rpy="0 0 0"/>
+    <axis xyz="0 1 -3.07439976997e-07"/>
+    <limit lower="-0.326900168899" upper="1.717927582738" effort="0.7" velocity="4.0"/>
+    <dynamics damping="1.5e-2" friction="0"/>
+  </joint>
+  <gazebo reference="algr_lh_if_dip">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="algr_lh_if_dip_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="algr_lh_if_dip">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="algr_lh_if_dip_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="algr_lh_mf_axl" type="revolute">
+    <parent link="algr_lh_palm"/>
+    <child link="algr_lh_mf_bs"/>
+    <origin xyz="0 0 0.0957" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-0.569850000776" upper="0.569850000776" effort="0.7" velocity="4.0"/>
+    <dynamics damping="1.5e-2" friction="0"/>
+  </joint>
+  <gazebo reference="algr_lh_mf_axl">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="algr_lh_mf_axl_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="algr_lh_mf_axl">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="algr_lh_mf_axl_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="algr_lh_mf_mcp" type="revolute">
+    <parent link="algr_lh_mf_bs"/>
+    <child link="algr_lh_mf_px"/>
+    <origin xyz="0 0 0.0164" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-0.295833308213" upper="1.709899068179" effort="0.7" velocity="4.0"/>
+    <dynamics damping="1.5e-2" friction="0"/>
+  </joint>
+  <gazebo reference="algr_lh_mf_mcp">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="algr_lh_mf_mcp_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="algr_lh_mf_mcp">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="algr_lh_mf_mcp_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="algr_lh_mf_pip" type="revolute">
+    <parent link="algr_lh_mf_px"/>
+    <child link="algr_lh_mf_md"/>
+    <origin xyz="0 0 0.054" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-0.273842159638" upper="1.809033769692" effort="0.7" velocity="4.0"/>
+    <dynamics damping="1.5e-2" friction="0"/>
+  </joint>
+  <gazebo reference="algr_lh_mf_pip">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="algr_lh_mf_pip_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="algr_lh_mf_pip">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="algr_lh_mf_pip_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="algr_lh_mf_dip" type="revolute">
+    <parent link="algr_lh_mf_md"/>
+    <child link="algr_lh_mf_ds"/>
+    <origin xyz="0 0 0.0384" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-0.326900168899" upper="1.717927582738" effort="0.7" velocity="4.0"/>
+    <dynamics damping="1.5e-2" friction="0"/>
+  </joint>
+  <gazebo reference="algr_lh_mf_dip">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="algr_lh_mf_dip_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="algr_lh_mf_dip">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="algr_lh_mf_dip_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="algr_lh_rf_axl" type="revolute">
+    <parent link="algr_lh_palm"/>
+    <child link="algr_lh_rf_bs"/>
+    <origin xyz="0 0.0435 0.093458" rpy="-0.087267 0 0"/>
+    <axis xyz="0 -3.07439976997e-07 1"/>
+    <limit lower="-0.569850000776" upper="0.569850000776" effort="0.7" velocity="4.0"/>
+    <dynamics damping="1.5e-2" friction="0"/>
+  </joint>
+  <gazebo reference="algr_lh_rf_axl">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="algr_lh_rf_axl_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="algr_lh_rf_axl">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="algr_lh_rf_axl_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="algr_lh_rf_mcp" type="revolute">
+    <parent link="algr_lh_rf_bs"/>
+    <child link="algr_lh_rf_px"/>
+    <origin xyz="0 -3.97115004103e-07 0.0164003745336" rpy="0 0 0"/>
+    <axis xyz="0 1 3.0743997699e-07"/>
+    <limit lower="-0.295833308213" upper="1.709899068179" effort="0.7" velocity="4.0"/>
+    <dynamics damping="1.5e-2" friction="0"/>
+  </joint>
+  <gazebo reference="algr_lh_rf_mcp">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="algr_lh_rf_mcp_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="algr_lh_rf_mcp">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="algr_lh_rf_mcp_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="algr_lh_rf_pip" type="revolute">
+    <parent link="algr_lh_rf_px"/>
+    <child link="algr_lh_rf_md"/>
+    <origin xyz="0 6.03399182175e-07 0.0539995396706" rpy="0 0 0"/>
+    <axis xyz="0 1 3.0743997699e-07"/>
+    <limit lower="-0.273842159638" upper="1.809033769692" effort="0.7" velocity="4.0"/>
+    <dynamics damping="1.5e-2" friction="0"/>
+  </joint>
+  <gazebo reference="algr_lh_rf_pip">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="algr_lh_rf_pip_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="algr_lh_rf_pip">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="algr_lh_rf_pip_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="algr_lh_rf_dip" type="revolute">
+    <parent link="algr_lh_rf_md"/>
+    <child link="algr_lh_rf_ds"/>
+    <origin xyz="0 1.87235197013e-07 0.0384001422519" rpy="0 0 0"/>
+    <axis xyz="0 1 3.0743997699e-07"/>
+    <limit lower="-0.326900168899" upper="1.717927582738" effort="0.7" velocity="4.0"/>
+    <dynamics damping="1.5e-2" friction="0"/>
+  </joint>
+  <gazebo reference="algr_lh_rf_dip">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="algr_lh_rf_dip_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="algr_lh_rf_dip">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="algr_lh_rf_dip_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="algr_lh_th_cmc" type="revolute">
+    <parent link="algr_lh_palm"/>
+    <child link="algr_lh_th_mp"/>
+    <origin xyz="-0.0182 -0.019333 0.049013" rpy="-3.14159 -1.48353 -1.5708"/>
+    <axis xyz="1 -3.20140789957e-07 3.65765390194e-07"/>
+    <limit lower="0.359886891761" upper="1.495921701884" effort="0.7" velocity="4.0"/>
+    <dynamics damping="1.5e-2" friction="0"/>
+  </joint>
+  <gazebo reference="algr_lh_th_cmc">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="algr_lh_th_cmc_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="algr_lh_th_cmc">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="algr_lh_th_cmc_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="algr_lh_th_axl" type="revolute">
+    <parent link="algr_lh_th_mp"/>
+    <child link="algr_lh_th_bs"/>
+    <origin xyz="-0.0270002319738 -0.00500003148113 0.0399000477261" rpy="0 0 0"/>
+    <axis xyz="3.65765712158e-07 1.00563758195e-06 -0.999999999999"/>
+    <limit lower="-0.203854456633" upper="1.262920246743" effort="0.7" velocity="4.0"/>
+    <dynamics damping="1.5e-2" friction="0"/>
+  </joint>
+  <gazebo reference="algr_lh_th_axl">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="algr_lh_th_axl_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="algr_lh_th_axl">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="algr_lh_th_axl_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="algr_lh_th_mcp" type="revolute">
+    <parent link="algr_lh_th_bs"/>
+    <child link="algr_lh_th_px"/>
+    <origin xyz="6.82583616199e-07 -1.78003027873e-08 0.0177002952669" rpy="0 0 0"/>
+    <axis xyz="3.20140422144e-07 0.999999999999 1.00563769906e-06"/>
+    <limit lower="-0.288851991205" upper="1.743932988593" effort="0.7" velocity="4.0"/>
+    <dynamics damping="1.5e-2" friction="0"/>
+  </joint>
+  <gazebo reference="algr_lh_th_mcp">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="algr_lh_th_mcp_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="algr_lh_th_mcp">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="algr_lh_th_mcp_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <joint name="algr_lh_th_ipl" type="revolute">
+    <parent link="algr_lh_th_px"/>
+    <child link="algr_lh_th_ds"/>
+    <origin xyz="-2.3657614498e-07 -5.16893108315e-08 0.0513996110485" rpy="0 0 0"/>
+    <axis xyz="3.20140422144e-07 0.999999999999 1.00563769906e-06"/>
+    <limit lower="-0.259879525622" upper="1.801528853909" effort="0.7" velocity="4.0"/>
+    <dynamics damping="1.5e-2" friction="0"/>
+  </joint>
+  <gazebo reference="algr_lh_th_ipl">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <transmission name="algr_lh_th_ipl_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="algr_lh_th_ipl">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="algr_lh_th_ipl_motor">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <gazebo reference="arm_hand_weld">
+    <preserveFixedJoint>true</preserveFixedJoint>
+  </gazebo>
+  <gazebo>
+    <plugin name="fr3_allegro_control" filename="libgazebo_ros_control.so">
+      <robotNamespace>/fr3_allegro</robotNamespace>
+      <robotParam>/robot_description</robotParam>
+      <robotSimType>fr3_allegro_sim/BoundedRevoluteHWSim</robotSimType>
+      <controlPeriod>0.0005</controlPeriod>
+    </plugin>
+  </gazebo>
+</robot>

@@ -1,72 +1,51 @@
-# 整体腕姿映射与四场景固定版 · 2026-09-21
+# Franka FR3 ＋ Allegro 四指左手遥操作
 
-固定标签：**`teleop-whole-wrist-scenes-20260921`**。本版保存当前实际使用的 HaMeR 腕口整体映射、机械臂控制、场景、观察窗口和录制代码。下载时请选择这个标签或同名 Release；根目录 `run.sh` 已更新为本版入口。
+2026 年 11 月 25 日完整仿真基线。用 D455 观察左手，张手按 C 标定，手腕驱动 FR3 七轴，拇指、食指、中指、无名指分别驱动 Allegro V4 左手的 16 个关节。默认场景只有装配好的臂、手、地面和光照。默认姿态为掌心朝下。
 
-## 当前控制配置
+## 在新电脑上运行
 
-- HaMeR 左手模型，以16点腕口配准得到手部姿态；掌部皮肤深度用于位置估计。
-- 以 C 零位为参考做整体旋转映射，整体转角统一放大1.3倍；偏航目标限于±88°，实际保护上限±90°。
-- 人手小指侧靠近相机对应右偏航，大拇指侧靠近对应左偏航；四指靠近对应向下俯仰，远离对应向上俯仰；转掌对应末端横滚。
-- 靠近相机对应向下平移，远离对应向上；画面上方对应向前，下方对应向后。基座 X/Y/Z 平移增益为1.6/2.0/1.2。
-- 控制点使用已调整的掌面中心偏移16.58厘米，保留当前约束速度控制、关节和自碰撞保护。
-- 控制器不读取 Gazebo 桌子或物体坐标；倒水显示对瓶口和杯口的计算只用于仿真画面及水量记录。
-- 四个场景使用同一套感知与运动控制。切换场景不会切换手模型、坐标系或映射比例。
+适用环境为 **Ubuntu 20.04 x86_64**。实时模式使用 D455、USB 3、X11 桌面及支持 CUDA 11.8 的 NVIDIA 驱动，本版在 RTX 2060 上验证。首次使用需要联网和安装 Ubuntu 软件包的权限，建议为工程、依赖、编译与缓存预留至少 45 GB，实验录制另计。后续普通启动使用本地已准备好的环境。
 
-## 下载和恢复
+下载固定版本，可以从本页的 **Releases** 解压源码包，也可以运行以下命令。
 
 ```bash
-git clone --branch teleop-whole-wrist-scenes-20260921 --single-branch   https://github.com/yiyidiu/myhandarmtest1.git myhandarmtest1-whole-wrist-scenes-20260921
-cd myhandarmtest1-whole-wrist-scenes-20260921
+git clone --depth 1 --branch fr3-allegro-teleop-v2026.11.25 https://github.com/yiyidiu/myhandarmtest1.git fr3-allegro-teleop
+cd fr3-allegro-teleop
 ```
 
-GitHub 的 Source code ZIP 也可使用。源码包含程序、场景、机器人网格、倒水显示插件源码和固定依赖恢复入口；编译产物、Python环境、实验录像及授权模型不放进源码包。
-
-目标平台为 **Ubuntu 20.04 x86_64、ROS Noetic、Gazebo 11、X11、支持 CUDA 11.8 的 NVIDIA 显卡，以及 D435/D455 USB3 相机**。新电脑先准备 ROS、显卡驱动与相机权限，再恢复程序依赖：
+**先看仿真。** 无需相机、显卡推理环境或 MANO。以下命令自动安装所需系统软件、编译模型与插件，再用归档腕部和手指数据驱动完整控制链。
 
 ```bash
-bash scripts/setup_current_release.sh --mano /实际路径/MANO_RIGHT.pkl
+./run.sh --replay
 ```
 
-若已有完整的授权 HaMeR `_DATA` 目录，可用 `--assets-from /实际路径/_DATA` 代替 `--mano`，避免重复下载权重。已有系统依赖与两个Python环境时：
+**用自己的 D455 遥操作。** 将本人获授权的 `MANO_RIGHT.pkl` 放到 `run.sh` 同一目录。启动器会下载并校验本版本的两套视觉环境、HaMeR 权重和模型配置。也可以将自己电脑上的 `fr3-owner.tar` 直接复制到 `run.sh` 旁边。启动器会自动读取里面的授权模型和预先下载的视觉依赖，省去大型模型与环境的网络下载。授权文件也可以通过 `FR3_MANO_FILE` 指定。 [MANO 许可与申请](https://mano.is.tue.mpg.de/license.html) · [HaMeR 项目](https://github.com/geopavlakos/hamer)
 
 ```bash
-bash scripts/setup_current_release.sh --skip-apt   --existing-env-root "$HOME/anaconda3/envs"   --assets-from /实际路径/_DATA
+./run.sh --record
 ```
 
-安装入口会生成**当前目录**的 `teleop_machine.env` 并进行 Release 编译，包括新增倒水插件；不要复制别的工程的 `build/`、`devel/` 或本机路径配置。Python环境分卷复用已发布的固定依赖，控制代码使用本标签。依赖及模型来源见 [依赖清单](reproduction/20260921/runtime_reference.json)。MANO文件须由使用者自行取得授权；不在公开仓库再分发。
+相机预览中显示 **C = SET ZERO** 后，把自然张开的左手和腕部完整放入画面，点击相机窗口，按一次 **C**，保持到 **GAZEBO CONTROL: ENABLED**。按 **Q** 或在终端按一次 **Ctrl+C** 结束，等到打印录制结果。每次录制独立保存到 `~/handarm/results/fr3-teleop-recordings/`，包含 `screen.mp4`、`robot.bag`、实时采集的 `rgbd.db3`、感知与时钟记录。用 `session.json` 的 `recording_complete` 和 `missing` 核对本次是否录全。
 
-## 四个场景的命令
+| 需要的操作 | 在工程目录执行 |
+|---|---|
+| 预先装好实时环境，完成后退出 | `./run.sh --prepare` |
+| 仅准备仿真及回放环境 | `./run.sh --prepare --replay` |
+| 在后台运行归档回放 | `./run.sh --replay --headless` |
+| 切换到腕环深度补偿观测，实时录制 | `./run.sh --qb0 --record` |
+| 使用掌面中心作为机械端控制点 | `FR3_CONTROL_POINT=palm ./run.sh --record` |
+| 固定机械臂，仅遥操作四指 | `./run.sh --fingers-only --record` |
+| 观看单线轴阻抗抓起、悬停和放回的合成输入演示 | `./run.sh --impedance-grasp --replay` |
+| 实时遥操作抓取同一物体 | `./run.sh --impedance-grasp --record` |
 
-在本工程目录内执行任意一条。默认均录制屏幕、RGB-D、手部逐帧数据及机械臂控制数据，**不采集IMU**。
+## 本版运行的代码
 
-| 场景 | 命令 | 布置 |
-|---|---|---|
-| 倒水 | `bash scripts/run_pouring_observation.sh` | 右侧台子上的开盖水瓶与空杯；杯外径8厘米、高12厘米 |
-| 方块堆叠 | `bash scripts/run_stacking_observation.sh` | 前方台子上的两个18.67×7.6×6.9厘米长方体，中心间距36厘米 |
-| 三物体抓取 | `bash scripts/run_grasp_observation.sh` | 左侧绿色圆柱、前方橙色纸盒、右侧水瓶与三个台子 |
-| 空场景动作观察 | `bash scripts/run_empty_observation.sh` | 机械臂、三指手、地面；无桌子和物体 |
+| 环节 | 位置与含义 |
+|---|---|
+| 整机 | [FR3 与 Allegro 左手 URDF](reproduction/fr3/fr3_allegro_sim/urdf/fr3_allegro_left.urdf)、[模型网格和许可证](reproduction/fr3/fr3_allegro_sim/meshes)、[两个轨迹控制器](reproduction/fr3/fr3_allegro_sim/config/controllers.yaml)、[Gazebo 关节插件](reproduction/fr3/fr3_allegro_sim/src/bounded_revolute_hw_sim.cpp) |
+| 人手感知与标定 | [D455 与 HaMeR 入口](perception_hamer/scripts/run_d455_hamer_crop.py)、[张手 C 标定](perception_hamer/src/teleop_control_gate.py)、[实际启动参数](src/allegro_finger_teleop/scripts/fingers_camera.sh) |
+| 腕部到七轴 | 默认使用 9 月 21 日的整体腕姿映射和掌面实测深度，控制点在 Allegro 安装口。可用 `--qb0` 选择相对中性模板的姿态与腕环中心深度补偿。[腕部控制链](src/allegro_finger_teleop/launch/baseline_arm.launch) · [FR3 参数](src/allegro_finger_teleop/config/fr3_whole_wrist.yaml) |
+| 手指到四指 | 在掌部局部坐标中处理关节点，通过指尖、活动指节及指对接触关系求解手指角度。使用 11 月 25 日侧转腕时的指对确认和拇指外壳间隙检查。严重遮挡时，新指对可能显示“待确认”，转回能分辨各指的角度后可重新确认。[手形观测](src/allegro_finger_teleop/scripts/hand_shape.py) · [重定向求解](src/allegro_finger_teleop/scripts/retarget.py) · [Allegro V4 限位](src/allegro_finger_teleop/scripts/allegro_v4_limits.py) |
+| 抓取 | 物体受重力、摩擦及接触约束。双侧指腹接触后施加关节弹簧预载。内置样例是食指与拇指抓放一只线轴。[阻抗参数](src/allegro_finger_teleop/config/grasp_impedance.yaml) · [控制代码](src/allegro_finger_teleop/scripts/object_impedance.py) · [抓放验收](src/allegro_finger_teleop/tests/check_gazebo_impedance_pick.py) |
 
-`bash run.sh` 等同于倒水入口。为避免场景混用，日常使用上表四个独立命令。旧的 `run_grasp_feedback_recording.sh` 等历史入口保留供追溯，不代表本版整体腕姿预设。
-
-需要明确开启IMU时，可以使用共同入口，例如：
-
-```bash
-TELEOP_RECORD_IMU=true bash scripts/run_hand_imu_observation.sh --empty-scene
-```
-
-## 操作与保存
-
-- 相机窗口按 **C**，用2秒倒计时把手和身体放稳；程序随后取有效稳定帧标定，提示完成后开始控制。
-- 有物体的场景打开正面、侧面两个观察窗，显示频率5 Hz。滚轮可放大，Esc关闭观察窗。
-- 松开物体并移开机械手后，在观察窗按 **T**，恢复物体原位置。倒水场景同时恢复瓶内94毫升虚拟水量和空杯；不重置机械臂零位。
-- 相机窗口按 **Q** 结束，等待数据保存完毕。
-
-每次录制保存到本工程 `.runtime/hand_imu_observation_日期时间_随机码/`，启动时打印完整路径。目录包含 `screen.mp4`、`rgbd.db3`、`control_chain.bag`、实际场景快照 `scene.world`、手部数据与时间对应信息。倒水时同时记录瓶内、杯内、洒出水量。未启用IMU时不会要求接收器在线。
-
-## 倒水显示范围
-
-可看到瓶口水流及杯内水面；进入杯口才增加杯内水量，倒偏计入洒出量，摆正停止出水。水流和水量是简化的可视化计算，不是完整流体动力学：不模拟晃动、液体力或随水量变化的刚体载荷。它用于练习抓瓶、对准和倾倒，不用于证明真实液体控制精度。
-
-## 固定版本边界
-
-本版将运行入口、实际控制源码、模型接口、场景及依赖恢复信息一起保存；旧9月17日等标签继续保留。新开发应另建目录或分支，不移动本标签。相同代码不代表不同硬件上的帧率和延迟必然相同。保存与验证记录见 [版本验证](reproduction/20260921/VALIDATION.md)。
+[FRoGGeR 整机模型来源](https://github.com/alberthli/frogger/blob/f91157f96a235fc3b070d7f7ec9f52c3140c2cba/models/fr3_algr/fr3_algr_lh.sdf) · [Franka 官方模型版本](https://github.com/frankarobotics/franka_description/tree/7aeeddc449edf8d62b594f9e36a81da53e7796f9) · [Wonik V4 手官方模型](https://github.com/simlabrobotics/allegro_hand_ros_v4/tree/b19b18ea130c4fbe343f2c178eec6cb55186a4ac) · [9 月 21 日原始腕部基线](https://github.com/yiyidiu/myhandarmtest1/tree/teleop-whole-wrist-scenes-20260921)

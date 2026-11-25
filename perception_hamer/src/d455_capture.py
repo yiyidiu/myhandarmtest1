@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import math
 from pathlib import Path
 import time
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 import numpy as np
 
@@ -499,6 +499,16 @@ class D455Capture:
     def __exit__(self, *_args: Any) -> None:
         self.stop()
 
+    def _align_frames(self, frames: Any) -> Tuple[Any, Any, Dict[str, Any], Dict[str, Any]]:
+        aligned = self._align.process(frames)
+        depth = aligned.get_depth_frame()
+        color = aligned.get_color_frame()
+        if not depth or not color:
+            raise D455CaptureError("frameset is missing aligned color/depth")
+        depth_intrinsics = intrinsics_to_dict(depth.profile.as_video_stream_profile().intrinsics)
+        color_intrinsics = intrinsics_to_dict(color.profile.as_video_stream_profile().intrinsics)
+        return depth, color, depth_intrinsics, color_intrinsics
+
     def wait_for_frame(self) -> D455Frame:
         if not self.running:
             raise D455CaptureError("capture is not running")
@@ -508,27 +518,20 @@ class D455Capture:
             host_frameset_received = time.monotonic_ns()
             raw_depth = frames.get_depth_frame()
             raw_color = frames.get_color_frame()
-            aligned = self._align.process(frames)
-            depth = aligned.get_depth_frame()
-            color = aligned.get_color_frame()
+            if not raw_depth or not raw_color:
+                raise D455CaptureError("frameset is missing raw color/depth")
+            depth, color, intrinsics, color_intrinsics = self._align_frames(frames)
+            if intrinsics != color_intrinsics:
+                # librealsense caches the target calibration in the alignment block.
+                # Reproject these same raw pixels once using the current calibration.
+                self._align = self._rs.align(self._rs.stream.color)
+                depth, color, intrinsics, color_intrinsics = self._align_frames(frames)
+        except D455CaptureError:
+            raise
         except Exception as exc:
             raise D455CaptureError(f"frame wait/alignment failed: {exc}") from exc
         host_alignment_completed = time.monotonic_ns()
         wall_time_alignment_completed = time.time_ns()
-        if not raw_depth or not raw_color or not depth or not color:
-            raise D455CaptureError("frameset is missing raw or aligned color/depth")
-        # Copy immediately: librealsense frame buffers can be reused after return.
-        rgb = np.ascontiguousarray(np.asanyarray(color.get_data()).copy())
-        raw_depth_array = np.ascontiguousarray(
-            np.asanyarray(raw_depth.get_data()).copy()
-        )
-        depth_raw = np.ascontiguousarray(np.asanyarray(depth.get_data()).copy())
-        intrinsics = intrinsics_to_dict(
-            depth.profile.as_video_stream_profile().intrinsics
-        )
-        color_intrinsics = intrinsics_to_dict(
-            color.profile.as_video_stream_profile().intrinsics
-        )
         calibration_fields = ("width", "height", "fx", "fy", "ppx", "ppy")
         calibration_differences = {
             key: float(intrinsics[key]) - float(color_intrinsics[key])
@@ -548,7 +551,7 @@ class D455Capture:
         )
         if not (dimensions_match and focal_match and principal_point_match):
             raise D455CaptureError(
-                "aligned depth intrinsics do not match color intrinsics: "
+                "aligned depth intrinsics do not match color intrinsics after realignment: "
                 + repr(calibration_differences)
             )
         if (
@@ -558,8 +561,12 @@ class D455Capture:
             )
         ):
             raise D455CaptureError(
-                "aligned depth distortion metadata does not match color intrinsics"
+                "aligned depth distortion metadata does not match color intrinsics after realignment"
             )
+        # Own the validated buffers before the SDK frame references leave this call.
+        rgb = np.ascontiguousarray(np.asanyarray(color.get_data()).copy())
+        raw_depth_array = np.ascontiguousarray(np.asanyarray(raw_depth.get_data()).copy())
+        depth_raw = np.ascontiguousarray(np.asanyarray(depth.get_data()).copy())
         return D455Frame(
             rgb=rgb,
             raw_depth_raw=raw_depth_array,

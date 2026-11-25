@@ -13,6 +13,8 @@ import time
 
 import rospy
 
+from std_msgs.msg import Header, String
+from handarm_moveit_demo.articulation_wrist_filter import ArticulationWristFilter
 from handarm_moveit_demo.msg import HamerHandPose
 from handarm_moveit_demo.hamer_input_contract import (
     HamerPacketContract,
@@ -26,6 +28,8 @@ class HamerInputAdapter:
         self.bind_ip = rospy.get_param("~bind_ip", "127.0.0.1")
         self.port = int(rospy.get_param("~port", 5010))
         self.topic = rospy.get_param("~output_topic", "/shared_teleop/hamer_pose")
+        self.required_wrist_baseline = rospy.get_param("~required_wrist_baseline", "")
+        self.required_position_source = rospy.get_param("~required_position_source", "")
         self.default_frame = rospy.get_param("~camera_frame", "camera_color_optical_frame")
         self.maximum_packet_bytes = int(rospy.get_param("~maximum_packet_bytes", 65535))
         self.input_timeout_s = float(rospy.get_param("~input_timeout_s", 0.40))
@@ -41,7 +45,10 @@ class HamerInputAdapter:
         self.watchdog_publish_period_s = float(
             rospy.get_param("~watchdog_publish_period_s", 0.10)
         )
+        self.camera_idle_reason = "HAMER_WAITING_FOR_FIRST_CAMERA_PACKET"
         self.publisher = rospy.Publisher(self.topic, HamerHandPose, queue_size=1)
+        packet_topic = rospy.get_param("~packet_topic", "")
+        self.packet_publisher = rospy.Publisher(packet_topic, String, queue_size=2) if packet_topic else None
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind((self.bind_ip, self.port))
         self.socket.setblocking(False)
@@ -52,6 +59,9 @@ class HamerInputAdapter:
             require_finger_contract=self.require_finger_contract,
         )
         self.reference_interlock = ReferenceTokenInterlock()
+        hold_topic = rospy.get_param("~articulation_hold_topic", "")
+        self.articulation_filter = ArticulationWristFilter() if hold_topic else None
+        self.articulation_publisher = rospy.Publisher(hold_topic, Header, queue_size=1) if hold_topic else None
         self.watchdog = InputWatchdog(
             self.input_timeout_s, self.watchdog_publish_period_s
         )
@@ -71,8 +81,19 @@ class HamerInputAdapter:
         )
 
     def convert(self, packet):
+        if (self.required_wrist_baseline and packet.get("valid") is True
+                and packet.get("wrist_pose_baseline") != self.required_wrist_baseline):
+            raise ValueError("WRIST_POSE_BASELINE_MISMATCH")
+        if (self.required_position_source and packet.get("valid") is True
+                and packet.get("position_source") != self.required_position_source):
+            raise ValueError("WRIST_POSITION_SOURCE_MISMATCH")
         normalized = self.contract.validate(packet)
         self.reference_interlock.accept(normalized)
+        if self.articulation_filter is not None:
+            hold = self.articulation_filter.update(packet, normalized)
+            self.articulation_publisher.publish(Header(
+                seq=normalized["source_capture_sequence"], stamp=rospy.Time.now(),
+                frame_id=normalized["control_reference_token"] if hold else ""))
         message = HamerHandPose()
         # Watchdog age must stay in the same clock domain as rospy.Time.now(),
         # especially when Gazebo /use_sim_time is active.
@@ -185,17 +206,24 @@ class HamerInputAdapter:
         while True:
             try:
                 payload, _ = self.socket.recvfrom(self.maximum_packet_bytes)
-                newest = json.loads(payload.decode("utf-8"))
+                raw = payload.decode("utf-8")
+                newest = json.loads(raw)
             except BlockingIOError:
                 break
             except Exception as exc:
                 receive_error = exc
                 break
         if newest is not None:
+            if self.packet_publisher is not None:
+                self.packet_publisher.publish(String(data=raw))
             try:
                 message = self.convert(newest)
                 self.publisher.publish(message)
                 self.watchdog.mark_accepted(time.monotonic())
+                self.camera_idle_reason = (
+                    "HAMER_CAMERA_STOPPED" if not message.control_enabled and
+                    message.invalid_reason == "CAMERA_STREAM_STOPPED_REQUIRES_NEW_C" else None
+                )
                 return
             except Exception as exc:
                 self.publish_fail_closed(
@@ -220,6 +248,11 @@ class HamerInputAdapter:
             )
             return
         if self.watchdog.timeout_due(time.monotonic()):
+            if self.camera_idle_reason:
+                self.publish_fail_closed(self.camera_idle_reason)
+                if self.camera_idle_reason == "HAMER_WAITING_FOR_FIRST_CAMERA_PACKET":
+                    rospy.loginfo_once("等待首个手部观测，机械臂保持当前位置。")
+                return
             self.publish_fail_closed("HAMER_UDP_INPUT_TIMEOUT_HOLDING_C")
             rospy.logwarn_throttle(
                 1.0,

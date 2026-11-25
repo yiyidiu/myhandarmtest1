@@ -13,7 +13,7 @@ import yaml
 from geometry_msgs.msg import PoseStamped
 from moveit_msgs.msg import MoveItErrorCodes
 from moveit_msgs.srv import GetPositionIK, GetPositionIKRequest
-from std_msgs.msg import Bool, Float64, Int8, String
+from std_msgs.msg import Bool, Float64, Header, Int8, String
 from std_srvs.srv import Empty, Trigger, TriggerResponse
 
 from handarm_moveit_demo.msg import HamerHandPose, HandCommand
@@ -367,6 +367,10 @@ class SixDofTrendNode:
                 self.position_tolerance < 0.0):
             raise ValueError("control.position_tolerance_m must be three non-negative values")
         self.simulation = bool(rospy.get_param("~simulation", False))
+        self.articulation_sample = None
+        hold_topic = control.get("articulation_hold_topic", "")
+        if hold_topic and self.simulation:
+            rospy.Subscriber(hold_topic, Header, self.articulation_callback, queue_size=1)
         self.repeat_last_target_pose = bool(
             control.get("repeat_last_target_pose", True)) and self.simulation
         self.target_hold_timeout = float(
@@ -405,7 +409,8 @@ class SixDofTrendNode:
         self.self_detour = SelfDetour(
             self.mapping_profile_name == "whole_wrist_pose" and
             bool(rospy.get_param("~self_detour_enabled", False)),
-            control.get("operational_joint_limits_deg", {}))
+            control.get("operational_joint_limits_deg", {}),
+            control.get("target_ik_group", "abbarm"), control.get("arm_joints"))
         if self.geometric_recovery_filter:
             rospy.Subscriber("/shared_teleop/geometric_filter_diagnostics", String,
                              self.geometric_filter_callback, queue_size=1)
@@ -795,7 +800,7 @@ class SixDofTrendNode:
                 rospy.logwarn_throttle(
                     2.0, "Gazebo control LOCKED: hold a neutral hand pose and "
                     "press C in the camera window")
-            else:
+            elif active_reference or waiting_reason not in ("HAMER_WAITING_FOR_FIRST_CAMERA_PACKET", "HAMER_CAMERA_STOPPED"):
                 rospy.logwarn_throttle(
                     2.0, "Camera input fault: motion is held without "
                     "cancelling the existing C reference")
@@ -1069,6 +1074,9 @@ class SixDofTrendNode:
             "reference_ready": False,
         })
 
+    def articulation_callback(self, message):
+        self.articulation_sample = message
+
     def callback(self, message):
         began = time.perf_counter()
         if message.header.frame_id != self.reference_frame:
@@ -1269,6 +1277,8 @@ class SixDofTrendNode:
                 "reference_revision": reference_revision,
                 "header_stamp": message.header.stamp,
                 "source_stamp": result.timestamp,
+                "capture_sequence": message.source_capture_sequence,
+                "camera_token": message.control_reference_token,
                 "valid": bool(result.valid),
                 "reason": result.reason,
                 "target_position": target_position,
@@ -1368,9 +1378,14 @@ class SixDofTrendNode:
         position_reference_hold = confirmed_position_reference_hold(
             holding_last_target, target_age_s,
             self.position_hold_after_target_loss_s)
+        sample = self.articulation_sample
+        articulation_hold = bool(sample is not None and sample.frame_id and
+                                 sample.frame_id == state["camera_token"] and
+                                 abs(int(sample.seq)-int(state["capture_sequence"])) <= 2 and
+                                 0. <= (now_ros-sample.stamp).to_sec() < .12)
+        position_reference_hold |= articulation_hold
         if self.position_hold_publisher is not None:
-            self.position_hold_publisher.publish(
-                Bool(data=position_reference_hold))
+            self.position_hold_publisher.publish(Bool(data=position_reference_hold))
         valid = state["valid"]
         if not valid or position_reference_hold or target_hold_reason is not None:
             self.self_detour.cancel("CANCELLED_INPUT_UNAVAILABLE")
@@ -1378,7 +1393,7 @@ class SixDofTrendNode:
             target_hold_reason if holding_last_target and
             target_hold_reason is not None else state["reason"])
         if position_reference_hold:
-            reason = "POSITION_REFERENCE_HOLD_TARGET_LOSS"
+            reason = "STATIONARY_WRIST_DURING_FINGER_MOTION" if articulation_hold else "POSITION_REFERENCE_HOLD_TARGET_LOSS"
         current_position = None
         current_rotation = None
         position_error = None
@@ -1571,6 +1586,7 @@ class SixDofTrendNode:
             "target_input_age_s": target_age_s,
             "target_hold_active": holding_last_target,
             "position_reference_hold_active": position_reference_hold,
+            "articulation_hold": articulation_hold,
             "collision_retreat_guard_active": bool(
                 collision_retreat is not None and collision_retreat.active),
             "collision_retreat_reason": (

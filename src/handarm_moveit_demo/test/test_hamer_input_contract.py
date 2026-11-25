@@ -13,6 +13,40 @@ from handarm_moveit_demo.hamer_input_contract import (
 )
 
 
+from handarm_moveit_demo.articulation_wrist_filter import ArticulationWristFilter
+from handarm_moveit_demo.shared_teleop_core import matrix_to_quaternion_xyzw, so3_exp
+
+
+class StationaryWristTest(unittest.TestCase):
+    def test_fingers_alone_hold_measured_pose_sustained_slow_translation_releases(self):
+        filt = ArticulationWristFilter()
+        packet = dict(orientation_channel_valid=True, orientation_held=False)
+        def tick(i, x, token="first", valid=True, angle=0., flex=None):
+            pose = dict(control_reference_token=token, observation_valid=valid,
+                        position=np.array([x,0.,.65]), quaternion=matrix_to_quaternion_xyzw(so3_exp([0.,angle,0.])),
+                        source_stamp=100+i*.04, finger_tracking_valid=True,
+                        finger_flexion=np.full(5, i*.018 if flex is None else flex))
+            return filt.update(packet,pose),pose
+        xs = []
+        for i in range(22):
+            hold,pose = tick(i, (-1)**i*.002)
+            if i >= 8:
+                self.assertTrue(hold)
+                xs.append(pose["position"][0])
+        self.assertAlmostEqual(max(xs)-min(xs),0.)
+        for i in range(22,52):
+            hold,pose = tick(i,.001*(i-21))
+        self.assertFalse(hold)
+        self.assertGreater(pose["position"][0],.024)
+        for i in range(52,77):
+            hold,pose = tick(i,.03,angle=(i-51)*.035,flex=.58)
+        self.assertFalse(hold)
+        self.assertFalse(tick(77,.03,valid=False)[0])
+        hold,pose = tick(78,.1,"second",angle=.3)
+        self.assertFalse(hold)
+        self.assertEqual(pose["position"][0],.1)
+
+
 def packet(sequence=1, valid=True):
     value = {
         "schema": "handarm_hamer_pose_v1",

@@ -18,6 +18,7 @@ from perception_hamer.src.teleop_pose_packet import (  # noqa: E402
     invalidate_stale_teleop_observation, metric_wrist_from_arrays,
     metric_wrist_ring_from_arrays,
     metric_wrist_zero_from_arrays,
+    metric_wrist_center_from_rgbd,
     metric_palm_skin_from_arrays,
 )
 
@@ -29,6 +30,97 @@ INTRINSICS = {
 
 
 class PalmSkinDepthTest(unittest.TestCase):
+    def test_sparse_center_uses_only_consistent_interior_measurements(self):
+        palm = np.array([[100,140],[89,85],[97,82],[104,82],[111,85]])
+        depth = np.zeros((200,200), dtype=np.uint16)
+        origin = palm[0]
+        depth[90:98,97:101] = 700
+        depth[101:106,99:102] = 705
+        def measure(fallback):
+            return metric_palm_skin_from_arrays(palm, origin, depth, .001, INTRINSICS, fallback)
+        with self.assertRaisesRegex(ValueError, "INSUFFICIENT"):
+            measure(False)
+        position, confidence, diag = measure(True)
+        self.assertAlmostEqual(position[2], .700)
+        self.assertGreater(confidence, 0)
+        self.assertEqual(diag["method"], "eroded_palm_depth_consensus")
+        # A conflicting central return indicates a second surface; an empty
+        # depth frame cannot borrow the last seen hand.
+        depth[112,100] = 1100
+        with self.assertRaisesRegex(ValueError, "DISCONTINUITY"):
+            measure(True)
+        depth.fill(0)
+        with self.assertRaisesRegex(ValueError, "INSUFFICIENT"):
+            measure(True)
+        depth.fill(730)
+        np.testing.assert_array_equal(measure(True)[0], measure(False)[0])
+        self.assertEqual(measure(True)[2],measure(False)[2])
+
+    def test_clipped_fingers_can_supply_palm_rays_and_two_depth_patches(self):
+        pixels = np.tile([-28., -35.], (21, 1))
+        palm = np.array([[100, 135], [80, 89], [99, 83], [118, 83], [137, 90]])
+        pixels[[0, 5, 9, 13, 17]] = palm
+        depth = np.zeros((200, 200), dtype=np.uint16)
+        for x, y in palm[:2]:
+            depth[y-2:y+3, x-2:x+3] = 800
+        frame = SimpleNamespace(aligned_depth_raw=depth, depth_scale_m_per_unit=.001,
+                                color_intrinsics=INTRINSICS)
+        estimate = {"control_wrist_frame": {"valid": True, "rotation": np.eye(3).tolist(),
+                    "global_orient_used": True, "reference_kind": "MANO_WRIST_RING_16",
+                    "quality": {"wrist_loop_vertex_indices": list(range(16))}},
+                    "teleop_fingers_visible": False, "finger_image_landmarks_px": None,
+                    "wrist_image_landmarks_px": pixels}
+        result = SimpleNamespace(is_right=False, timestamp=4., quality={"bbox_visible_fraction": 1.})
+        with patch("perception_hamer.src.teleop_pose_packet.metric_wrist_center_from_rgbd",
+                   return_value=(np.array([0., 0., .8]), 1., {})):
+            packet = build_live_teleop_packet(result, estimate, frame, SimpleNamespace(confidence=1.),
+                                              "side", 4, 0, 0, include_hand_landmarks=True)
+        expected = (palm-np.array([100., 100.]))/100.
+        np.testing.assert_allclose(packet["wrist_palm_rays"], expected)
+        support = np.asarray(packet["wrist_motion_support"], dtype=float)
+        np.testing.assert_array_equal(np.flatnonzero(np.isfinite(support[:, 2])), [0, 1])
+        np.testing.assert_allclose(support[:2, :2], .8*expected[:2])
+        self.assertNotIn("hand_landmarks", packet)
+
+    def test_ring_centre_uses_d455_z_of_front_skin_under_a_projective_crop(self):
+        loop = np.arange(16)
+        vertices = np.zeros((778, 3))
+        angles = loop * np.pi / 8
+        vertices[loop] = np.column_stack((.06 + .02*np.cos(angles), .02*np.sin(angles), np.zeros(16)))
+        corners = np.array([[-.25, -.25], [.25, -.25], [.25, .25], [-.25, .25]])
+        vertices[16:20] = np.column_stack((corners, np.full(4, -.03)))
+        vertices[20:24] = np.column_stack((corners, np.full(4, .05)))
+        faces = np.array([[20, 21, 22], [20, 22, 23], [16, 17, 18], [16, 18, 19]])
+        a = np.deg2rad(32)
+        camera = np.array([[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]])
+        camera = camera @ np.diag([-1., 1., 1.])
+        source = vertices @ camera.T
+        warp = np.array([[.9, .02, 14.], [-.04, .98, 6.], [.0003, -.0002, 1.]])
+        landmarks = np.zeros((21, 2))
+        landmarks[[0, 5, 9, 13, 17]] = np.array([[128,155],[97,107],[118,100],[139,100],[160,107]])/256.-.5
+        pred = SimpleNamespace(pred_vertices_mano_right_canonical=vertices,
+            pred_vertices_source_camera_axes=source, pred_keypoints_2d_crop_normalized=landmarks,
+            hamer_crop_projection_translation=np.array([0.,0.,1.]), hamer_nominal_crop_focal_length=[256.,256.],
+            quality={"affine_original_to_crop":warp})
+        # Generate physical-camera depth for the front plane analytically at every pixel.
+        yy, xx = np.indices((256, 256))
+        mapped = np.stack((xx, yy, np.ones_like(xx)), axis=-1) @ warp.T
+        plane_xy = (mapped[..., :2]/mapped[..., 2:] - 128.) * .97/256.
+        surface_z = plane_xy @ camera[2, :2] - .03*camera[2, 2]
+        true_z = .8
+        observed = true_z + surface_z - source[loop, 2].mean()
+        frame = SimpleNamespace(aligned_depth_raw=np.rint(observed*10000).astype(np.uint16),
+                                depth_scale_m_per_unit=.0001, color_intrinsics=INTRINSICS)
+        xyz, _, diag = metric_wrist_center_from_rgbd(pred, loop, frame, faces)
+        center = np.linalg.solve(warp, [128. + .06*256., 128., 1.])
+        ray = (center[:2]/center[2] - [100.,100.])/100.
+        np.testing.assert_allclose(xyz, true_z*np.r_[ray, 1.], atol=.00006)
+        self.assertGreater(abs(diag["measured_surface_depth_m"]-true_z), .02)
+        self.assertFalse(diag["depth_reference_hold_used"])
+        frame.aligned_depth_raw[:] = 0
+        with self.assertRaisesRegex(ValueError, "INSUFFICIENT_RGBD_SUPPORT"):
+            metric_wrist_center_from_rgbd(pred, loop, frame, faces)
+
     def test_native_origins_share_measured_skin_without_offset(self):
         points = np.array([[100,140],[70,70],[90,60],[110,60],[130,70]])
         depth = np.full((200,200),800,np.uint16)
@@ -348,6 +440,8 @@ class TeleopPosePacketTest(unittest.TestCase):
             "valid": True,
             "wrist_position_m": [0.1, 0.2, 0.7],
             "palm_rotation_row_major": np.eye(3).reshape(-1).tolist(),
+            "measured_wrist_rotation_row_major": np.eye(3).reshape(-1).tolist(),
+            "hand_landmarks": {"frame": "wrist_qb0_openpose21_m", "points": np.zeros((21, 3)).tolist()},
             "confidence": [0.9] * 6,
             "hand_identity_present": True,
             "hand_is_right": True,
@@ -367,6 +461,8 @@ class TeleopPosePacketTest(unittest.TestCase):
         self.assertEqual(stale["presence_generation"], 4)
         self.assertNotIn("wrist_position_m", stale)
         self.assertNotIn("palm_rotation_row_major", stale)
+        self.assertNotIn("measured_wrist_rotation_row_major", stale)
+        self.assertNotIn("hand_landmarks", stale)
         self.assertEqual(stale["confidence"], [0.0] * 6)
         self.assertFalse(stale["finger_observation"]["valid"])
         self.assertIn("SOURCE_PIPELINE_LATENCY_EXCEEDED", stale["invalid_reason"])

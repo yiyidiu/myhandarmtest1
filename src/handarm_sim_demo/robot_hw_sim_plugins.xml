@@ -4,4 +4,9 @@
          base_class_type="gazebo_ros_control::RobotHWSim">
     <description>Finite-effort Gazebo position PID with correct bounded multi-turn angular errors.</description>
   </class>
+  <class name="handarm_sim_demo/DirectVelocityHWSim"
+         type="handarm_sim_demo::DirectVelocityHWSim"
+         base_class_type="gazebo_ros_control::RobotHWSim">
+    <description>Simulation-only gravity-compensated joint-speed plant without external position integration.</description>
+  </class>
 </library>

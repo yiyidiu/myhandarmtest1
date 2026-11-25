@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<robot name="fr3_allegro" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:include filename="$(find fr3_allegro_sim)/urdf/fr3_allegro_left.urdf"/>
+  <!-- The baseline task axes at C are -X forward and +Z into the grasp surface. -->
+  <xacro:arg name="control_point" default="wrist"/>
+  <link name="base_link"/>
+  <joint name="fr3_base_axes" type="fixed"><parent link="fr3_link0"/><child link="base_link"/></joint>
+  <link name="tool0"/>
+  <joint name="allegro_baseline_tool" type="fixed">
+    <parent link="${'palm_tcp' if '$(arg control_point)' == 'palm' else 'algr_lh_palm'}"/>
+    <child link="tool0"/><origin xyz="0 0 0" rpy="0 1.5707963267948966 0"/>
+  </joint>
+  <!-- Preserve the installed geometry and joint ranges. Let the thumb meet other links in Gazebo. -->
+  <gazebo reference="algr_lh_th_ds">
+    <selfCollide>true</selfCollide>
+    <sensor name="thumb_pad_contacts" type="contact">
+      <always_on>true</always_on>
+      <update_rate>50</update_rate>
+      <contact>
+        <collision>algr_lh_th_ds_tip_collision_1_FROGGERCOL_collision_1</collision>
+        <collision>algr_lh_th_ds_tip_collision_2_FROGGERCOL_collision_2</collision>
+      </contact>
+      <plugin name="thumb_pad_feedback" filename="libgazebo_ros_bumper.so">
+        <bumperTopicName>/fr3_allegro/thumb_contacts</bumperTopicName>
+        <frameName>world</frameName>
+      </plugin>
+    </sensor>
+  </gazebo>
+</robot>

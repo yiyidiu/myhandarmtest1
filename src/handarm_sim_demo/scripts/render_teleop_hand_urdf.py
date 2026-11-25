@@ -234,6 +234,7 @@ def parse_args(argv=None):
         "--profile",
         choices=("original", "rigid_transport", "physical_grasp"),
         default="physical_grasp")
+    parser.add_argument("--arm-control", choices=("position", "velocity"), default="position")
     return parser.parse_args(argv)
 
 
@@ -248,6 +249,17 @@ def main(argv=None):
         rendered = render_rigid_transport_hand(xml_text)
     else:
         rendered = render_physical_grasp_hand(xml_text)
+    if args.arm_control == "velocity":
+        if args.profile != "physical_grasp":
+            raise ValueError("Direct velocity experiment requires the common physical_grasp model")
+        robot = ET.fromstring(rendered)
+        for transmission in robot.findall("transmission"):
+            for interface in transmission.findall(".//hardwareInterface"):
+                interface.text = "hardware_interface/VelocityJointInterface"
+        for plugin in robot.findall("gazebo/plugin"):
+            if plugin.get("filename") == "libgazebo_ros_control.so":
+                _set_text(plugin, "robotSimType", "handarm_sim_demo/DirectVelocityHWSim")
+        rendered = ET.tostring(robot, encoding="unicode")
     sys.stdout.write(rendered)
     return 0
 

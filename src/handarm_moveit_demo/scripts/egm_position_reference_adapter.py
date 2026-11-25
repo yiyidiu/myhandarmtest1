@@ -40,10 +40,12 @@ class EgmPositionReferenceAdapter:
                 index = self.joints.index(name)
                 lower_limits[index] = max(lower_limits[index], np.deg2rad(degrees[0]))
                 upper_limits[index] = min(upper_limits[index], np.deg2rad(degrees[1]))
+        reference_parameter = rospy.get_param("~initial_reference_param", "")
+        initial_reference = (rospy.get_param(reference_parameter) if reference_parameter else
+                             rospy.get_param("~initial_reference", [0.0, 0.0, 0.0, 0.0, 1.5707963267948966, 0.0]))
         self.model = EgmPositionReferenceModel(
             joint_names=self.joints,
-            initial_reference=rospy.get_param(
-                "~initial_reference", [0.0, 0.0, 0.0, 0.0, 1.5707963267948966, 0.0]),
+            initial_reference=initial_reference,
             lower_limits=lower_limits,
             upper_limits=upper_limits,
             maximum_velocity=rospy.get_param(

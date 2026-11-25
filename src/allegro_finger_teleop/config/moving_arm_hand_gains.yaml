@@ -1,0 +1,18 @@
+# Gazebo effort servo for a hand carried by the moving FR3. Integral gains,
+# torque and joint bounds come from the installed Allegro model/controller.
+algr_lh_if_axl: &proximal {p: 7.2, d: 0.020}
+algr_lh_if_mcp: *proximal
+algr_lh_if_pip: &middle {p: 5.2, d: 0.009}
+algr_lh_if_dip: &distal {p: 3.2, d: 0.0035}
+algr_lh_mf_axl: *proximal
+algr_lh_mf_mcp: *proximal
+algr_lh_mf_pip: *middle
+algr_lh_mf_dip: *distal
+algr_lh_rf_axl: *proximal
+algr_lh_rf_mcp: *proximal
+algr_lh_rf_pip: *middle
+algr_lh_rf_dip: *distal
+algr_lh_th_cmc: *proximal
+algr_lh_th_axl: *proximal
+algr_lh_th_mcp: *middle
+algr_lh_th_ipl: *distal

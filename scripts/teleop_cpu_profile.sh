@@ -64,6 +64,6 @@ while time.monotonic() < deadline:
         pass
     time.sleep(.2)
 else:
-    raise RuntimeError('Cannot reserve the Gazebo physics CPUs; stop before opening the camera')
+    raise RuntimeError('Cannot reserve the Gazebo physics CPUs for live control')
 PY
 }

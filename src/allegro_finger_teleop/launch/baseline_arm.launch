@@ -1,0 +1,57 @@
+<launch>
+  <arg name="port"/>
+  <arg name="observation" default="$(optenv FR3_WRIST_OBSERVATION baseline)"/>
+  <include file="$(find handarm_moveit_demo)/launch/shared_teleop_core.launch">
+    <arg name="input_source" value="udp"/><arg name="udp_port" value="$(arg port)"/>
+    <arg name="hand_reference_kind" value="mano-wrist-ring"/>
+    <arg name="external_hand" value="true"/><arg name="required_wrist_baseline" value="$(eval 'teleop-wrist-qb0-20261120' if arg('observation') == 'qb0' else '')"/>
+    <arg name="mapping_profile" value="whole_wrist_pose"/>
+    <arg name="stable_position_reference_profile" value="true"/>
+    <arg name="geometric_recovery_filter" value="true"/>
+    <arg name="enable_logger" value="false"/>
+    <arg name="hamer_input_timeout_s" value="0.40"/><arg name="hamer_maximum_pipeline_latency_s" value="0.25"/>
+  </include>
+  <rosparam file="$(find allegro_finger_teleop)/config/fr3_whole_wrist.yaml"/>
+  <param name="/hamer_input_adapter/required_position_source" value="$(eval 'D455_WRIST_RING_CENTER_FROM_SAME_PIXEL_SURFACE_OFFSET' if arg('observation') == 'qb0' else 'DIRECT_CAMERA_PALM_SKIN_DEPTH_NO_MODEL_OFFSET')"/>
+  <!-- These two working limits belong only to the ABB. The FR3 uses its loaded URDF bounds. -->
+  <param name="/shared_teleop/control/operational_joint_limits_deg" type="yaml" value="{}"/>
+  <param name="/robot_description_semantic" command="$(find allegro_finger_teleop)/scripts/fr3_semantic.py $(find fr3_allegro_sim)/urdf/fr3_allegro_left.urdf"/>
+  <node name="move_group" pkg="moveit_ros_move_group" type="move_group" output="log">
+    <remap from="/joint_states" to="/fr3_allegro/joint_states"/>
+    <param name="moveit_controller_manager" value="moveit_simple_controller_manager/MoveItSimpleControllerManager"/>
+    <rosparam param="controller_list">[]</rosparam>
+    <param name="allow_trajectory_execution" value="false"/>
+    <param name="planning_plugin" value="ompl_interface/OMPLPlanner"/>
+    <param name="planning_scene_monitor/publish_planning_scene" value="true"/>
+  </node>
+  <node name="full_robot_self_collision_guard" pkg="handarm_moveit_demo" type="full_robot_self_collision_guard" output="screen" required="true" launch-prefix="$(find allegro_finger_teleop)/scripts/after_fr3_ready.py $(optenv TELEOP_CONTROL_LAUNCH_PREFIX)">
+    <param name="independent_palm_rotation_axes" value="false"/>
+    <param name="allow_partial_spatial_rotation" value="true"/>
+    <param name="state_timeout_s" value="0.25"/><param name="geometric_command_filter" value="true"/>
+    <param name="inverse_damping" value="0.005"/><param name="status_rate_hz" value="50.0"/>
+    <param name="enable_swept_command_gate" value="true"/><param name="prediction_horizon_s" value="0.08"/>
+    <param name="maximum_prediction_samples" value="128"/>
+    <param name="arm_position_reference_topic" value="/egm_position_reference/command_state"/>
+    <param name="measured_joint_limit_tolerance_rad" value="0.02"/>
+    <param name="recover_simulated_hand_limit_transients" value="true"/>
+    <param name="raw_velocity_topic" value="/egm_position_reference/raw_joint_velocity"/>
+    <param name="safe_velocity_topic" value="/egm_position_reference/collision_checked_joint_velocity"/>
+  </node>
+  <node pkg="handarm_moveit_demo" type="egm_position_reference_adapter.py" name="egm_position_reference_adapter" output="log" required="true">
+    <remap from="/joint_states" to="/fr3_allegro/joint_states"/>
+    <param name="rate_hz" value="250.0"/><param name="require_servo_monitor" value="false"/>
+    <param name="raw_velocity_topic" value="/egm_position_reference/collision_checked_joint_velocity"/>
+    <param name="controller_topic" value="/fr3_allegro/position_reference"/>
+    <param name="command_timeout_s" value="0.10"/><param name="maximum_step_dt_s" value="0.02"/>
+    <param name="hard_stop_collision_scale" value="0.0"/><param name="collision_scale_timeout_s" value="0.25"/>
+    <param name="strict_command_safe_topic" value="/full_robot_self_collision_guard/command_safe"/>
+    <param name="retreat_authorization_topic" value="/shared_teleop/collision_retreat_authorized"/>
+    <param name="strict_command_safe_timeout_s" value="0.25"/><param name="retreat_authorization_timeout_s" value="0.12"/>
+  </node>
+  <node pkg="handarm_moveit_demo" type="live_teleop_terminal_monitor.py" name="live_teleop_terminal_monitor" output="screen">
+    <param name="feedback_file" value="$(optenv TELEOP_ROBOT_FEEDBACK_FILE)"/>
+    <param name="gesture_topic" value="/fr3_allegro/hand_gesture"/>
+    <remap from="/joint_states" to="/fr3_allegro/joint_states"/>
+  </node>
+  <node pkg="allegro_finger_teleop" type="fr3_reference_output.py" name="fr3_reference_output" required="true"/>
+</launch>

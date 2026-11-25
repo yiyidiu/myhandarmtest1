@@ -1,0 +1,57 @@
+<launch>
+  <arg name="record_session" default="$(optenv FR3_RECORDING_DIRECTORY)"/>
+  <arg name="world_name" default="$(eval optenv('FR3_WORLD', find('handarm_sim_demo') + '/worlds/handarm_motion_only.world'))"/>
+  <arg name="impedance_grasp" default="$(eval arg('world_name').endswith('handarm_allegro_impedance.world'))"/>
+  <arg name="camera_ready_file" default="$(optenv XDG_RUNTIME_DIR /tmp)/$(anon fr3_allegro_camera_ready)"/>
+  <arg name="gui" default="true"/>
+  <arg name="source" default="live" doc="live, replay, or external loopback input"/>
+  <arg name="port" default="5031"/>
+  <arg name="follow_wrist" default="true"/>
+  <arg name="control_point" default="$(optenv FR3_CONTROL_POINT wrist)" doc="palm: palm_tcp; wrist: hand mounting origin"/>
+  <arg name="recording" default="$(eval find('allegro_finger_teleop') + '/data/' + ('qb0' if optenv('FR3_WRIST_OBSERVATION', 'baseline') == 'qb0' else ('impedance_pick' if arg('impedance_grasp') else 'baseline')) + '_camera.jsonl.gz')"/>
+  <node if="$(eval bool(arg('record_session')))" name="experiment_bag" launch-prefix="$(optenv FR3_RECORD_PREFIX)" pkg="rosbag" type="record" required="true"
+        args="--buffsize=64 --lz4 -O '$(arg record_session)/robot.bag' /clock /tf /tf_static /fr3_allegro/camera_packet /shared_teleop/hamer_pose /shared_teleop/robot_zero_pose /shared_teleop/pose_target /shared_teleop/trend_diagnostics /shared_teleop/shaped_command /shared_teleop/geometrically_limited_command /shared_teleop/geometric_filter_diagnostics /shared_teleop/output_diagnostics /egm_position_reference/command_state /egm_position_reference/diagnostics /full_robot_self_collision_guard/diagnostic /full_robot_self_collision_guard/hand_diagnostic /full_robot_self_collision_guard/requested_hand_command /fr3_allegro/joint_states /fr3_allegro/arm_controller/command /fr3_allegro/hand_controller/command /fr3_allegro/human_wrist/landmarks /fr3_allegro/palm_target /fr3_allegro/hand_gesture /fr3_allegro/thumb_contacts /fr3_allegro/object_pinch /shared_teleop/raw_hand_command /shared_teleop/assisted_command /shared_teleop/safe_twist /shared_teleop/assist_diagnostics /full_robot_self_collision_guard/command_diagnostic /full_robot_self_collision_guard/command_safe /egm_position_reference/collision_checked_joint_velocity /gazebo/model_states /handarm_sim_demo/target_contacts /teleop_observers/object_reset_events /teleop_pouring/state"/>
+  <param name="/fr3_allegro/fingers_ready" value="false"/>
+  <param name="/fr3_allegro/replay_complete" value="false"/>
+  <include file="$(find fr3_allegro_sim)/launch/bringup.launch">
+    <arg name="gui" value="$(arg gui)"/>
+    <arg name="world_name" value="$(arg world_name)"/>
+    <arg name="ready_degrees" value="$(optenv FR3_READY_DEGREES -60.6828034 -63.2728348 53.1407305 -146.9407516 142.7943993 145.0 126.5110376)"/>
+    <arg name="demo" value="false"/>
+    <arg name="finger_mode" value="true"/>
+  </include>
+  <rosparam if="$(arg follow_wrist)" ns="/fr3_allegro/hand_controller/gains"
+            file="$(find allegro_finger_teleop)/config/moving_arm_hand_gains.yaml"/>
+  <param name="/robot_description" command="rosrun allegro_finger_teleop allegro_v4_limits.py '$(find allegro_finger_teleop)/launch/contact_hand.urdf.xacro' --control-point $(arg control_point)"/>
+  <include if="$(arg follow_wrist)" file="$(find allegro_finger_teleop)/launch/baseline_arm.launch">
+    <arg name="port" value="$(arg port)"/>
+  </include>
+  <node unless="$(arg follow_wrist)" pkg="handarm_moveit_demo" type="hamer_input_adapter.py" name="hamer_input_adapter" output="log">
+    <param name="port" value="$(arg port)"/><param name="packet_topic" value="/fr3_allegro/camera_packet"/>
+    <param name="maximum_pipeline_latency_s" value="0.25"/>
+  </node>
+  <node if="$(eval arg('gui') and not arg('impedance_grasp') and not arg('world_name').endswith('handarm_motion_only.world'))" pkg="handarm_sim_demo" type="grasp_alignment_views.py" name="grasp_alignment_views" output="log">
+    <param name="rate_hz" value="5.0"/><param name="object_home_world" value="$(arg world_name)"/>
+    <env name="GDK_SCALE" value="1"/><env name="GDK_DPI_SCALE" value="1"/>
+  </node>
+  <node pkg="allegro_finger_teleop" type="fingers_node.py" name="allegro_fingers" output="screen" required="true">
+    <param name="source" value="$(arg source)"/>
+    <rosparam if="$(arg impedance_grasp)" param="grasp_gains" file="$(find allegro_finger_teleop)/config/grasp_impedance.yaml"/>
+    <param if="$(arg impedance_grasp)" name="pad_preload_n" value="1.5"/>
+    <param name="port" value="$(arg port)" type="int"/>
+    <param name="recording" value="$(arg recording)"/>
+    <param name="follow_wrist" value="$(arg follow_wrist)"/>
+    <param name="control_point" value="$(arg control_point)"/>
+    <param if="$(eval arg('source') == 'live')" name="camera_ready_file" value="$(arg camera_ready_file)"/>
+    <env name="OPENBLAS_NUM_THREADS" value="1"/>
+  </node>
+  <node if="$(eval arg('source') == 'replay')" pkg="allegro_finger_teleop" type="replay_camera.py" name="replay_camera" output="screen" required="true">
+    <param name="recording" value="$(arg recording)"/><param name="port" value="$(arg port)"/><param name="follow_wrist" value="$(arg follow_wrist)"/>
+  </node>
+  <node if="$(eval arg('source') == 'live')" pkg="allegro_finger_teleop" type="fingers_camera.sh"
+        name="allegro_camera" args="$(arg port)" output="screen" required="true">
+    <env name="FR3_CAMERA_READY_FILE" value="$(arg camera_ready_file)"/>
+  </node>
+  <node if="$(eval arg('gui') and arg('source') == 'live')" pkg="allegro_finger_teleop"
+        type="show_camera_at_startup.py" name="fr3_preview_window" output="log"/>
+</launch>

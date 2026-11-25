@@ -1,11 +1,5 @@
-# 2026-09-21 整体腕姿与四场景保存版
+# FR3 ＋ Allegro 仿真基线
 
-此版本对应 GitHub 标签 `teleop-whole-wrist-scenes-20260921`。
-在本机 `/home/dongtian/myhandarmtest1-whole-wrist-scenes-20260921` 完成本次保存后，
-默认只读取或运行，不在保存目录继续调试、更新依赖、切换开发分支或执行 git pull。
+运行入口为本目录的 `./run.sh`。整机包位于 `reproduction/fr3/fr3_allegro_sim`，臂手配置和手部算法位于 `src/allegro_finger_teleop`。发布记录与复现实验方法见 README.md、VERSION.md。
 
-后续开发仍使用 `/home/dongtian/myhandarmtest1-mediapipe-comparison-20260915` 的 `codex/` 分支。
-用户明确要求保存新版本时另建目录和标签，保留此版本及9月17日保存版。
-
-四个场景入口共用 HaMeR 16点腕口、整体腕姿映射和当前控制器，仅场景不同。
-不得通过切换场景顺带切换手部模型、坐标定义或控制参数。
+验证回放使用 `./run.sh --replay --headless`，单物体阻抗抓取使用 `./run.sh --impedance-grasp --replay --headless`。授权模型、构建、视觉环境和操作者录制保存在本机，源码包按版本标签生成。

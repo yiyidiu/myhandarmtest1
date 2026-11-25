@@ -3,6 +3,7 @@
   <!-- New opt-in EGM position-reference profile. The established velocity
        entry live_human_ground_gazebo_teleop.launch is intentionally untouched. -->
   <arg name="gazebo_gui" default="true" />
+  <arg name="arm_control_mode" default="position" />
   <arg name="grasp_alignment_views" default="false" />
   <arg name="with_ground_object" default="true" />
   <arg name="empty_motion_scene" default="false" />
@@ -47,6 +48,7 @@
 
   <include file="$(find handarm_moveit_demo)/launch/shared_teleop_egm_position_demo.launch">
     <arg name="gazebo_gui" value="$(arg gazebo_gui)" />
+    <arg name="arm_control_mode" value="$(arg arm_control_mode)" />
     <arg name="input_source" value="$(arg input_source)" />
     <arg name="enable_logger" value="$(arg enable_logger)" />
     <arg name="log_directory" value="$(arg log_directory)" />

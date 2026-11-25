@@ -1,0 +1,6 @@
+<library path="lib/libfr3_allegro_hw_sim">
+  <class name="fr3_allegro_sim/BoundedRevoluteHWSim" type="fr3_allegro_sim::BoundedRevoluteHWSim"
+         base_class_type="gazebo_ros_control::RobotHWSim">
+    <description>Gazebo joint feedback on the turn defined by the model's position limits.</description>
+  </class>
+</library>

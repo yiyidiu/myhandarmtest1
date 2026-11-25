@@ -29,15 +29,26 @@ def checked(path, expected):
 
 def download(url, path, expected=None):
     path.parent.mkdir(parents=True, exist_ok=True)
-    if expected and checked(path, expected):
+    if path.is_file() and (expected is None or checked(path, expected)):
         return path
-    if expected and path.exists() and path.stat().st_size >= expected.get('size', float('inf')):
-        raise RuntimeError('Existing download differs from this release; move it aside: ' + str(path))
+    if path.is_symlink():
+        path.unlink()  # A stale optional local cache cannot block the public download.
+    temporary = path.with_name(path.name + '.partial')
     print('Download: ' + path.name, flush=True)
-    subprocess.run(['curl', '--fail', '--location', '--retry', '3', '--connect-timeout', '20',
-                    '--continue-at', '-', '--output', str(path), url], check=True)
-    if expected and not checked(path, expected):
+    cmd = ['curl', '--fail', '--location', '--retry', '4', '--connect-timeout', '20',
+           '--output', str(temporary)]
+    if temporary.is_file() and temporary.stat().st_size and (not expected or not checked(temporary, expected)):
+        result = subprocess.run(cmd + ['--continue-at', '-', url])
+        if result.returncode in (22, 33, 36):
+            subprocess.run(cmd + [url], check=True)
+        else:
+            result.check_returncode()
+    elif expected is None or not checked(temporary, expected):
+        subprocess.run(cmd + [url], check=True)
+    if expected and not checked(temporary, expected):
+        temporary.unlink()
         raise RuntimeError('Release dependency checksum mismatch: ' + str(path))
+    temporary.replace(path)
     return path
 
 

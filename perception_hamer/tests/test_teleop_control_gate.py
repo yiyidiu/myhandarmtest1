@@ -273,6 +273,23 @@ class TeleopControlGateTest(unittest.TestCase):
             packet["control_reference_token"], "live-a:1:p5:h9:L"
         )
 
+    def test_fixed_hand_never_binds_another_side_or_active_generation(self):
+        for changed in (dict(hand_is_right=True), dict(active_hand_generation=11)):
+            gate = TeleopControlGate(resume_fixed_hand_after_loss=True)
+            gate.confirm(5, 9, False)
+            packet = dict(session_id="camera", valid=True, hand_identity_present=False,
+                          presence_generation=7, active_hand_generation=9, hand_is_right=False)
+            blank = gate.decorate(packet)
+            self.assertFalse(blank["valid"])
+            self.assertFalse(blank["hand_identity_present"])
+            self.assertTrue(blank["control_enabled"])
+            packet.update(hand_identity_present=True, **changed)
+            foreign = gate.decorate(packet)
+            self.assertFalse(foreign["valid"])
+            self.assertFalse(foreign["control_enabled"])
+            self.assertFalse(gate.enabled)
+            self.assertEqual(foreign["invalid_reason"], "HAND_IDENTITY_CHANGED_REQUIRES_NEW_C")
+
     def test_operator_latched_c_survives_missing_and_reacquired_detection(self):
         gate = TeleopControlGate(
             retain_reference_until_operator_action=True

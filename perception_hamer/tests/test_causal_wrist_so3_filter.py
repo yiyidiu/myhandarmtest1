@@ -9,6 +9,7 @@ from perception_hamer.src.causal_wrist_so3_filter import (
     CausalWristSO3Filter,
     CausalWristSO3FilterConfig,
 )
+from perception_hamer.src.confirmed_wrist_so3_filter import ConfirmedWristSO3Filter
 from perception_hamer.src.crop_quality import bbox_crop_quality
 from perception_hamer.src.palm_frame import rotation_distance_rad
 
@@ -43,6 +44,36 @@ class CropQualityTest(unittest.TestCase):
 
 
 class CausalWristSO3FilterTest(unittest.TestCase):
+    def test_large_turn_requires_repeated_fresh_measurements_and_returns_through_zero(self):
+        filt = ConfirmedWristSO3Filter()
+        t = 1.
+        start = so3_exp([0., np.deg2rad(80.), 0.])
+        opposite = so3_exp([0., np.deg2rad(-75.), 0.])
+        filt.update(t,start)
+        for _ in range(4):
+            t += .04
+            self.assertFalse(filt.update(t,opposite,.2).valid)
+        t += .04
+        self.assertFalse(filt.update(t,opposite).valid)
+        t += .04
+        self.assertTrue(filt.update(t,start).valid)
+        last = start
+        for i in range(45):
+            t += .04
+            sample = filt.update(t,opposite)
+            if i < 3:
+                self.assertFalse(sample.valid)
+            if sample.valid:
+                if sample.status == "reacquiring_confirmed_turn":
+                    self.assertLessEqual(rotation_distance_rad(last,sample.rotation),np.deg2rad(8.41))
+                last = sample.rotation
+        self.assertLess(rotation_distance_rad(opposite,last),np.deg2rad(.3))
+        for _ in range(30):
+            t += .04
+            sample = filt.update(t,np.eye(3))
+        self.assertTrue(sample.valid)
+        self.assertLess(rotation_distance_rad(np.eye(3),sample.rotation),np.deg2rad(.3))
+
     def test_consistency_mode_reduces_alternating_noise_without_a_deadzone(self):
         filters = [CausalWristSO3Filter(), CausalWristSO3Filter(
             CausalWristSO3FilterConfig(time_constant_s=.4,

@@ -1,0 +1,50 @@
+--- a/fr3_allegro_sim/launch/bringup.launch
++++ b/fr3_allegro_sim/launch/bringup.launch
+@@ -5,10 +5,14 @@
+   <param name="/fr3_allegro/fingers_active" value="$(arg finger_mode)"/>
+   <param name="/fr3_allegro/ready" value="false"/>
+   <!-- Palm +X (grasp side) points down and palm +Z (toward the middle finger) points forward. -->
+-  <arg name="ready_j2" value="$(eval radians(-10))"/>
+-  <arg name="ready_j4" value="$(eval radians(-140))"/>
+-  <arg name="ready_j6" value="$(eval radians(220))"/>
+-  <arg name="ready_j7" value="$(eval radians(-135))"/>
++  <arg name="ready_degrees" default="71.59635238898 -68.52012805951 -40.5106112251 -132.13663721028 -111.50367217003 136 -68.67723976093"/>
++  <arg name="ready_j1" value="$(eval radians(float(arg('ready_degrees').split()[0])))"/>
++  <arg name="ready_j2" value="$(eval radians(float(arg('ready_degrees').split()[1])))"/>
++  <arg name="ready_j3" value="$(eval radians(float(arg('ready_degrees').split()[2])))"/>
++  <arg name="ready_j4" value="$(eval radians(float(arg('ready_degrees').split()[3])))"/>
++  <arg name="ready_j5" value="$(eval radians(float(arg('ready_degrees').split()[4])))"/>
++  <arg name="ready_j6" value="$(eval radians(float(arg('ready_degrees').split()[5])))"/>
++  <arg name="ready_j7" value="$(eval radians(float(arg('ready_degrees').split()[6])))"/>
+   <param name="/robot_description" textfile="$(find fr3_allegro_sim)/urdf/fr3_allegro_left.urdf"/>
+   <include file="$(find gazebo_ros)/launch/empty_world.launch">
+     <arg name="world_name" value="$(find fr3_allegro_sim)/worlds/bench.world"/>
+@@ -19,11 +23,12 @@
+   </include>
+   <node pkg="gazebo_ros" type="spawn_model" name="spawn_fr3_allegro" output="screen"
+         args="-urdf -model fr3_allegro -param /robot_description -unpause
+-              -J fr3_joint2 $(arg ready_j2) -J fr3_joint4 $(arg ready_j4)
+-              -J fr3_joint6 $(arg ready_j6) -J fr3_joint7 $(arg ready_j7)
++              -J fr3_joint1 $(arg ready_j1) -J fr3_joint2 $(arg ready_j2) -J fr3_joint3 $(arg ready_j3)
++              -J fr3_joint4 $(arg ready_j4) -J fr3_joint5 $(arg ready_j5) -J fr3_joint6 $(arg ready_j6)
++              -J fr3_joint7 $(arg ready_j7)
+               -J algr_lh_th_cmc 0.53"/>
+   <group ns="fr3_allegro">
+-    <rosparam param="ready_arm" subst_value="true">[0.0, $(arg ready_j2), 0.0, $(arg ready_j4), 0.0, $(arg ready_j6), $(arg ready_j7)]</rosparam>
++    <rosparam param="ready_arm" subst_value="true">[$(arg ready_j1), $(arg ready_j2), $(arg ready_j3), $(arg ready_j4), $(arg ready_j5), $(arg ready_j6), $(arg ready_j7)]</rosparam>
+     <rosparam file="$(find fr3_allegro_sim)/config/controllers.yaml"/>
+     <node name="state_publisher" pkg="robot_state_publisher" type="robot_state_publisher">
+       <param name="publish_frequency" value="60"/>
+--- a/fr3_allegro_sim/scripts/motion_demo.py
++++ b/fr3_allegro_sim/scripts/motion_demo.py
+@@ -11,8 +11,8 @@
+
+
+ NS = "/fr3_allegro"
+-REACH = [radians(v) for v in (-18, 0, 5, -132, 4, 216, -130)]
+-LIFT = [radians(v) for v in (15, -15, -5, -125, -5, 202, -138)]
++REACH = [radians(v) for v in (65.92199, -71.11189, -49.48612, -128.18966, -114.06764, 132.10537, -65.66378)]
++LIFT = [radians(v) for v in (88.83213, -54.94861, -37.02535, -110.13073, -97.36297, 136.57132, -86.17151)]
+ OPEN = [-0.10, 0.07, 0.06, 0.06, 0.0, 0.07, 0.06, 0.06,
+         0.10, 0.07, 0.06, 0.06, 0.53, 0.12, 0.13, 0.09]
+ CLOSED = [0.10, 0.90, 1.08, 0.83, -0.10, 0.92, 1.02, 0.79,
