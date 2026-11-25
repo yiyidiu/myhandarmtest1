@@ -54,16 +54,25 @@ if (( ${#missing[@]} )); then
   root_cmd env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install -y --no-install-recommends "${missing[@]}"
 fi
 if [[ "$mode" == live && -S /run/udev/control && ! -f /etc/udev/rules.d/70-fr3-d455.rules ]]; then
-  accessible=false
   for path in /sys/bus/usb/devices/*; do
     [[ -r "$path/idProduct" && -r "$path/idVendor" ]] || continue
     [[ "$(<"$path/idVendor")" == 8086 && "$(<"$path/idProduct")" == 0b5c ]] || continue
     device=$(printf '/dev/bus/usb/%03d/%03d' "$(<"$path/busnum")" "$(<"$path/devnum")")
-    if [[ -r "$device" && -w "$device" ]]; then accessible=true; break; fi
-  done
-  if [[ "$accessible" == false ]]; then
+    [[ -r "$device" && -w "$device" ]] && continue
+    # The Linux V4L backend opens the camera's video devices. Desktop seat ACLs
+    # can grant full RGB-D capture even when the raw USB node is read-only.
+    video_nodes=()
+    accessible=0
+    for node in "$path"/*/video4linux/video*; do
+      [[ -e "$node" ]] || continue
+      video_nodes+=("$node")
+      video="/dev/${node##*/}"
+      if [[ -r "$video" && -w "$video" ]]; then accessible=$((accessible + 1)); fi
+    done
+    (( accessible >= 2 && accessible == ${#video_nodes[@]} )) && continue
     root_cmd install -m 0644 "$project/reproduction/fr3/70-fr3-d455.rules" /etc/udev/rules.d/70-fr3-d455.rules
     root_cmd udevadm control --reload-rules
-    root_cmd udevadm trigger --subsystem-match=usb --attr-match=idVendor=8086 --attr-match=idProduct=0b5c
-  fi
+    root_cmd udevadm trigger --action=add "$path"
+    if (( ${#video_nodes[@]} )); then root_cmd udevadm trigger --action=add "${video_nodes[@]}"; fi
+  done
 fi
