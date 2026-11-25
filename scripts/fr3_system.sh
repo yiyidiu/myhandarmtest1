@@ -10,8 +10,8 @@ if [[ "$ID" != ubuntu || "$VERSION_ID" != 20.04 || "$(uname -m)" != x86_64 ]]; t
   exit 2
 fi
 pkgs=(build-essential cmake pkg-config curl ca-certificates libfcl-dev liburdfdom-dev libgazebo11-dev
-      qtbase5-dev python3-opencv python3-numpy python3-scipy python3-yaml python3-rospkg python3-catkin-pkg
-      ros-noetic-catkin ros-noetic-gazebo-ros-control ros-noetic-gazebo-ros-pkgs ros-noetic-gazebo-plugins
+      qtbase5-dev python3-lxml python3-opencv python3-numpy python3-scipy python3-yaml python3-rospkg python3-catkin-pkg
+      ros-noetic-catkin ros-noetic-rosbash ros-noetic-gazebo-ros-control ros-noetic-gazebo-ros-pkgs ros-noetic-gazebo-plugins
       ros-noetic-moveit ros-noetic-moveit-servo ros-noetic-trac-ik-kinematics-plugin
       ros-noetic-ros-controllers ros-noetic-controller-manager ros-noetic-robot-state-publisher
       ros-noetic-dynamic-reconfigure ros-noetic-xacro ros-noetic-urdfdom-py ros-noetic-rosbag
@@ -46,7 +46,7 @@ if (( ${#missing[@]} )); then
       root_cmd tee /etc/apt/sources.list.d/fr3-noetic.list >/dev/null
   fi
   root_cmd apt-get -o Acquire::Retries=3 update
-  if ! apt-cache show libgazebo11-dev >/dev/null 2>&1; then
+  if ! apt-cache show libfcl-dev >/dev/null 2>&1; then
     printf '%s\n' 'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] http://archive.ubuntu.com/ubuntu focal universe multiverse' |
       root_cmd tee /etc/apt/sources.list.d/fr3-focal-universe.list >/dev/null
     root_cmd apt-get -o Acquire::Retries=3 update
